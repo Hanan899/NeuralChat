@@ -1,6 +1,8 @@
 import type { ChatRequest, StreamChunk } from "./types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+// Default to Azure Functions local runtime (`func start`).
+// Override with VITE_API_BASE_URL when needed (e.g., uvicorn on :8000).
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:7071";
 
 export async function checkHealth(): Promise<boolean> {
   const response = await fetch(`${API_BASE_URL}/api/health`);

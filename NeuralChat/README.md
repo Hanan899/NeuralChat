@@ -24,6 +24,9 @@ npm install
 npm run dev
 ```
 
+For local backend URL, create `.env` in `frontend/` from `.env.example`.
+Default is Azure Functions local runtime on `http://localhost:7071`.
+
 ## Environment Variables
 Create `backend/local.settings.json` from `backend/local.settings.example.json` and set:
 - `AZURE_OPENAI_ENDPOINT`
@@ -38,6 +41,7 @@ Notes:
 - `uvicorn app.main:app --reload` now auto-loads `backend/local.settings.json` for local development.
 - If `AZURE_OPENAI_*` vars are present, `model: "gpt4o"` requests use Azure Chat Completions first (deployment can be `gpt-5-chat`).
 - Never commit real API keys to `local.settings.example.json` or any tracked file.
+- When running with `func start`, frontend should use `VITE_API_BASE_URL=http://localhost:7071`.
 
 ## Grip Workflow
 For every task: `Goal -> What you type -> Why it works -> Break test -> Own rewrite`.
