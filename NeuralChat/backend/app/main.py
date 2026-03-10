@@ -22,6 +22,7 @@ from fastapi import FastAPI  # Main web framework app object.
 from fastapi.middleware.cors import CORSMiddleware  # Handle browser CORS preflight requests.
 from fastapi.responses import JSONResponse, StreamingResponse  # Return JSON or stream responses.
 
+from app.env_loader import load_local_settings_env  # Load local.settings.json into process env for uvicorn runs.
 from app.schemas import build_chat_json_response, build_health_response, validate_chat_request  # Validation + response helpers.
 from app.services.chat_service import generate_reply, save_assistant_message, save_user_message, stream_tokens, tokenize_text  # Chat orchestration helpers.
 from app.services.storage import init_store  # Initialize local message storage path.
@@ -30,6 +31,7 @@ APP_VERSION = "0.1.0"  # Backend semantic version string.
 BASE_DIR = Path(__file__).resolve().parents[1]  # Root `backend/` directory.
 DATA_DIR = BASE_DIR / "data" / "conversations"  # Folder where session JSON files are stored.
 
+load_local_settings_env(BASE_DIR)  # Populate env vars from local.settings.json for local development runs.
 STORE_PATH = init_store(DATA_DIR)  # Ensure storage folder exists and keep normalized path.
 
 app = FastAPI(title="NeuralChat Backend", version=APP_VERSION)  # Create FastAPI app instance.
