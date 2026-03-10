@@ -51,6 +51,17 @@ class APITests(unittest.TestCase):
         self.assertEqual(chunks[0]["type"], "token")
         self.assertEqual(chunks[-1]["type"], "done")
 
+    def test_chat_options_preflight_allowed(self):
+        response = self.client.options(
+            "/api/chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("access-control-allow-origin"), "http://localhost:5173")
+
 
 if __name__ == "__main__":
     unittest.main()
