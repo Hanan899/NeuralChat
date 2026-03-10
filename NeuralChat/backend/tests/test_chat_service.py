@@ -49,6 +49,7 @@ class ChatServiceTests(unittest.TestCase):
             self.assertEqual(saved[0]["role"], "user")
             self.assertEqual(saved[1]["role"], "assistant")
             self.assertIn("reply(claude)", saved[1]["content"])
+            self.assertEqual(saved[1]["status"], "completed")
 
 
 if __name__ == "__main__":

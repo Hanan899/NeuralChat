@@ -45,17 +45,30 @@ def save_assistant_message(
     request_id: str,
     reply: str,
     store_path: Path,
+    status: str = "completed",
+    response_ms: int | None = None,
+    first_token_ms: int | None = None,
+    tokens_emitted: int | None = None,
 ) -> None:
+    payload: dict[str, Any] = {
+        "role": "assistant",
+        "content": reply,
+        "model": model,
+        "request_id": request_id,
+        "status": status,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    if response_ms is not None:
+        payload["response_ms"] = response_ms
+    if first_token_ms is not None:
+        payload["first_token_ms"] = first_token_ms
+    if tokens_emitted is not None:
+        payload["tokens_emitted"] = tokens_emitted
+
     append_message(
         store_path,
         session_id,
-        {
-            "role": "assistant",
-            "content": reply,
-            "model": model,
-            "request_id": request_id,
-            "created_at": datetime.now(UTC).isoformat(),
-        },
+        payload,
     )
 
 

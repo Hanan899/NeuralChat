@@ -18,6 +18,9 @@ export default function App() {
   const [backendHealthy, setBackendHealthy] = useState(false);
   const [requestId, setRequestId] = useState("");
   const [responseMs, setResponseMs] = useState<number | null>(null);
+  const [firstTokenMs, setFirstTokenMs] = useState<number | null>(null);
+  const [tokensEmitted, setTokensEmitted] = useState(0);
+  const [streamStatus, setStreamStatus] = useState("idle");
   const [errorText, setErrorText] = useState("");
 
   const sessionId = useMemo(() => "session-local-001", []);
@@ -37,6 +40,9 @@ export default function App() {
 
     setErrorText("");
     setIsSending(true);
+    setStreamStatus("streaming");
+    setTokensEmitted(0);
+    setFirstTokenMs(null);
 
     const userMessage: ChatMessage = {
       id: buildId(),
@@ -68,33 +74,44 @@ export default function App() {
         },
         (chunk: StreamChunk) => {
           if (chunk.type === "token") {
+            setTokensEmitted((value) => value + 1);
             setMessages((previous) =>
               previous.map((msg) => (msg.id === assistantId ? { ...msg, content: `${msg.content}${chunk.content}` } : msg))
             );
           }
 
           if (chunk.type === "error") {
+            setStreamStatus("interrupted");
             setErrorText(chunk.content || "Streaming error received.");
           }
 
           if (chunk.type === "done") {
+            setStreamStatus(chunk.status ?? "completed");
             if (chunk.request_id) {
               setRequestId(chunk.request_id);
             }
             if (typeof chunk.response_ms === "number") {
               setResponseMs(chunk.response_ms);
             }
+            if (typeof chunk.first_token_ms === "number") {
+              setFirstTokenMs(chunk.first_token_ms);
+            }
+            if (typeof chunk.tokens_emitted === "number") {
+              setTokensEmitted(chunk.tokens_emitted);
+            }
           }
         }
       );
 
       setRequestId(result.requestId);
-      if (responseMs === null) {
-        setResponseMs(result.responseMs);
-      }
+      setResponseMs(result.responseMs);
+      setFirstTokenMs(result.firstTokenMs);
+      setTokensEmitted(result.tokensEmitted);
+      setStreamStatus("completed");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown error";
-      setErrorText(text);
+      setStreamStatus("interrupted");
+      setErrorText(`${text} (Partial response may be saved in backend memory.)`);
     } finally {
       setIsSending(false);
     }
@@ -111,6 +128,9 @@ export default function App() {
         selectedModel={model}
         requestId={requestId}
         responseMs={responseMs}
+        firstTokenMs={firstTokenMs}
+        tokensEmitted={tokensEmitted}
+        streamStatus={streamStatus}
         backendHealthy={backendHealthy}
       />
 
