@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Frontend
+node_modules/
+dist/
+
+# Local settings and runtime files
+backend/local.settings.json
+backend/data/conversations/*.json
