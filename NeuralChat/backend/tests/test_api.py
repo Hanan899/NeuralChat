@@ -50,6 +50,9 @@ class APITests(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 2)
         self.assertEqual(chunks[0]["type"], "token")
         self.assertEqual(chunks[-1]["type"], "done")
+        self.assertEqual(chunks[-1]["status"], "completed")
+        self.assertIsInstance(chunks[-1]["first_token_ms"], int)
+        self.assertIsInstance(chunks[-1]["tokens_emitted"], int)
 
     def test_chat_options_preflight_allowed(self):
         response = self.client.options(

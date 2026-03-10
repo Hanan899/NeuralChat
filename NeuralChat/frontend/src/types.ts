@@ -22,4 +22,7 @@ export interface StreamChunk {
   content: string;
   request_id?: string;
   response_ms?: number;
+  first_token_ms?: number;
+  tokens_emitted?: number;
+  status?: "completed" | "interrupted";
 }
