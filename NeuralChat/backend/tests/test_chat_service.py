@@ -23,7 +23,7 @@ class ChatServiceTests(unittest.TestCase):
         request = {
             "session_id": "session-1",
             "message": "How are you?",
-            "model": "claude",
+            "model": "gpt-5",
             "stream": False,
         }
 
@@ -51,7 +51,7 @@ class ChatServiceTests(unittest.TestCase):
         saved = load_messages(store, "user-1", "session-1")
         self.assertEqual(saved[0]["role"], "user")
         self.assertEqual(saved[1]["role"], "assistant")
-        self.assertIn("reply(claude)", saved[1]["content"])
+        self.assertIn("reply(gpt-5)", saved[1]["content"])
         self.assertEqual(saved[1]["status"], "completed")
 
 

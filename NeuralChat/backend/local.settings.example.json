@@ -10,16 +10,13 @@
     "AZURE_BLOB_PROFILES_CONTAINER": "neurarchat-profiles",
 
     "CLERK_JWKS_URL": "....",
-    "CLERK_ISSUER": "h....",
+    "CLERK_ISSUER": "....",
     "CLERK_AUDIENCE": "",
 
     "AZURE_OPENAI_ENDPOINT": "....",
     "AZURE_OPENAI_API_KEY": "....",
     "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-5-chat",
     "AZURE_OPENAI_API_VERSION": "2025-01-01-preview",
-
-    "CLAUDE_API_KEY": "",
-    "OPENAI_API_KEY": "",
     "MOCK_STREAM_DELAY_MS": "20"
   }
 }

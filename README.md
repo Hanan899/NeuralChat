@@ -24,7 +24,8 @@ As of **March 11, 2026**, the following are implemented:
 - NDJSON chat streaming (`token`, `done`, `error`) with metrics (`response_ms`, `first_token_ms`, `tokens_emitted`, `status`)
 - Azure Blob conversation persistence scoped by `user_id/session_id`
 - Azure Blob profile touch metadata scoped by `user_id`
-- Azure OpenAI routing for `gpt4o` when `AZURE_OPENAI_*` is configured (mock fallback still available for local learning)
+- Azure OpenAI routing for `gpt-5` via deployment `gpt-5-chat`
+- No mock-response fallback path (provider/config issues return explicit API errors)
 - Backend and frontend tests/build passing locally
 
 ## Architecture
@@ -32,7 +33,7 @@ As of **March 11, 2026**, the following are implemented:
 - **Frontend:** Vite + React + TypeScript + Tailwind CSS + Clerk React SDK
 - **Backend:** FastAPI mounted in Azure Functions (`AsgiFunctionApp`)
 - **Auth:** Clerk JWT passed as `Authorization: Bearer <token>`
-- **Providers:** Claude, OpenAI fallback, Azure OpenAI primary path for `gpt4o`
+- **Providers:** Azure OpenAI GPT-5 only (`model: "gpt-5"`)
 - **Storage:** Azure Blob (`neurarchat-memory`, `neurarchat-profiles`) with per-user keys
 
 ## Authentication & Data Storage
@@ -142,7 +143,7 @@ Frontend:
 
 - `POST /api/chat` (auth required)
   - Header: `Authorization: Bearer <clerk_jwt>`
-  - Request: `{"session_id","message","model","stream"}`
+  - Request: `{"session_id","message","model":"gpt-5","stream"}`
   - Stream chunks:
     - `{"type":"token","content":"..."}`
     - `{"type":"done","request_id","response_ms","first_token_ms","tokens_emitted","status"}`

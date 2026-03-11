@@ -54,8 +54,8 @@
 - Goal: make model/provider choice transparent.
 - What you type: add debug field showing selected model + active provider source.
 - Why it works: improves observability and reduces confusion during testing.
-- Break test: remove Azure config and confirm fallback path.
-- Own rewrite: summarize routing order for `gpt4o`.
+- Break test: remove Azure config and confirm explicit provider-config error.
+- Own rewrite: summarize routing for `gpt-5`.
 
 ### Day 5 — Error UX Hardening
 

@@ -14,8 +14,7 @@ export function ModelSelector({ value, onChange }: ModelSelectorProps) {
         value={value}
         onChange={(event) => onChange(event.target.value as ChatModel)}
       >
-        <option value="claude">Claude</option>
-        <option value="gpt4o">GPT (Azure/OpenAI)</option>
+        <option value="gpt-5">GPT-5 (Azure OpenAI)</option>
       </select>
     </label>
   );

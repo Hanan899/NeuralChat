@@ -8,7 +8,7 @@ Beginner-first AI chat app with secure login, token-streamed responses, and user
 - Auth: Clerk (Email/Password sign-in + logout)
 - Backend: FastAPI behind Azure Functions
 - Storage: Azure Blob per user/session
-- Models: Claude + GPT-4o (Azure OpenAI path for `gpt4o`)
+- Models: Azure OpenAI GPT-5 only (`model: "gpt-5"`, deployment: `gpt-5-chat`)
 
 ## How Login Works
 
@@ -35,7 +35,7 @@ Where data is stored:
 {
   "session_id": "string",
   "message": "string",
-  "model": "claude | gpt4o",
+  "model": "gpt-5",
   "stream": true
 }
 ```
@@ -45,6 +45,11 @@ Stream response format (NDJSON):
 - `{"type":"token","content":"..."}`
 - `{"type":"done","request_id":"...","response_ms":123,"first_token_ms":45,"tokens_emitted":99,"status":"completed"}`
 - `{"type":"error","content":"...","request_id":"..."}`
+
+Provider behavior:
+
+- Missing/invalid Azure model configuration returns explicit backend errors.
+- No mock assistant responses are generated.
 
 ## Storage Layout
 
