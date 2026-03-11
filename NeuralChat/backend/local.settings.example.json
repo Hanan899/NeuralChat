@@ -4,17 +4,17 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
 
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-    "AZURE_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=neuralchat12;AccountKey=3K3eC5uuZpBr+yoV01336EpkZ8ueayF60p4NuMzb2ifdGHV2yXT8oe4lQybqTyVNtOELdNqrZ+rS+AStIjrsvQ==;EndpointSuffix=core.windows.net",
+    "AZURE_STORAGE_CONNECTION_STRING": "....",
 
     "AZURE_BLOB_MEMORY_CONTAINER": "neurarchat-memory",
     "AZURE_BLOB_PROFILES_CONTAINER": "neurarchat-profiles",
 
-    "CLERK_JWKS_URL": "https://light-condor-83.clerk.accounts.dev/.well-known/jwks.json",
-    "CLERK_ISSUER": "https://light-condor-83.clerk.accounts.dev",
+    "CLERK_JWKS_URL": "....",
+    "CLERK_ISSUER": "h....",
     "CLERK_AUDIENCE": "",
 
-    "AZURE_OPENAI_ENDPOINT": "https://abdul-mk75p7ba-eastus2.cognitiveservices.azure.com",
-    "AZURE_OPENAI_API_KEY": "27tw0l0T0mGNiMzMcXYYrR9MdaEZZ2SeZhLglR7nZSgzNBOgv4omJQQJ99CAACHYHv6XJ3w3AAAAACOGrCSp",
+    "AZURE_OPENAI_ENDPOINT": "....",
+    "AZURE_OPENAI_API_KEY": "....",
     "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-5-chat",
     "AZURE_OPENAI_API_VERSION": "2025-01-01-preview",
 

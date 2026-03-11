@@ -3,3 +3,9 @@
 .env.*
 *.json.local
 *.local.json
+*.local.settings.json
+
+__pycache__/
+*.pyc
+
+.venv/
