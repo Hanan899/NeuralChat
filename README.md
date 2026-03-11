@@ -3,34 +3,62 @@
 [![Status](https://img.shields.io/badge/status-active%20development-0a7ea4)](#project-status)
 [![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Tailwind-38bdf8)](#architecture)
 [![Backend](https://img.shields.io/badge/backend-FastAPI%20on%20Azure%20Functions-2563eb)](#architecture)
+[![Auth](https://img.shields.io/badge/auth-Clerk-6d28d9)](#authentication--data-storage)
+[![Storage](https://img.shields.io/badge/storage-Azure%20Blob-0ea5e9)](#authentication--data-storage)
 [![Python](https://img.shields.io/badge/python-3.13-3776ab)](#prerequisites)
 [![Node](https://img.shields.io/badge/node-24.x-339933)](#prerequisites)
 
-NeuralChat is a personal AI assistant platform focused on fast streaming chat, model routing, local-first development, and production-ready Azure integration.
+NeuralChat is a beginner-first AI chat platform with secure login, streaming responses, and user-scoped cloud memory.
 
-This repository is organized as a project root with the implementation inside [`NeuralChat/`](./NeuralChat).
+This repository is organized as a workspace root with implementation inside [`NeuralChat/`](./NeuralChat).
 
 ## Project Status
 
-As of **March 10, 2026**, the following are implemented and working:
+As of **March 11, 2026**, the following are implemented:
 
-- React frontend with chat UI, model selector, streaming token rendering, and debug panel
-- Python backend (FastAPI) hosted through Azure Functions entrypoint
-- `GET /api/health` and `POST /api/chat` endpoints
-- NDJSON streaming with completion metadata (`done`, `response_ms`, `first_token_ms`, `tokens_emitted`, `status`)
-- Interruption-safe streaming (partial response persistence with `status: interrupted`)
-- Local conversation persistence in JSON by `session_id`
-- CORS preflight support for browser clients
-- Azure OpenAI routing for `gpt4o` requests when `AZURE_OPENAI_*` variables are configured
-- Local environment autoload from `backend/local.settings.json` during `uvicorn` runs
-- Backend and frontend test/build pipeline passing locally
+- Clerk-based authentication in frontend (signed-in / signed-out shells, login UI, logout)
+- Backend JWT verification for Clerk bearer tokens via JWKS
+- Public `GET /api/health` endpoint
+- Auth-required `POST /api/chat` endpoint
+- Auth-required `GET /api/me` endpoint
+- NDJSON chat streaming (`token`, `done`, `error`) with metrics (`response_ms`, `first_token_ms`, `tokens_emitted`, `status`)
+- Azure Blob conversation persistence scoped by `user_id/session_id`
+- Azure Blob profile touch metadata scoped by `user_id`
+- Azure OpenAI routing for `gpt4o` when `AZURE_OPENAI_*` is configured (mock fallback still available for local learning)
+- Backend and frontend tests/build passing locally
 
 ## Architecture
 
-- **Frontend:** Vite + React + TypeScript + Tailwind CSS
-- **Backend:** FastAPI + Azure Functions adapter (`AsgiFunctionApp`)
+- **Frontend:** Vite + React + TypeScript + Tailwind CSS + Clerk React SDK
+- **Backend:** FastAPI mounted in Azure Functions (`AsgiFunctionApp`)
+- **Auth:** Clerk JWT passed as `Authorization: Bearer <token>`
 - **Providers:** Claude, OpenAI fallback, Azure OpenAI primary path for `gpt4o`
-- **Storage:** Local JSON conversation files (Azure Blob integration planned next phases)
+- **Storage:** Azure Blob (`neurarchat-memory`, `neurarchat-profiles`) with per-user keys
+
+## Authentication & Data Storage
+
+How login works:
+
+1. Signed-out users see Clerk `SignIn` screen.
+2. Clerk validates email/password and issues a session token.
+3. Frontend sends token to backend on protected calls.
+4. Backend verifies token signature/claims using Clerk JWKS.
+5. Backend reads `sub` as `user_id` and scopes storage to that user.
+
+Where data is stored:
+
+- **Credentials + auth sessions:** stored in **Clerk**.
+- **App chat history + profile metadata:** stored in **Azure Blob Storage** under user-specific paths.
+
+## Blob Key Layout
+
+- Conversation blobs: `conversations/{user_id}/{session_id}.json`
+- Profile blobs: `profiles/{user_id}.json`
+
+Containers:
+
+- `neurarchat-memory`
+- `neurarchat-profiles`
 
 ## Repository Layout
 
@@ -49,7 +77,8 @@ PROJECT/
 - Python 3.13+
 - Node.js 24+
 - npm 11+
-- (Optional for Azure Functions local runtime) Azure Functions Core Tools v4
+- Azure Storage connection (or Azurite for local Blob emulation)
+- Azure Functions Core Tools v4 (optional runtime path)
 
 ## Quick Start
 
@@ -80,52 +109,58 @@ func start
 
 ## Configuration
 
-Copy and update:
+Backend:
 
-- `NeuralChat/backend/local.settings.example.json` -> `NeuralChat/backend/local.settings.json`
+- Copy `NeuralChat/backend/local.settings.example.json` to `NeuralChat/backend/local.settings.json`
+- Configure:
+  - `AZURE_STORAGE_CONNECTION_STRING`
+  - `AZURE_BLOB_MEMORY_CONTAINER`
+  - `AZURE_BLOB_PROFILES_CONTAINER`
+  - `CLERK_JWKS_URL`
+  - `CLERK_ISSUER` (optional but recommended)
+  - `CLERK_AUDIENCE` (optional if your token has audience)
+  - `AZURE_OPENAI_ENDPOINT`
+  - `AZURE_OPENAI_API_KEY`
+  - `AZURE_OPENAI_DEPLOYMENT_NAME`
+  - `AZURE_OPENAI_API_VERSION`
 
-Recommended keys:
+Frontend:
 
-- `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_API_KEY`
-- `AZURE_OPENAI_DEPLOYMENT_NAME`
-- `AZURE_OPENAI_API_VERSION`
-- `MOCK_STREAM_DELAY_MS` (optional)
-
-If `AZURE_OPENAI_*` values are present, `model: "gpt4o"` uses Azure Chat Completions.
+- Copy `NeuralChat/frontend/.env.example` to `NeuralChat/frontend/.env`
+- Configure:
+  - `VITE_CLERK_PUBLISHABLE_KEY`
+  - `VITE_API_BASE_URL` (default `http://localhost:7071` for Functions runtime)
 
 ## API Summary
 
-- `GET /api/health`
+- `GET /api/health` (public)
   - Returns: `{"status":"ok","timestamp":"...","version":"..."}`
 
-- `POST /api/chat`
+- `GET /api/me` (auth required)
+  - Header: `Authorization: Bearer <clerk_jwt>`
+  - Returns: `{"user_id":"...","status":"ok"}`
+
+- `POST /api/chat` (auth required)
+  - Header: `Authorization: Bearer <clerk_jwt>`
   - Request: `{"session_id","message","model","stream"}`
   - Stream chunks:
     - `{"type":"token","content":"..."}`
     - `{"type":"done","request_id","response_ms","first_token_ms","tokens_emitted","status"}`
+    - `{"type":"error","content":"...","request_id":"..."}`
 
-## Quality & Verification
+## Verification
 
-Current local checks passing:
+Current local checks:
 
-- Backend: `python -m unittest discover -s tests -v`
-- Frontend tests: `npm run test`
+- Backend: `source .venv/bin/activate && python -m unittest discover -s tests -v`
+- Frontend tests: `npm run test -- --run`
 - Frontend build: `npm run build`
 
 ## Security Notes
 
-- Never commit real secrets to tracked files.
-- Keep real credentials only in local/private config (`local.settings.json`, `.env`, secret stores).
-- Rotate any key immediately if exposed in Git history.
-
-## Roadmap (Next)
-
-- Azure Blob persistence migration
-- Memory viewer/edit panel
-- File upload and document context
-- Agent mode and tool orchestration (MCP-aligned)
-- Deployment pipeline hardening and release docs
+- Never commit real credentials to tracked files.
+- Keep real keys only in local/private config or cloud secret stores.
+- Rotate leaked keys immediately if they ever appear in history.
 
 ## Internal Docs
 

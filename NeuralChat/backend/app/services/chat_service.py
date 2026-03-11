@@ -11,7 +11,6 @@ import asyncio
 import os
 import re
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from typing import AsyncIterator
 
@@ -20,14 +19,15 @@ from app.services.providers import generate_reply as generate_model_reply
 from app.services.storage import append_message, load_messages
 
 
-async def generate_reply(request: dict[str, Any], store_path: Path) -> str:
-    history = load_messages(store_path, request["session_id"])
+async def generate_reply(request: dict[str, Any], store: dict[str, Any], user_id: str) -> str:
+    history = load_messages(store, user_id, request["session_id"])
     return await generate_model_reply(model=request["model"], message=request["message"], history=history)
 
 
-def save_user_message(request: dict[str, Any], request_id: str, store_path: Path) -> None:
+def save_user_message(request: dict[str, Any], request_id: str, store: dict[str, Any], user_id: str) -> None:
     append_message(
-        store_path,
+        store,
+        user_id,
         request["session_id"],
         {
             "role": "user",
@@ -44,7 +44,8 @@ def save_assistant_message(
     model: ChatModel,
     request_id: str,
     reply: str,
-    store_path: Path,
+    store: dict[str, Any],
+    user_id: str,
     status: str = "completed",
     response_ms: int | None = None,
     first_token_ms: int | None = None,
@@ -66,7 +67,8 @@ def save_assistant_message(
         payload["tokens_emitted"] = tokens_emitted
 
     append_message(
-        store_path,
+        store,
+        user_id,
         session_id,
         payload,
     )

@@ -1,3 +1,4 @@
+import { SignIn, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/clerk-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { checkHealth, streamChat } from "./api";
@@ -10,7 +11,20 @@ function buildId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export default function App() {
+function resolveSessionId(userId: string): string {
+  const storageKey = `neuralchat:session:${userId}`;
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing) {
+    return existing;
+  }
+
+  const created = `session-${userId}-${crypto.randomUUID()}`;
+  window.localStorage.setItem(storageKey, created);
+  return created;
+}
+
+function ChatShell() {
+  const { getToken, userId } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [model, setModel] = useState<ChatModel>("claude");
@@ -23,10 +37,14 @@ export default function App() {
   const [streamStatus, setStreamStatus] = useState("idle");
   const [errorText, setErrorText] = useState("");
 
-  const sessionId = useMemo(() => "session-local-001", []);
+  const sessionId = useMemo(() => {
+    if (!userId) {
+      return "session-unknown";
+    }
+    return resolveSessionId(userId);
+  }, [userId]);
 
   useEffect(() => {
-    // Explain this code: we ping backend once on page load.
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
   }, []);
 
@@ -65,6 +83,11 @@ export default function App() {
     setInput("");
 
     try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+
       const result = await streamChat(
         {
           session_id: sessionId,
@@ -72,6 +95,7 @@ export default function App() {
           model,
           stream: true
         },
+        authToken,
         (chunk: StreamChunk) => {
           if (chunk.type === "token") {
             setTokensEmitted((value) => value + 1);
@@ -119,9 +143,12 @@ export default function App() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-4 p-4">
-      <header>
-        <h1 className="text-3xl font-bold text-brand-dark">NeuralChat</h1>
-        <p className="text-sm text-slate-700">Beginner build: streaming chat + model switch + debug visibility.</p>
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-brand-dark">NeuralChat</h1>
+          <p className="text-sm text-slate-700">Authenticated chat with user-scoped cloud memory.</p>
+        </div>
+        <UserButton afterSignOutUrl="/" />
       </header>
 
       <DebugPanel
@@ -162,5 +189,25 @@ export default function App() {
         </div>
       </form>
     </main>
+  );
+}
+
+export default function App() {
+  return (
+    <>
+      <SignedOut>
+        <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col items-center justify-center gap-6 p-4">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold text-brand-dark">NeuralChat</h1>
+            <p className="mt-2 text-slate-700">Sign in to access your personal AI workspace.</p>
+          </div>
+          <SignIn />
+        </main>
+      </SignedOut>
+
+      <SignedIn>
+        <ChatShell />
+      </SignedIn>
+    </>
   );
 }
