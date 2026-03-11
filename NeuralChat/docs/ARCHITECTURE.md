@@ -1,39 +1,66 @@
-# NeuralChat Architecture (Beginner Version)
+# NeuralChat Architecture (Auth + Blob Phase)
 
 ## 1) Big Picture
-NeuralChat has two parts:
-- `frontend` (React + Tailwind): what you see in the browser.
-- `backend` (Azure Functions + FastAPI in Python): APIs, model calls, and memory.
 
-Request flow:
-1. You type a message in React.
-2. Frontend calls `POST /api/chat`.
-3. Backend stores your user message in local JSON memory.
-4. Backend picks Claude or GPT-4o.
-5. Backend returns NDJSON token chunks.
-6. Frontend appends tokens live to the assistant bubble.
-7. Backend stores final assistant reply.
+NeuralChat has two runtime parts:
 
-## 2) API Contracts
-- `GET /api/health`
-  - Returns: `{ status: "ok", timestamp, version }`
+- `frontend/` (React + Tailwind + Clerk): chat UI and login/logout shell.
+- `backend/` (FastAPI mounted in Azure Functions): auth verification, model routing, streaming, persistence.
 
-- `POST /api/chat`
-  - Input: `{ session_id, message, model, stream }`
+## 2) End-to-End Request Flow
+
+1. User lands signed out and sees Clerk `SignIn`.
+2. Clerk validates email/password and creates a session.
+3. Frontend requests session token from Clerk.
+4. Frontend calls protected backend APIs with `Authorization: Bearer <token>`.
+5. Backend verifies token via Clerk JWKS and extracts `user_id` from `sub`.
+6. Backend stores user message in Azure Blob under `user_id/session_id`.
+7. Backend generates model reply (Claude or GPT-4o path).
+8. Backend streams NDJSON token chunks to frontend.
+9. Frontend renders assistant message incrementally.
+10. Backend saves final assistant message and stream metadata.
+
+## 3) API Contracts
+
+- `GET /api/health` (public)
+  - Returns: `{ "status": "ok", "timestamp": "...", "version": "..." }`
+
+- `GET /api/me` (auth required)
+  - Header: `Authorization: Bearer <clerk_jwt>`
+  - Returns: `{ "user_id": "...", "status": "ok" }`
+
+- `POST /api/chat` (auth required)
+  - Header: `Authorization: Bearer <clerk_jwt>`
+  - Input: `{ "session_id", "message", "model", "stream" }`
   - Stream output lines (NDJSON):
     - `{"type":"token","content":"..."}`
-    - `{"type":"done","content":"","request_id":"...","response_ms":123}`
+    - `{"type":"done","content":"","request_id":"...","response_ms":123,"first_token_ms":45,"tokens_emitted":55,"status":"completed"}`
+    - `{"type":"error","content":"...","request_id":"..."}`
 
-## 3) Local Memory Design
-- Path: `backend/data/conversations/<session_id>.json`
-- Format: array of messages with role/content/model/request_id/created_at.
-- Why this design: easy to inspect manually before moving to Azure Blob.
+## 4) Storage Design (Azure Blob)
 
-## 4) Model Routing
-- `model = "claude"` -> calls Anthropic API if `CLAUDE_API_KEY` is set.
-- `model = "gpt4o"` -> calls OpenAI API if `OPENAI_API_KEY` is set.
-- If key is missing, backend returns a mock response so development can continue.
+Containers:
 
-## 5) Next Azure Upgrade Path
-- Replace local JSON store with Azure Blob container `neurarchat-memory`.
-- Keep the same chat service interface so frontend remains unchanged.
+- `neurarchat-memory` for conversations
+- `neurarchat-profiles` for minimal user profile metadata
+
+Blob key layout:
+
+- `conversations/{user_id}/{session_id}.json`
+- `profiles/{user_id}.json`
+
+Notes:
+
+- Client never sends `user_id` in request body.
+- `user_id` is derived only from verified JWT claims.
+- Existing local JSON history is intentionally not migrated.
+
+## 5) Model Routing
+
+- `model = "claude"`:
+  - Uses Anthropic API if `CLAUDE_API_KEY` exists.
+- `model = "gpt4o"`:
+  - Uses Azure OpenAI if `AZURE_OPENAI_*` config exists.
+  - Falls back to OpenAI if `OPENAI_API_KEY` exists and Azure config is absent.
+- Missing provider credentials:
+  - Returns mock response so local UI and streaming flow remain testable.

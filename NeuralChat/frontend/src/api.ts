@@ -11,13 +11,17 @@ export async function checkHealth(): Promise<boolean> {
 
 export async function streamChat(
   payload: ChatRequest,
+  authToken: string,
   onChunk: (chunk: StreamChunk) => void
 ): Promise<{ requestId: string; responseMs: number; firstTokenMs: number | null; tokensEmitted: number }> {
   const startedAt = performance.now();
 
   const response = await fetch(`${API_BASE_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`
+    },
     body: JSON.stringify(payload)
   });
 
