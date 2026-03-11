@@ -1,0 +1,20 @@
+[
+  {
+    "role": "user",
+    "content": "test stream",
+    "model": "claude",
+    "request_id": "36cd12f0-655a-4aff-bcf8-0f16ab4ded1b",
+    "created_at": "2026-03-10T21:24:42.926191+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "Got it \u2014 I see your messages coming through! Looks like the stream is working. How would you like to test next?",
+    "model": "claude",
+    "request_id": "36cd12f0-655a-4aff-bcf8-0f16ab4ded1b",
+    "status": "completed",
+    "created_at": "2026-03-10T21:24:49.300501+00:00",
+    "response_ms": 6374,
+    "first_token_ms": 5930,
+    "tokens_emitted": 22
+  }
+]
