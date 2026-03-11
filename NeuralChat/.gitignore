@@ -8,9 +8,7 @@ node_modules/
 dist/
 
 # Local settings and runtime files
-local.settings.json
-data/conversations/*.json
-.env
-.env.*
-*.json.local
-*.local.json
+backend/local.settings.json
+backend/data/conversations/*.json
+frontend/.env
+backend/local.settings.example.json
