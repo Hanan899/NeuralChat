@@ -10,7 +10,5 @@ dist/
 # Local settings and runtime files
 backend/local.settings.json
 backend/data/conversations/*.json
-.env
-.env.*
-*.json.local
-*.local.json
+frontend/.env
+backend/local.settings.example.json

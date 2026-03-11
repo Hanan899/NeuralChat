@@ -1,0 +1,188 @@
+[
+  {
+    "role": "user",
+    "content": "hello",
+    "model": "claude",
+    "request_id": "2bf21abe-e011-4e54-9622-e28d286b3211",
+    "created_at": "2026-03-10T18:31:35.888161+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock claude] I received your message: 'hello'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "claude",
+    "request_id": "2bf21abe-e011-4e54-9622-e28d286b3211",
+    "created_at": "2026-03-10T18:31:35.895643+00:00"
+  },
+  {
+    "role": "user",
+    "content": "kasy ho",
+    "model": "claude",
+    "request_id": "834fcb96-3018-48ab-92f0-9ec2faa1c946",
+    "created_at": "2026-03-10T18:32:23.874563+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock claude] I received your message: 'kasy ho'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "claude",
+    "request_id": "834fcb96-3018-48ab-92f0-9ec2faa1c946",
+    "created_at": "2026-03-10T18:32:23.876431+00:00"
+  },
+  {
+    "role": "user",
+    "content": "hi",
+    "model": "gpt4o",
+    "request_id": "15d31969-d8ce-45a4-a055-d3620d0aad84",
+    "created_at": "2026-03-10T19:05:14.555801+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock gpt4o] I received your message: 'hi'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "gpt4o",
+    "request_id": "15d31969-d8ce-45a4-a055-d3620d0aad84",
+    "created_at": "2026-03-10T19:05:14.560112+00:00"
+  },
+  {
+    "role": "user",
+    "content": "hi",
+    "model": "gpt4o",
+    "request_id": "bda888f9-449b-461a-8cec-d9c6ffe4b50a",
+    "created_at": "2026-03-10T21:10:15.010356+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock gpt4o] I received your message: 'hi'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "gpt4o",
+    "request_id": "bda888f9-449b-461a-8cec-d9c6ffe4b50a",
+    "status": "completed",
+    "created_at": "2026-03-10T21:10:15.026588+00:00",
+    "response_ms": 16,
+    "first_token_ms": 15,
+    "tokens_emitted": 22
+  },
+  {
+    "role": "user",
+    "content": "Tell me About Pakistan",
+    "model": "gpt4o",
+    "request_id": "5f390f34-f716-47d9-adb3-dfbc0d0d9593",
+    "created_at": "2026-03-10T21:10:39.995938+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock gpt4o] I received your message: 'Tell me About Pakistan'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "gpt4o",
+    "request_id": "5f390f34-f716-47d9-adb3-dfbc0d0d9593",
+    "status": "completed",
+    "created_at": "2026-03-10T21:10:39.998317+00:00",
+    "response_ms": 2,
+    "first_token_ms": 1,
+    "tokens_emitted": 25
+  },
+  {
+    "role": "user",
+    "content": "hello",
+    "model": "gpt4o",
+    "request_id": "b1b444d2-fa5a-43f1-9aac-fbacdb2f93c7",
+    "created_at": "2026-03-10T21:16:10.361246+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock gpt4o] I received your message: 'hello'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "gpt4o",
+    "request_id": "b1b444d2-fa5a-43f1-9aac-fbacdb2f93c7",
+    "status": "completed",
+    "created_at": "2026-03-10T21:16:10.365327+00:00",
+    "response_ms": 4,
+    "first_token_ms": 3,
+    "tokens_emitted": 22
+  },
+  {
+    "role": "user",
+    "content": "hi",
+    "model": "gpt4o",
+    "request_id": "ccb9d464-9763-4c96-a0a7-65a7e382fb72",
+    "created_at": "2026-03-10T21:22:12.266894+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock gpt4o] I received your message: 'hi'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "gpt4o",
+    "request_id": "ccb9d464-9763-4c96-a0a7-65a7e382fb72",
+    "status": "completed",
+    "created_at": "2026-03-10T21:22:12.283411+00:00",
+    "response_ms": 16,
+    "first_token_ms": 16,
+    "tokens_emitted": 22
+  },
+  {
+    "role": "user",
+    "content": "tell me about pakistan",
+    "model": "gpt4o",
+    "request_id": "a56bc030-59b0-41f2-83a9-0a6dc5ab7349",
+    "created_at": "2026-03-10T21:22:24.543454+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "[Mock gpt4o] I received your message: 'tell me about pakistan'. This is a local training response. Add API keys in backend/local.settings.json to use real models.",
+    "model": "gpt4o",
+    "request_id": "a56bc030-59b0-41f2-83a9-0a6dc5ab7349",
+    "status": "completed",
+    "created_at": "2026-03-10T21:22:24.545379+00:00",
+    "response_ms": 1,
+    "first_token_ms": 1,
+    "tokens_emitted": 25
+  },
+  {
+    "role": "user",
+    "content": "hello",
+    "model": "gpt4o",
+    "request_id": "28e907d8-43e7-4d28-b761-ae4d6741f4a5",
+    "created_at": "2026-03-10T21:35:10.619533+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello there! \ud83d\udc4b  \nHow are you doing today?",
+    "model": "gpt4o",
+    "request_id": "28e907d8-43e7-4d28-b761-ae4d6741f4a5",
+    "status": "completed",
+    "created_at": "2026-03-10T21:35:13.070413+00:00",
+    "response_ms": 2450,
+    "first_token_ms": 2302,
+    "tokens_emitted": 8
+  },
+  {
+    "role": "user",
+    "content": "tell me about Pakistan in detail",
+    "model": "gpt4o",
+    "request_id": "b3d0fd8b-5beb-4dd0-ad98-79bf7441b53a",
+    "created_at": "2026-03-10T21:35:30.926183+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "Sure! Here\u2019s a detailed overview of **Pakistan**:  \n\n---\n\n### \ud83c\udf0d **General Overview**\n**Pakistan**, officially the *Islamic Republic of Pakistan*, is a country located in **South Asia**. It shares borders with **India** to the east, **Afghanistan** and **Iran** to the west, **China** to the north, and the **Arabian Sea** to the south. With a population of over **240 million people**, it is the **fifth most populous country** in the world.\n\n---\n\n### \ud83c\udfdb\ufe0f **History**\n- **Ancient Period:** The region now known as Pakistan was home to one of the world\u2019s earliest civilizations \u2014 the **Indus Valley Civilization** (around 2600\u20131900 BCE), with major sites like **Mohenjo-Daro** and **Harappa**.  \n- **Islamic Influence:** From the 8th century onward, Islam spread through the region, especially during the rule of various Muslim empires such as the **Delhi Sultanate** and the **Mughal Empire**.  \n- **British Period:** In the mid-19th century, the area became part of **British India**.  \n- **Independence:** Pakistan was created on **August 14, 1947**, following the partition of British India, as a homeland for Muslims under the leadership of **Muhammad Ali Jinnah**. Initially, it consisted of two parts \u2014 **West Pakistan** (present-day Pakistan) and **East Pakistan** (now Bangladesh, which gained independence in 1971).\n\n---\n\n### \ud83c\udfd9\ufe0f **Geography**\nPakistan has a diverse landscape:\n- **Northern Areas:** Home to some of the world\u2019s highest mountains, including **K2** (the second-highest peak on Earth).  \n- **Plains:** The **Indus River** and its tributaries create fertile plains in Punjab and Sindh.  \n- **Deserts:** The **Thar Desert** lies in the southeast.  \n- **Coastline:** The country has a coastline along the **Arabian Sea**, with ports like **Karachi** and **Gwadar**.\n\n---\n\n### \ud83d\udc65 **People and Culture**\n- **Ethnic Groups:** Major groups include Punjabis, Sindhis, Pashtuns, Baloch, and Muhajirs.  \n- **Languages:** **Urdu** is the national language, while **English** is widely used in government and business. Regional languages include **Punjabi**, **Sindhi**, **Pashto**, and **Balochi**.  \n- **Religion:** Around 96% of Pakistanis are **Muslim**, with small Christian, Hindu, and other minorities.  \n- **Culture:** Pakistani culture blends Islamic traditions with South Asian, Persian, and Central Asian influences. The country is known for its **music**, **poetry**, **textiles**, **cuisine**, and **hospitality**.\n\n---\n\n### \ud83d\udcb0 **Economy**\nPakistan has a **mixed economy** with agriculture, manufacturing, and services sectors.  \n- **Agriculture:** Major crops include wheat, rice, cotton, and sugarcane.  \n- **Industry:** Textiles, cement, steel, and chemicals are key industries.  \n- **Technology and Services:** The IT sector is growing rapidly, and remittances from overseas Pakistanis are a major source of income.  \n- **Challenges:** The economy faces issues such as inflation, energy shortages, and debt, but also has strong potential due to its young population and strategic location.\n\n---\n\n### \ud83c\udfde\ufe0f **Tourism and Heritage**\nPakistan is increasingly recognized as a top destination for adventure and cultural tourism.  \n- **Natural Beauty:** Hunza Valley, Skardu, Fairy Meadows, and Swat Valley are famous for breathtaking scenery.  \n- **Historical Sites:** Lahore Fort, Badshahi Mosque, Taxila, and Mohenjo-Daro are UNESCO World Heritage Sites.  \n- **Religious Tourism:** Important sites for Buddhists, Sikhs, and Muslims attract international visitors.\n\n---\n\n### \ud83e\udded **Government and Politics**\nPakistan is a **federal parliamentary republic**.  \n- **Capital:** Islamabad  \n- **Major Cities:** Karachi, Lahore, Faisalabad, Rawalpindi, Peshawar, Quetta  \n- **Political System:** The President is the head of state, and the Prime Minister is the head of government.  \n- **Provinces:** Punjab, Sindh, Khyber Pakhtunkhwa, and Balochistan, along with the Islamabad Capital Territory and Gilgit-Baltistan.\n\n---\n\nWould you like me to include information about **Pakistan\u2019s foreign relations**, **education system**, or **modern challenges** next?",
+    "model": "gpt4o",
+    "request_id": "b3d0fd8b-5beb-4dd0-ad98-79bf7441b53a",
+    "status": "completed",
+    "created_at": "2026-03-10T21:35:58.172265+00:00",
+    "response_ms": 27245,
+    "first_token_ms": 15178,
+    "tokens_emitted": 572
+  },
+  {
+    "role": "user",
+    "content": "Hello",
+    "model": "gpt4o",
+    "request_id": "7c8eef36-4f7f-4153-ba7d-dc66c4b331a9",
+    "created_at": "2026-03-11T14:37:04.750079+00:00"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello again! \ud83d\udc4b  \nHow are you doing today? Would you like to continue learning about Pakistan, or shall we talk about something else?",
+    "model": "gpt4o",
+    "request_id": "7c8eef36-4f7f-4153-ba7d-dc66c4b331a9",
+    "status": "completed",
+    "created_at": "2026-03-11T14:37:09.410583+00:00",
+    "response_ms": 4660,
+    "first_token_ms": 4192,
+    "tokens_emitted": 23
+  }
+]
