@@ -1,6 +1,6 @@
 # NeuralChat
 
-Beginner-first AI chat app with secure login, token-streamed responses, and user-scoped cloud storage.
+Beginner-first AI chat app with secure login, streaming responses, deep memory, and optional web search with citations.
 
 ## Current Scope
 
@@ -8,25 +8,48 @@ Beginner-first AI chat app with secure login, token-streamed responses, and user
 - Auth: Clerk (Email/Password sign-in + logout)
 - Backend: FastAPI behind Azure Functions
 - Storage: Azure Blob per user/session
-- Models: Azure OpenAI GPT-5 only (`model: "gpt-5"`, deployment: `gpt-5-chat`)
+- Model: Azure OpenAI GPT-5 only (`model: "gpt-5"`, deployment example `gpt-5-chat`)
+- Search: Tavily with 24-hour Blob cache
+
+## Core Features Implemented
+
+- Authenticated streaming chat (`token`, `done`, `error` chunks)
+- User-scoped conversation persistence
+- Deep Memory profile extraction and injection into prompts
+- Memory controls:
+  - `GET /api/me`
+  - `PATCH /api/me/memory`
+  - `DELETE /api/me/memory`
+- Web search flow:
+  - Auto decision (`should_search`)
+  - Force search from frontend toggle (`force_search`)
+  - Search cache in `neurarchat-memory/search-cache/{hash}.json`
+  - Source citations returned to frontend
+- Search UX:
+  - Nav status dot (`GET /api/search/status`)
+  - `🌐` badge on assistant messages when search is used
+  - Collapsible Sources panel below assistant message
 
 ## How Login Works
 
 1. Signed-out user sees Clerk login page.
 2. Clerk validates credentials and issues a session token.
-3. Frontend sends `Authorization: Bearer <token>` for protected API calls.
+3. Frontend sends `Authorization: Bearer <token>` for protected calls.
 4. Backend verifies JWT using Clerk JWKS.
 5. Backend extracts `user_id` (`sub`) and scopes all storage operations to that user.
 
 Where data is stored:
 
 - Credentials and auth sessions: **Clerk**
-- App chat/profile data: **Azure Blob Storage**
+- App chat/profile/search-cache data: **Azure Blob Storage**
 
 ## API Endpoints
 
 - `GET /api/health` (public)
+- `GET /api/search/status` (public)
 - `GET /api/me` (auth required)
+- `PATCH /api/me/memory` (auth required)
+- `DELETE /api/me/memory` (auth required)
 - `POST /api/chat` (auth required)
 
 `/api/chat` request body:
@@ -36,32 +59,34 @@ Where data is stored:
   "session_id": "string",
   "message": "string",
   "model": "gpt-5",
-  "stream": true
+  "stream": true,
+  "force_search": false
 }
 ```
 
 Stream response format (NDJSON):
 
 - `{"type":"token","content":"..."}`
-- `{"type":"done","request_id":"...","response_ms":123,"first_token_ms":45,"tokens_emitted":99,"status":"completed"}`
+- `{"type":"done","request_id":"...","response_ms":123,"first_token_ms":45,"tokens_emitted":99,"status":"completed","search_used":true,"sources":[...]}`
 - `{"type":"error","content":"...","request_id":"..."}`
 
-Provider behavior:
+Notes:
 
-- Missing/invalid Azure model configuration returns explicit backend errors.
-- No mock assistant responses are generated.
+- If force search is ON and no web results are found, backend returns a clear web-only message.
+- If Tavily is unavailable, backend returns a clear provider-unavailable message.
 
 ## Storage Layout
 
 - Container `neurarchat-memory`:
   - `conversations/{user_id}/{session_id}.json`
+  - `search-cache/{sha256(normalized_query)}.json`
 - Container `neurarchat-profiles`:
   - `profiles/{user_id}.json`
 
 ## Folder Structure
 
-- `frontend/` UI, auth shell, stream rendering
-- `backend/` APIs, auth verification, provider routing, blob persistence
+- `frontend/` UI, auth shell, streaming, search badges/sources
+- `backend/` APIs, auth verification, provider routing, memory/search services, blob persistence
 - `docs/` architecture + roadmap
 - `journal/` learning and debugging notes
 
@@ -102,6 +127,13 @@ npm run dev
 - `AZURE_OPENAI_API_KEY`
 - `AZURE_OPENAI_DEPLOYMENT_NAME`
 - `AZURE_OPENAI_API_VERSION`
+- `TAVILY_API_KEY`
+
+## Testing
+
+- Backend: `cd backend && .venv/bin/pytest -q tests`
+- Frontend tests: `cd frontend && npm run test -- --run`
+- Frontend build: `cd frontend && npm run build`
 
 ## Grip Workflow
 

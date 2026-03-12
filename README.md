@@ -5,61 +5,67 @@
 [![Backend](https://img.shields.io/badge/backend-FastAPI%20on%20Azure%20Functions-2563eb)](#architecture)
 [![Auth](https://img.shields.io/badge/auth-Clerk-6d28d9)](#authentication--data-storage)
 [![Storage](https://img.shields.io/badge/storage-Azure%20Blob-0ea5e9)](#authentication--data-storage)
+[![Web Search](https://img.shields.io/badge/search-Tavily-16a34a)](#web-search)
 [![Python](https://img.shields.io/badge/python-3.13-3776ab)](#prerequisites)
 [![Node](https://img.shields.io/badge/node-24.x-339933)](#prerequisites)
 
-NeuralChat is a beginner-first AI chat platform with secure login, streaming responses, and user-scoped cloud memory.
+NeuralChat is a beginner-first AI chat platform with secure login, streaming responses, user-scoped cloud memory, and optional web search with citations.
 
 This repository is organized as a workspace root with implementation inside [`NeuralChat/`](./NeuralChat).
 
 ## Project Status
 
-As of **March 11, 2026**, the following are implemented:
+As of **March 12, 2026**, the following are implemented and working:
 
-- Clerk-based authentication in frontend (signed-in / signed-out shells, login UI, logout)
+- Clerk login/logout frontend shell (signed-in and signed-out views)
 - Backend JWT verification for Clerk bearer tokens via JWKS
-- Public `GET /api/health` endpoint
-- Auth-required `POST /api/chat` endpoint
-- Auth-required `GET /api/me` endpoint
-- NDJSON chat streaming (`token`, `done`, `error`) with metrics (`response_ms`, `first_token_ms`, `tokens_emitted`, `status`)
+- Public `GET /api/health` and `GET /api/search/status`
+- Auth-required `POST /api/chat`, `GET /api/me`, `PATCH /api/me/memory`, `DELETE /api/me/memory`
+- NDJSON streaming (`token`, `done`, `error`) with metrics (`response_ms`, `first_token_ms`, `tokens_emitted`, `status`)
 - Azure Blob conversation persistence scoped by `user_id/session_id`
-- Azure Blob profile touch metadata scoped by `user_id`
-- Azure OpenAI routing for `gpt-5` via deployment `gpt-5-chat`
-- No mock-response fallback path (provider/config issues return explicit API errors)
-- Backend and frontend tests/build passing locally
+- Deep Memory profile facts extraction + prompt injection for chat
+- Tavily web search integration with 24-hour Blob cache (`search-cache/{sha256(query)}.json`)
+- Frontend web-search UX: status dot, per-message globe badge, expandable source citations
+- Manual force web-search toggle in chat compose
+- Azure OpenAI GPT-5 path only (`model: "gpt-5"`, deployment example `gpt-5-chat`)
 
 ## Architecture
 
 - **Frontend:** Vite + React + TypeScript + Tailwind CSS + Clerk React SDK
 - **Backend:** FastAPI mounted in Azure Functions (`AsgiFunctionApp`)
-- **Auth:** Clerk JWT passed as `Authorization: Bearer <token>`
-- **Providers:** Azure OpenAI GPT-5 only (`model: "gpt-5"`)
-- **Storage:** Azure Blob (`neurarchat-memory`, `neurarchat-profiles`) with per-user keys
+- **Auth:** Clerk JWT (`Authorization: Bearer <token>`)
+- **Providers:** Azure OpenAI GPT-5 only
+- **Storage:** Azure Blob
+  - `neurarchat-memory` (conversations + search cache)
+  - `neurarchat-profiles` (user profile facts)
 
 ## Authentication & Data Storage
 
 How login works:
 
-1. Signed-out users see Clerk `SignIn` screen.
-2. Clerk validates email/password and issues a session token.
-3. Frontend sends token to backend on protected calls.
-4. Backend verifies token signature/claims using Clerk JWKS.
-5. Backend reads `sub` as `user_id` and scopes storage to that user.
+1. Signed-out users see Clerk `SignIn`.
+2. Clerk validates credentials and issues a session token.
+3. Frontend sends token on protected API calls.
+4. Backend verifies token via Clerk JWKS.
+5. Backend reads `sub` as `user_id` and scopes all storage to that user.
 
 Where data is stored:
 
-- **Credentials + auth sessions:** stored in **Clerk**.
-- **App chat history + profile metadata:** stored in **Azure Blob Storage** under user-specific paths.
+- **Credentials and sessions:** Clerk
+- **Chat history / memory profiles / search cache metadata:** Azure Blob
 
-## Blob Key Layout
+## Web Search
 
-- Conversation blobs: `conversations/{user_id}/{session_id}.json`
-- Profile blobs: `profiles/{user_id}.json`
+NeuralChat supports two search modes per message:
 
-Containers:
+- **Auto mode:** backend decides via a small GPT call (`should_search`).
+- **Force mode (UI toggle):** backend always attempts web search.
 
-- `neurarchat-memory`
-- `neurarchat-profiles`
+Behavior:
+
+- Search results are cached for 24 hours in Blob.
+- If search is used, UI shows `🌐` badge and a collapsible Sources section.
+- If force-search is enabled and no results are found, backend returns a clear web-only message (no silent fallback to model-only answer).
 
 ## Repository Layout
 
@@ -78,7 +84,7 @@ PROJECT/
 - Python 3.13+
 - Node.js 24+
 - npm 11+
-- Azure Storage connection (or Azurite for local Blob emulation)
+- Azure Storage connection (or Azurite)
 - Azure Functions Core Tools v4 (optional runtime path)
 
 ## Quick Start
@@ -110,58 +116,68 @@ func start
 
 ## Configuration
 
-Backend:
+Backend (`NeuralChat/backend/local.settings.json`):
 
-- Copy `NeuralChat/backend/local.settings.example.json` to `NeuralChat/backend/local.settings.json`
-- Configure:
-  - `AZURE_STORAGE_CONNECTION_STRING`
-  - `AZURE_BLOB_MEMORY_CONTAINER`
-  - `AZURE_BLOB_PROFILES_CONTAINER`
-  - `CLERK_JWKS_URL`
-  - `CLERK_ISSUER` (optional but recommended)
-  - `CLERK_AUDIENCE` (optional if your token has audience)
-  - `AZURE_OPENAI_ENDPOINT`
-  - `AZURE_OPENAI_API_KEY`
-  - `AZURE_OPENAI_DEPLOYMENT_NAME`
-  - `AZURE_OPENAI_API_VERSION`
+- `AZURE_STORAGE_CONNECTION_STRING`
+- `AZURE_BLOB_MEMORY_CONTAINER`
+- `AZURE_BLOB_PROFILES_CONTAINER`
+- `CLERK_JWKS_URL`
+- `CLERK_ISSUER` (recommended)
+- `CLERK_AUDIENCE` (optional)
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_API_KEY`
+- `AZURE_OPENAI_DEPLOYMENT_NAME`
+- `AZURE_OPENAI_API_VERSION`
+- `TAVILY_API_KEY`
 
-Frontend:
+Frontend (`NeuralChat/frontend/.env`):
 
-- Copy `NeuralChat/frontend/.env.example` to `NeuralChat/frontend/.env`
-- Configure:
-  - `VITE_CLERK_PUBLISHABLE_KEY`
-  - `VITE_API_BASE_URL` (default `http://localhost:7071` for Functions runtime)
+- `VITE_CLERK_PUBLISHABLE_KEY`
+- `VITE_API_BASE_URL` (default for Functions runtime: `http://localhost:7071`)
 
 ## API Summary
 
 - `GET /api/health` (public)
-  - Returns: `{"status":"ok","timestamp":"...","version":"..."}`
+  - `{"status":"ok","timestamp":"...","version":"..."}`
+
+- `GET /api/search/status` (public)
+  - `{"search_enabled": true|false}`
 
 - `GET /api/me` (auth required)
-  - Header: `Authorization: Bearer <clerk_jwt>`
-  - Returns: `{"user_id":"...","status":"ok"}`
+  - `{"user_id":"...","profile":{...}}`
+
+- `PATCH /api/me/memory` (auth required)
+  - Request: `{"key":"city","value":"Lahore"}`
+  - Empty value removes a single key.
+
+- `DELETE /api/me/memory` (auth required)
+  - `{"message":"Memory cleared"}`
 
 - `POST /api/chat` (auth required)
-  - Header: `Authorization: Bearer <clerk_jwt>`
-  - Request: `{"session_id","message","model":"gpt-5","stream"}`
+  - Request:
+    - `session_id: string`
+    - `message: string`
+    - `model: "gpt-5"`
+    - `stream: boolean`
+    - `force_search?: boolean`
   - Stream chunks:
     - `{"type":"token","content":"..."}`
-    - `{"type":"done","request_id","response_ms","first_token_ms","tokens_emitted","status"}`
+    - `{"type":"done",...,"search_used":true|false,"sources":[...]}`
     - `{"type":"error","content":"...","request_id":"..."}`
 
 ## Verification
 
 Current local checks:
 
-- Backend: `source .venv/bin/activate && python -m unittest discover -s tests -v`
-- Frontend tests: `npm run test -- --run`
-- Frontend build: `npm run build`
+- Backend: `cd backend && .venv/bin/pytest -q tests`
+- Frontend tests: `cd frontend && npm run test -- --run`
+- Frontend build: `cd frontend && npm run build`
 
 ## Security Notes
 
 - Never commit real credentials to tracked files.
-- Keep real keys only in local/private config or cloud secret stores.
-- Rotate leaked keys immediately if they ever appear in history.
+- Keep production keys in secret stores.
+- Rotate keys immediately if exposed.
 
 ## Internal Docs
 
