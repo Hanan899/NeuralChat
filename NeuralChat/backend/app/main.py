@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from typing import AsyncIterator
 
-from fastapi import Body, Depends, FastAPI
+from fastapi import Body, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -25,7 +25,8 @@ from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
 from app.schemas import build_chat_json_response, build_health_response, validate_chat_request
 from app.services.chat_service import generate_reply, save_assistant_message, save_user_message, stream_tokens, tokenize_text
-from app.services.storage import init_store, load_profile, touch_profile
+from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
+from app.services.storage import init_store
 
 APP_VERSION = "0.2.0"
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -54,13 +55,39 @@ def get_health() -> dict[str, str]:
 
 @app.get("/api/me")
 def get_me(user_id: str = Depends(require_user_id)) -> dict[str, Any]:
-    touch_profile(STORE, user_id)
-    profile = load_profile(STORE, user_id)
+    profile = load_profile(user_id=user_id)
     return {
-        "status": "ok",
         "user_id": user_id,
         "profile": profile,
     }
+
+
+@app.patch("/api/me/memory")
+def patch_memory(
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+) -> dict[str, Any]:
+    key = payload.get("key", "")
+    value = payload.get("value", "")
+
+    if not isinstance(key, str) or not key.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="key must be a non-empty string.")
+    if not isinstance(value, str):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="value must be a string.")
+
+    clean_key = key.strip()
+    if value.strip():
+        save_profile(user_id=user_id, facts={clean_key: value})
+    else:
+        upsert_profile_key(user_id=user_id, key=clean_key, value=value)
+    updated_profile = load_profile(user_id=user_id)
+    return {"user_id": user_id, "profile": updated_profile}
+
+
+@app.delete("/api/me/memory")
+def delete_memory(user_id: str = Depends(require_user_id)) -> dict[str, str]:
+    clear_profile(user_id=user_id)
+    return {"message": "Memory cleared"}
 
 
 @app.post("/api/chat")
@@ -72,11 +99,9 @@ async def post_chat(
     request_id = str(uuid.uuid4())
     start = time.perf_counter()
 
-    # Ensure a minimal user profile marker exists for this authenticated user.
-    touch_profile(STORE, user_id)
-
     save_user_message(request=request, request_id=request_id, store=STORE, user_id=user_id)
-    reply = await generate_reply(request=request, store=STORE, user_id=user_id)
+    memory_prompt = build_memory_prompt(user_id=user_id)
+    reply = await generate_reply(request=request, store=STORE, user_id=user_id, memory_prompt=memory_prompt)
 
     if not request["stream"]:
         response_ms = int((time.perf_counter() - start) * 1000)
@@ -98,6 +123,13 @@ async def post_chat(
             reply=reply,
             model=request["model"],
             response_ms=response_ms,
+        )
+        asyncio.create_task(
+            process_memory_update(
+                user_id=user_id,
+                message=request["message"],
+                reply=reply,
+            )
         )
         return JSONResponse(response_payload)
 
@@ -154,6 +186,15 @@ async def post_chat(
             final_reply = "".join(assembled).strip()
             response_ms_final = int((time.perf_counter() - start) * 1000)
             resolved_first_token_ms = first_token_ms if first_token_ms is not None else response_ms_final
+
+            if final_reply:
+                asyncio.create_task(
+                    process_memory_update(
+                        user_id=user_id,
+                        message=request["message"],
+                        reply=final_reply,
+                    )
+                )
 
             if stream_status == "completed" or final_reply:
                 save_assistant_message(

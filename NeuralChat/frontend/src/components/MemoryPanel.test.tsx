@@ -1,0 +1,125 @@
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { getMeMock, patchMemoryMock, deleteMemoryMock, checkHealthMock, streamChatMock, authState, getTokenMock } =
+  vi.hoisted(() => ({
+    getMeMock: vi.fn(),
+    patchMemoryMock: vi.fn(),
+    deleteMemoryMock: vi.fn(),
+    checkHealthMock: vi.fn().mockResolvedValue(true),
+    streamChatMock: vi.fn(),
+    authState: { signedIn: true },
+    getTokenMock: vi.fn().mockResolvedValue("token"),
+  }));
+
+vi.mock("../api", () => ({
+  getMe: getMeMock,
+  patchMemory: patchMemoryMock,
+  deleteMemory: deleteMemoryMock,
+  checkHealth: checkHealthMock,
+  streamChat: streamChatMock,
+}));
+
+vi.mock("@clerk/clerk-react", () => ({
+  SignedIn: ({ children }: { children: React.ReactNode }) => (authState.signedIn ? children : null),
+  SignedOut: ({ children }: { children: React.ReactNode }) => (authState.signedIn ? null : children),
+  SignIn: () => <div>Clerk Sign In</div>,
+  UserButton: () => <div>UserButton</div>,
+  useAuth: () => ({
+    userId: "user_1",
+    getToken: getTokenMock,
+  }),
+}));
+
+import App from "../App";
+import { MemoryPanel } from "./MemoryPanel";
+
+describe("MemoryPanel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.signedIn = true;
+    getTokenMock.mockResolvedValue("token");
+    getMeMock.mockResolvedValue({ user_id: "user_1", profile: {} });
+    patchMemoryMock.mockResolvedValue({ user_id: "user_1", profile: {} });
+    deleteMemoryMock.mockResolvedValue({ message: "Memory cleared" });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("test_memory_panel_renders_facts_from_api", async () => {
+    getMeMock.mockResolvedValue({
+      user_id: "user_1",
+      profile: { name: "Ali", job: "Engineer" },
+    });
+
+    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+
+    expect(await screen.findByText("name")).toBeInTheDocument();
+    expect(screen.getByText("Ali")).toBeInTheDocument();
+    expect(screen.getByText("job")).toBeInTheDocument();
+    expect(screen.getByText("Engineer")).toBeInTheDocument();
+  });
+
+  it("test_memory_panel_shows_empty_state_when_no_facts", async () => {
+    getMeMock.mockResolvedValue({ user_id: "user_1", profile: {} });
+    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    expect(await screen.findByText("No memory yet — start chatting!")).toBeInTheDocument();
+  });
+
+  it("test_memory_panel_shows_loading_skeleton_while_fetching", async () => {
+    getMeMock.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ user_id: "user_1", profile: { name: "Ali" } }), 100)
+        )
+    );
+
+    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    expect(screen.getAllByTestId("memory-skeleton").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Ali")).toBeInTheDocument();
+  });
+
+  it("test_edit_fact_calls_patch_endpoint", async () => {
+    getMeMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Ali" } });
+    patchMemoryMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Bob" } });
+
+    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+
+    await screen.findByText("Ali");
+    await userEvent.click(screen.getByText("Edit"));
+
+    const editInput = screen.getByDisplayValue("Ali");
+    await userEvent.clear(editInput);
+    await userEvent.type(editInput, "Bob");
+    fireEvent.keyDown(editInput, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(patchMemoryMock).toHaveBeenCalledWith("token", "name", "Bob");
+    });
+  });
+
+  it("test_clear_all_memory_calls_delete_endpoint_and_clears_ui", async () => {
+    getMeMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Ali" } });
+
+    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    await screen.findByText("Ali");
+
+    await userEvent.click(screen.getByText("Clear All Memory"));
+
+    await waitFor(() => {
+      expect(deleteMemoryMock).toHaveBeenCalledWith("token");
+    });
+    expect(await screen.findByText("No memory yet — start chatting!")).toBeInTheDocument();
+  });
+
+  it("test_memory_panel_opens_on_brain_icon_click", async () => {
+    render(<App />);
+
+    expect(screen.queryByText("What NeuralChat knows about you")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open memory panel" }));
+    expect(await screen.findByText("What NeuralChat knows about you")).toBeInTheDocument();
+  });
+});

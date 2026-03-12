@@ -22,6 +22,7 @@ async def generate_reply(
     model: ChatModel,
     message: str,
     history: list[dict[str, Any]],
+    memory_prompt: str = "",
     timeout_seconds: float = 25.0,
 ) -> str:
     del model
@@ -33,10 +34,18 @@ async def generate_reply(
                 "AZURE_OPENAI_API_KEY, and AZURE_OPENAI_DEPLOYMENT_NAME."
             ),
         )
-    return await call_azure_openai_chat(message=message, history=history, timeout_seconds=timeout_seconds)
+    return await call_azure_openai_chat(
+        message=message,
+        history=history,
+        memory_prompt=memory_prompt,
+        timeout_seconds=timeout_seconds,
+    )
 
-def build_messages(history: list[dict[str, Any]], newest_message: str) -> list[dict[str, str]]:
+
+def build_messages(history: list[dict[str, Any]], newest_message: str, memory_prompt: str = "") -> list[dict[str, str]]:
     filtered: list[dict[str, str]] = []
+    if memory_prompt.strip():
+        filtered.append({"role": "system", "content": memory_prompt.strip()})
     for entry in history[-8:]:
         role = str(entry.get("role", "")).strip()
         content = str(entry.get("content", "")).strip()
@@ -54,7 +63,12 @@ def has_azure_openai_config() -> bool:
     return bool(endpoint and api_key and deployment)
 
 
-async def call_azure_openai_chat(message: str, history: list[dict[str, Any]], timeout_seconds: float) -> str:
+async def call_azure_openai_chat(
+    message: str,
+    history: list[dict[str, Any]],
+    memory_prompt: str = "",
+    timeout_seconds: float = 25.0,
+) -> str:
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
     api_key = os.environ["AZURE_OPENAI_API_KEY"]
     deployment = os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
@@ -63,7 +77,7 @@ async def call_azure_openai_chat(message: str, history: list[dict[str, Any]], ti
     url = f"{endpoint}/openai/deployments/{deployment}/chat/completions"
     params = {"api-version": api_version}
     payload = {
-        "messages": build_messages(history=history, newest_message=message),
+        "messages": build_messages(history=history, newest_message=message, memory_prompt=memory_prompt),
         "temperature": 0.4,
     }
     headers = {
@@ -73,6 +87,7 @@ async def call_azure_openai_chat(message: str, history: list[dict[str, Any]], ti
 
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            # COST NOTE: This Azure OpenAI request is billed by prompt + completion tokens.
             response = await client.post(url, params=params, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()

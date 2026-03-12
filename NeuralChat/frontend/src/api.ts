@@ -4,6 +4,11 @@ import type { ChatRequest, StreamChunk } from "./types";
 // Override with VITE_API_BASE_URL when needed (e.g., uvicorn on :8000).
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:7071";
 
+export interface MeResponse {
+  user_id: string;
+  profile: Record<string, string>;
+}
+
 export async function checkHealth(): Promise<boolean> {
   const response = await fetch(`${API_BASE_URL}/api/health`);
   return response.ok;
@@ -93,4 +98,47 @@ export async function streamChat(
   const tokensEmitted = typeof doneChunk?.tokens_emitted === "number" ? doneChunk.tokens_emitted : 0;
   const responseMsFromDone = typeof doneChunk?.response_ms === "number" ? doneChunk.response_ms : responseMs;
   return { requestId, responseMs: responseMsFromDone, firstTokenMs, tokensEmitted };
+}
+
+export async function getMe(authToken: string): Promise<MeResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/me`, {
+    headers: {
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to load memory.");
+  }
+  return (await response.json()) as MeResponse;
+}
+
+export async function patchMemory(authToken: string, key: string, value: string): Promise<MeResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/me/memory`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`
+    },
+    body: JSON.stringify({ key, value })
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to update memory.");
+  }
+  return (await response.json()) as MeResponse;
+}
+
+export async function deleteMemory(authToken: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/me/memory`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to clear memory.");
+  }
+  return (await response.json()) as { message: string };
 }
