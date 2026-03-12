@@ -64,6 +64,70 @@ const SIGN_IN_APPEARANCE = {
   }
 };
 
+function UiIcon({
+  kind,
+  className
+}: {
+  kind: "brand" | "attach" | "search" | "send" | "stop" | "menu";
+  className?: string;
+}) {
+  if (kind === "brand") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <circle cx="12" cy="12" r="8.3" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M8 12C8 9.8 9.8 8 12 8C14.2 8 16 9.8 16 12C16 14.2 14.2 16 12 16" stroke="currentColor" strokeWidth="1.7" />
+      </svg>
+    );
+  }
+
+  if (kind === "attach") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <path
+          d="M9.5 12.5L14.8 7.2C16.2 5.8 18.4 5.8 19.8 7.2C21.2 8.6 21.2 10.8 19.8 12.2L11.3 20.7C8.9 23.1 5 23.1 2.6 20.7C0.2 18.3 0.2 14.4 2.6 12L11.1 3.5"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  if (kind === "search") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M16 16L20 20" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        <path d="M11 4.5V17.5M4.5 11H17.5" stroke="currentColor" strokeWidth="1.2" opacity="0.65" />
+      </svg>
+    );
+  }
+
+  if (kind === "stop") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <rect x="7" y="7" width="10" height="10" rx="2" />
+      </svg>
+    );
+  }
+
+  if (kind === "menu") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <path d="M5 8H19M5 12H19M5 16H19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M12 6V18M6 12H18" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M12 6L15 9M12 6L9 9" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function buildId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -975,7 +1039,7 @@ function ChatShell() {
               aria-label="Open sidebar"
               onClick={() => setIsSidebarOpen(true)}
             >
-              ☰
+              <UiIcon kind="menu" className="nc-ui-icon" />
             </button>
             <h1>{activeConversation?.title ?? "New chat"}</h1>
           </div>
@@ -1008,7 +1072,9 @@ function ChatShell() {
         <div className="nc-message-area">
           {currentMessages.length === 0 ? (
             <section className="nc-empty-state" data-testid="empty-state">
-              <div className="nc-empty-mark">✶</div>
+              <div className="nc-empty-mark">
+                <UiIcon kind="brand" className="nc-empty-mark__icon" />
+              </div>
               <h2>How can I help you today?</h2>
               <div className="nc-empty-chips">
                 {EMPTY_SUGGESTIONS.map((suggestion) => (
@@ -1055,7 +1121,7 @@ function ChatShell() {
                   onClick={() => void handleOpenFileUpload()}
                   title="Add or manage files for this chat"
                 >
-                  <span aria-hidden="true">📎</span>
+                  <UiIcon kind="attach" className="nc-ui-icon" />
                   <span>Add files</span>
                 </button>
                 <button
@@ -1068,7 +1134,7 @@ function ChatShell() {
                   onClick={() => setForceWebSearch((value) => !value)}
                 >
                   <span className="nc-search-toggle__icon" aria-hidden="true">
-                    🌐
+                    <UiIcon kind="search" className="nc-ui-icon" />
                   </span>
                   <span className="nc-search-toggle__label">{searchToggleLabel}</span>
                 </button>
@@ -1077,11 +1143,11 @@ function ChatShell() {
 
               {isSending ? (
                 <button type="button" className="nc-send-btn" aria-label="Stop generating" onClick={handleStopGenerating}>
-                  ■
+                  <UiIcon kind="stop" className="nc-send-btn__icon" />
                 </button>
               ) : (
                 <button type="submit" className="nc-send-btn" aria-label="Send message" disabled={!input.trim()}>
-                  ↑
+                  <UiIcon kind="send" className="nc-send-btn__icon" />
                 </button>
               )}
             </div>

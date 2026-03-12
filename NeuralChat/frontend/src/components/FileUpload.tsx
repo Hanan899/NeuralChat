@@ -14,6 +14,14 @@ interface FileUploadProps {
 
 const ACCEPTED_EXTENSIONS_TEXT = "PDF, DOCX, TXT, CSV, PNG, JPG — max 25MB";
 
+function CloseIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+      <path d="M7 7L17 17M17 7L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function FileUpload({ open, authToken, sessionId, onClose, onFilesChange }: FileUploadProps) {
   const inputReference = useRef<HTMLInputElement | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -71,7 +79,7 @@ export function FileUpload({ open, authToken, sessionId, onClose, onFilesChange 
         <header className="nc-file-upload-modal__header">
           <h2>Upload files</h2>
           <button type="button" aria-label="Close file upload" onClick={onClose}>
-            ✕
+            <CloseIcon />
           </button>
         </header>
 
