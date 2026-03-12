@@ -18,10 +18,6 @@ interface CodeBlockProps {
   children?: React.ReactNode;
 }
 
-function formatTime(timestamp: string): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
 function CodeBlock({ className, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const language = className?.replace("language-", "").trim() || "text";
@@ -66,14 +62,23 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
   const isUser = message.role === "user";
-  const timestamp = formatTime(message.createdAt);
   const hasAssistantContent = message.content.trim().length > 0;
   const showMessageActions = hasAssistantContent && !isStreaming;
 
   if (isUser) {
     return (
-      <div className="nc-message nc-message--user" title={timestamp} data-testid="message-user">
+      <div className="nc-message nc-message--user" data-testid="message-user">
         <article className="nc-user-bubble">
+          {Array.isArray(message.attachedFiles) && message.attachedFiles.length > 0 ? (
+            <div className="nc-user-attachments" aria-label="Files attached to this message">
+              {message.attachedFiles.map((fileItem) => (
+                <span key={fileItem.blob_path} className="nc-user-attachment-chip" title={fileItem.filename}>
+                  <span aria-hidden="true">📄</span>
+                  <span>{fileItem.filename}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
           <p>{message.content}</p>
         </article>
         <span className="nc-user-avatar" aria-hidden="true">
@@ -88,7 +93,7 @@ export function MessageBubble({
   }
 
   return (
-    <div className="nc-message nc-message--assistant" title={timestamp} data-testid="message-assistant">
+    <div className="nc-message nc-message--assistant" data-testid="message-assistant">
       <span className={`nc-assistant-avatar ${isStreaming ? "nc-assistant-avatar--streaming" : ""}`} aria-hidden="true">
         ✶
       </span>
@@ -100,6 +105,11 @@ export function MessageBubble({
             {message.searchUsed ? (
               <span title="Answer includes web search results" aria-label="Search used">
                 🌐
+              </span>
+            ) : null}
+            {message.fileContextUsed ? (
+              <span title="Answer includes content from your uploaded files" aria-label="File context used">
+                📄
               </span>
             ) : null}
           </p>

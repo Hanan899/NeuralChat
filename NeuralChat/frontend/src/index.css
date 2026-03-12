@@ -745,6 +745,34 @@ select {
   white-space: pre-wrap;
 }
 
+.nc-user-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.nc-user-attachment-chip {
+  max-width: min(100%, 280px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(120, 139, 177, 0.22);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.nc-user-attachment-chip span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nc-message--assistant {
   display: flex;
   align-items: flex-start;
@@ -1050,6 +1078,7 @@ select {
   color: var(--text-secondary);
 }
 
+
 .nc-input-row {
   margin-top: 10px;
   display: flex;
@@ -1089,11 +1118,79 @@ select {
   color: var(--accent-primary);
 }
 
-.nc-search-dot {
-  font-size: 11px;
+.nc-attach-btn {
+  min-height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: transparent;
   color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.nc-attach-btn:hover:not(:disabled) {
+  border-color: rgba(217, 119, 87, 0.35);
+  background: rgba(217, 119, 87, 0.08);
+  color: var(--text-primary);
+}
+
+.nc-attach-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nc-attach-btn span:last-child {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nc-search-toggle {
+  min-height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.nc-search-toggle:hover:not(:disabled) {
+  border-color: rgba(217, 119, 87, 0.45);
+  background: rgba(217, 119, 87, 0.08);
+  color: var(--text-primary);
+}
+
+.nc-search-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nc-search-toggle--active {
+  border-color: rgba(217, 119, 87, 0.65);
+  background: rgba(217, 119, 87, 0.14);
+  color: var(--accent-primary);
+}
+
+.nc-search-toggle__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.nc-search-toggle__label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 .nc-send-btn {
@@ -1622,4 +1719,206 @@ select {
   .nc-message-inner {
     padding: 0 14px;
   }
+}
+
+/* Task 9: File upload modal/list */
+.nc-file-count-badge {
+  display: none;
+}
+
+.nc-file-upload-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nc-file-upload-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.nc-file-upload-modal__panel {
+  position: relative;
+  width: min(760px, calc(100vw - 2rem));
+  max-height: calc(100vh - 3rem);
+  overflow: auto;
+  border-radius: 1rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  padding: 1rem;
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.35);
+}
+
+.nc-file-upload-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+
+.nc-file-upload-modal__header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.nc-file-upload-modal__header button {
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 0.5rem;
+  width: 2rem;
+  height: 2rem;
+  cursor: pointer;
+}
+
+.nc-file-upload-dropzone {
+  width: 100%;
+  border: 1px dashed var(--border-input);
+  border-radius: 0.9rem;
+  padding: 1rem;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 0.7rem;
+}
+
+.nc-file-upload-dropzone strong {
+  font-size: 0.95rem;
+}
+
+.nc-file-upload-dropzone span {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.nc-file-upload-dropzone--active {
+  border-color: var(--accent-primary);
+  background: rgba(217, 119, 87, 0.08);
+}
+
+.nc-file-upload-input {
+  display: none;
+}
+
+.nc-upload-progress {
+  margin: 0.7rem 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  position: relative;
+  height: 1.35rem;
+  overflow: hidden;
+}
+
+.nc-upload-progress__bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--accent-primary), #d65f4c);
+}
+
+.nc-upload-progress span {
+  position: relative;
+  z-index: 1;
+  display: block;
+  text-align: center;
+  font-size: 0.75rem;
+  line-height: 1.35rem;
+  color: #fff;
+}
+
+.nc-file-upload-error,
+.nc-file-list__error {
+  margin: 0.5rem 0;
+  color: #ff9b9b;
+  font-size: 0.82rem;
+}
+
+.nc-file-upload-success {
+  margin: 0.5rem 0;
+  color: #8ce5b8;
+  font-size: 0.82rem;
+}
+
+.nc-file-list {
+  margin-top: 0.8rem;
+}
+
+.nc-file-list__header h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.nc-file-list__skeleton {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.nc-file-list__skeleton-row {
+  height: 2.8rem;
+  border-radius: 0.7rem;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+}
+
+.nc-file-list__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.nc-file-list__row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  padding: 0.58rem 0.68rem;
+}
+
+.nc-file-list__icon {
+  font-size: 1rem;
+}
+
+.nc-file-list__meta {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.nc-file-list__name {
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nc-file-list__time {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.nc-file-list__row button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.nc-file-list__empty {
+  margin: 0.4rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
 }

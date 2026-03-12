@@ -1,63 +1,101 @@
-# NeuralChat Architecture (Auth + Blob Phase)
+# NeuralChat Architecture (Auth + Memory + Search + File Upload)
 
-## 1) Big Picture
+## 1) Runtime Components
 
-NeuralChat has two runtime parts:
+- `frontend/`:
+  - React + TypeScript + Tailwind + Clerk
+  - Streams assistant tokens, manages conversation UI, search toggle, and file upload modal
+- `backend/`:
+  - FastAPI mounted in Azure Functions ASGI
+  - Auth verification, chat orchestration, prompt assembly, Blob persistence
+- `Azure Blob Storage` containers:
+  - `neurarchat-memory` (conversations + search cache)
+  - `neurarchat-profiles` (deep memory profile)
+  - `neurarchat-uploads` (raw uploaded files)
+  - `neurarchat-parsed` (parsed chunk JSON)
 
-- `frontend/` (React + Tailwind + Clerk): chat UI and login/logout shell.
-- `backend/` (FastAPI mounted in Azure Functions): auth verification, model routing, streaming, persistence.
+## 2) Auth and Identity Flow
 
-## 2) End-to-End Request Flow
+1. User signs in with Clerk.
+2. Frontend gets Clerk session token.
+3. Frontend calls protected APIs with `Authorization: Bearer <token>`.
+4. Backend validates JWT using Clerk JWKS.
+5. Backend derives `user_id` from token `sub` claim.
+6. All chat/file/profile storage is scoped by `user_id`.
 
-1. User lands signed out and sees Clerk `SignIn`.
-2. Clerk validates email/password and creates a session.
-3. Frontend requests session token from Clerk.
-4. Frontend calls protected backend APIs with `Authorization: Bearer <token>`.
-5. Backend verifies token via Clerk JWKS and extracts `user_id` from `sub`.
-6. Backend stores user message in Azure Blob under `user_id/session_id`.
-7. Backend generates model reply (Azure OpenAI GPT-5 path).
-8. Backend streams NDJSON token chunks to frontend.
-9. Frontend renders assistant message incrementally.
-10. Backend saves final assistant message and stream metadata.
+## 3) Chat Request Pipeline (`POST /api/chat`)
 
-## 3) API Contracts
+1. Validate request body (`session_id`, `message`, `model`, `stream`, optional `force_search`).
+2. Persist user message to conversation blob.
+3. Build memory prompt from profile facts.
+4. If force-search is enabled, load/search/cached web sources and build search prompt.
+5. Load uploaded files for `(user_id, session_id)`, read parsed chunks, rank relevant chunks, and build file prompt.
+6. Compose model system context in this exact order:
+   - memory facts
+   - web search context
+   - relevant uploaded-file context
+   - base instructions
+7. Call Azure OpenAI GPT-5 and stream NDJSON chunks.
+8. Persist assistant message + metadata (`search_used`, `file_context_used`, timing metrics, sources).
+9. Trigger async memory extraction/update in background.
 
-- `GET /api/health` (public)
-  - Returns: `{ "status": "ok", "timestamp": "...", "version": "..." }`
+## 4) File Upload Pipeline (`POST /api/upload`)
 
-- `GET /api/me` (auth required)
-  - Header: `Authorization: Bearer <clerk_jwt>`
-  - Returns: `{ "user_id": "...", "status": "ok" }`
+1. Frontend sends multipart form with:
+   - `session_id`
+   - `file`
+2. Backend validates extension and size (max 25MB).
+3. Backend uploads raw file to `neurarchat-uploads/{user_id}/{session_id}/{filename}`.
+4. Backend checks if parsed blob already exists:
+   - if yes: reuse parsed chunks (no re-parse)
+   - if no: parse text -> chunk text -> save to parsed blob
+5. Backend returns `filename`, `blob_path`, `chunk_count`, and success message.
 
-- `POST /api/chat` (auth required)
-  - Header: `Authorization: Bearer <clerk_jwt>`
-  - Input: `{ "session_id", "message", "model", "stream" }`
-  - Stream output lines (NDJSON):
-    - `{"type":"token","content":"..."}`
-    - `{"type":"done","content":"","request_id":"...","response_ms":123,"first_token_ms":45,"tokens_emitted":55,"status":"completed"}`
-    - `{"type":"error","content":"...","request_id":"..."}`
+## 5) API Surface
 
-## 4) Storage Design (Azure Blob)
+- Public:
+  - `GET /api/health`
+  - `GET /api/search/status`
+- Auth required:
+  - `GET /api/me`
+  - `PATCH /api/me/memory`
+  - `DELETE /api/me/memory`
+  - `POST /api/chat`
+  - `POST /api/upload`
+  - `GET /api/files?session_id=...`
+  - `DELETE /api/files/{filename}?session_id=...`
 
-Containers:
+## 6) Stream Contracts
 
-- `neurarchat-memory` for conversations
-- `neurarchat-profiles` for minimal user profile metadata
+- Token chunk:
+  - `{"type":"token","content":"..."}`
+- Done chunk:
+  - `{"type":"done", "request_id":"...", "response_ms":..., "first_token_ms":..., "tokens_emitted":..., "status":"completed|interrupted", "search_used":true|false, "file_context_used":true|false, "sources":[...]}`
+- Error chunk:
+  - `{"type":"error","content":"...","request_id":"..."}`
 
-Blob key layout:
+## 7) Frontend To Deployed Backend Path
 
-- `conversations/{user_id}/{session_id}.json`
-- `profiles/{user_id}.json`
+Current local frontend runtime points to:
 
-Notes:
+- `VITE_API_BASE_URL=https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net`
 
-- Client never sends `user_id` in request body.
-- `user_id` is derived only from verified JWT claims.
-- Existing local JSON history is intentionally not migrated.
+Flow:
 
-## 5) Model Routing
+1. Local Vite frontend runs on `http://localhost:5173`.
+2. Browser sends requests to deployed Azure Function backend.
+3. Azure backend must allow local frontend origin through CORS.
+4. Protected calls include Clerk bearer token.
+5. Backend verifies token, runs chat/search/file pipeline, and returns JSON or NDJSON stream.
 
-- `model = "gpt-5"`:
-  - Uses Azure OpenAI deployment configured by `AZURE_OPENAI_DEPLOYMENT_NAME` (current default: `gpt-5-chat`).
-- Missing provider configuration:
-  - Returns explicit API errors (no mock responses).
+## 8) Deployment Verification
+
+The deployed backend was smoke-tested on **March 12, 2026** and passed:
+
+- profile fetch
+- authenticated GPT-5 chat
+- forced Tavily search
+- file upload
+- file list
+- file delete
+- streamed file-context response

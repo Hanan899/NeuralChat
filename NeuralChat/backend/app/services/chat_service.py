@@ -26,14 +26,20 @@ async def generate_reply(
     user_id: str,
     memory_prompt: str = "",
     search_prompt: str = "",
+    file_prompt: str = "",
 ) -> str:
     history = load_messages(store, user_id, request["session_id"])
+    model_kwargs: dict[str, Any] = {
+        "model": request["model"],
+        "message": request["message"],
+        "history": history,
+        "memory_prompt": memory_prompt,
+        "search_prompt": search_prompt,
+    }
+    if file_prompt.strip():
+        model_kwargs["file_prompt"] = file_prompt
     return await generate_model_reply(
-        model=request["model"],
-        message=request["message"],
-        history=history,
-        memory_prompt=memory_prompt,
-        search_prompt=search_prompt,
+        **model_kwargs,
     )
 
 
@@ -43,15 +49,19 @@ async def generate_reply_stream(
     user_id: str,
     memory_prompt: str = "",
     search_prompt: str = "",
+    file_prompt: str = "",
 ) -> AsyncIterator[str]:
     history = load_messages(store, user_id, request["session_id"])
-    async for token in generate_model_reply_stream(
-        model=request["model"],
-        message=request["message"],
-        history=history,
-        memory_prompt=memory_prompt,
-        search_prompt=search_prompt,
-    ):
+    model_kwargs: dict[str, Any] = {
+        "model": request["model"],
+        "message": request["message"],
+        "history": history,
+        "memory_prompt": memory_prompt,
+        "search_prompt": search_prompt,
+    }
+    if file_prompt.strip():
+        model_kwargs["file_prompt"] = file_prompt
+    async for token in generate_model_reply_stream(**model_kwargs):
         yield token
 
 
@@ -82,6 +92,7 @@ def save_assistant_message(
     first_token_ms: int | None = None,
     tokens_emitted: int | None = None,
     search_used: bool | None = None,
+    file_context_used: bool | None = None,
     sources: list[dict[str, str]] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
@@ -100,6 +111,8 @@ def save_assistant_message(
         payload["tokens_emitted"] = tokens_emitted
     if search_used is not None:
         payload["search_used"] = search_used
+    if file_context_used is not None:
+        payload["file_context_used"] = file_context_used
     if sources is not None:
         payload["sources"] = sources
 

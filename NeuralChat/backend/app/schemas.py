@@ -50,6 +50,7 @@ def build_chat_json_response(
     model: ChatModel,
     response_ms: int,
     search_used: bool = False,
+    file_context_used: bool = False,
     sources: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -58,6 +59,7 @@ def build_chat_json_response(
         "model": model,
         "response_ms": response_ms,
         "search_used": search_used,
+        "file_context_used": file_context_used,
         "sources": sources or [],
     }
     return payload
