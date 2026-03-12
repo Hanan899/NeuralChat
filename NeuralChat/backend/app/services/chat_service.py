@@ -19,9 +19,19 @@ from app.services.providers import generate_reply as generate_model_reply
 from app.services.storage import append_message, load_messages
 
 
-async def generate_reply(request: dict[str, Any], store: dict[str, Any], user_id: str) -> str:
+async def generate_reply(
+    request: dict[str, Any],
+    store: dict[str, Any],
+    user_id: str,
+    memory_prompt: str = "",
+) -> str:
     history = load_messages(store, user_id, request["session_id"])
-    return await generate_model_reply(model=request["model"], message=request["message"], history=history)
+    return await generate_model_reply(
+        model=request["model"],
+        message=request["message"],
+        history=history,
+        memory_prompt=memory_prompt,
+    )
 
 
 def save_user_message(request: dict[str, Any], request_id: str, store: dict[str, Any], user_id: str) -> None:

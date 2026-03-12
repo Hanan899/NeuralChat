@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { checkHealth, streamChat } from "./api";
 import { ChatWindow } from "./components/ChatWindow";
 import { DebugPanel } from "./components/DebugPanel";
+import { MemoryPanel } from "./components/MemoryPanel";
 import { ModelSelector } from "./components/ModelSelector";
 import type { ChatMessage, ChatModel, StreamChunk } from "./types";
 
@@ -36,6 +37,7 @@ function ChatShell() {
   const [tokensEmitted, setTokensEmitted] = useState(0);
   const [streamStatus, setStreamStatus] = useState("idle");
   const [errorText, setErrorText] = useState("");
+  const [isMemoryPanelOpen, setIsMemoryPanelOpen] = useState(false);
 
   const sessionId = useMemo(() => {
     if (!userId) {
@@ -148,7 +150,17 @@ function ChatShell() {
           <h1 className="text-3xl font-bold text-brand-dark">NeuralChat</h1>
           <p className="text-sm text-slate-700">Authenticated chat with user-scoped cloud memory.</p>
         </div>
-        <UserButton afterSignOutUrl="/" />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Open memory panel"
+            onClick={() => setIsMemoryPanelOpen(true)}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 hover:bg-slate-50"
+          >
+            🧠
+          </button>
+          <UserButton afterSignOutUrl="/" />
+        </div>
       </header>
 
       <DebugPanel
@@ -188,6 +200,8 @@ function ChatShell() {
           {errorText ? <p className="text-sm text-red-600">{errorText}</p> : null}
         </div>
       </form>
+
+      <MemoryPanel isOpen={isMemoryPanelOpen} onClose={() => setIsMemoryPanelOpen(false)} getAuthToken={getToken} />
     </main>
   );
 }

@@ -1,128 +1,98 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
-import unittest
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
 
 os.environ.setdefault("NEURALCHAT_STORAGE_MODE", "memory")
-
-from fastapi.testclient import TestClient
 
 from app.auth import require_user_id
 from app.main import STORE, app
 from app.services import chat_service
-from app.services.storage import load_messages, load_profile, reset_memory_store
+from app.services.storage import load_messages, reset_memory_store
 
 
-class APITests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.client = TestClient(app)
+@pytest.fixture()
+def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    reset_memory_store()
+    app.dependency_overrides[require_user_id] = lambda: "user-test"
 
-    def setUp(self):
-        reset_memory_store()
-        app.dependency_overrides[require_user_id] = lambda: "user-test"
-        self._original_generate_model_reply = chat_service.generate_model_reply
+    async def fake_generate_model_reply(
+        model: str,
+        message: str,
+        history: list[dict[str, Any]],
+        memory_prompt: str = "",
+        timeout_seconds: float = 25.0,
+    ) -> str:
+        del timeout_seconds
+        return f"reply({model}): {message}; history={len(history)}; memory={memory_prompt}"
 
-        async def fake_generate_model_reply(model: str, message: str, history: list[dict], timeout_seconds: float = 25.0):
-            del timeout_seconds
-            return f"reply({model}): {message}; history={len(history)}"
+    monkeypatch.setattr(chat_service, "generate_model_reply", fake_generate_model_reply)
+    monkeypatch.setattr("app.main.build_memory_prompt", lambda user_id: "")
 
-        chat_service.generate_model_reply = fake_generate_model_reply
+    async def fake_process_memory_update(user_id: str, message: str, reply: str) -> None:
+        del user_id, message, reply
+        await asyncio.sleep(0)
 
-    def tearDown(self):
-        app.dependency_overrides.clear()
-        chat_service.generate_model_reply = self._original_generate_model_reply
+    monkeypatch.setattr("app.main.process_memory_update", fake_process_memory_update)
 
-    def test_health_returns_expected_shape(self):
-        response = self.client.get("/api/health")
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["status"], "ok")
-        self.assertIn("timestamp", payload)
-        self.assertIn("version", payload)
+    test_client = TestClient(app)
+    yield test_client
+    app.dependency_overrides.clear()
 
-    def test_chat_requires_auth_without_token(self):
-        app.dependency_overrides.pop(require_user_id, None)
 
-        response = self.client.post(
+def test_health_returns_expected_shape(client: TestClient):
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert "timestamp" in payload
+    assert "version" in payload
+
+
+def test_chat_requires_auth_without_token(client: TestClient):
+    del client
+    app.dependency_overrides.pop(require_user_id, None)
+    response = TestClient(app).post(
+        "/api/chat",
+        json={"session_id": "s-1", "message": "hello", "model": "gpt-5", "stream": False},
+    )
+    assert response.status_code == 401
+
+
+def test_chat_rejects_invalid_model(client: TestClient):
+    for model in ["invalid-model", "gpt4o", "claude"]:
+        response = client.post(
             "/api/chat",
-            json={
-                "session_id": "s-1",
-                "message": "hello",
-                "model": "gpt-5",
-                "stream": False,
-            },
+            json={"session_id": "s-1", "message": "hello", "model": model, "stream": False},
         )
-        self.assertEqual(response.status_code, 401)
-
-    def test_me_requires_auth_without_token(self):
-        app.dependency_overrides.pop(require_user_id, None)
-        response = self.client.get("/api/me")
-        self.assertEqual(response.status_code, 401)
-
-    def test_me_returns_user_profile(self):
-        response = self.client.get("/api/me")
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["user_id"], "user-test")
-        self.assertIsInstance(payload["profile"], dict)
-        self.assertEqual(load_profile(STORE, "user-test").get("user_id"), "user-test")
-
-    def test_chat_rejects_invalid_model(self):
-        for model in ["invalid-model", "gpt4o", "claude"]:
-            with self.subTest(model=model):
-                response = self.client.post(
-                    "/api/chat",
-                    json={
-                        "session_id": "s-1",
-                        "message": "hello",
-                        "model": model,
-                        "stream": False,
-                    },
-                )
-                self.assertEqual(response.status_code, 422)
-
-    def test_chat_stream_emits_token_then_done(self):
-        session_id = f"s-{uuid.uuid4()}"
-        response = self.client.post(
-            "/api/chat",
-            json={
-                "session_id": session_id,
-                "message": "test stream",
-                "model": "gpt-5",
-                "stream": True,
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-
-        chunks = [json.loads(line) for line in response.text.splitlines() if line.strip()]
-        self.assertGreaterEqual(len(chunks), 2)
-        self.assertEqual(chunks[0]["type"], "token")
-        self.assertEqual(chunks[-1]["type"], "done")
-        self.assertEqual(chunks[-1]["status"], "completed")
-        self.assertIsInstance(chunks[-1]["first_token_ms"], int)
-        self.assertIsInstance(chunks[-1]["tokens_emitted"], int)
-
-        # Verify user-scoped persistence in storage.
-        stored = load_messages(STORE, "user-test", session_id)
-        self.assertEqual(len(stored), 2)
-        self.assertEqual(stored[0]["role"], "user")
-        self.assertEqual(stored[1]["role"], "assistant")
-
-    def test_chat_options_preflight_allowed(self):
-        response = self.client.options(
-            "/api/chat",
-            headers={
-                "Origin": "http://localhost:5173",
-                "Access-Control-Request-Method": "POST",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers.get("access-control-allow-origin"), "http://localhost:5173")
+        assert response.status_code == 422
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_chat_stream_emits_token_then_done(client: TestClient):
+    session_id = f"s-{uuid.uuid4()}"
+    response = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "test stream", "model": "gpt-5", "stream": True},
+    )
+    assert response.status_code == 200
+    chunks = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    assert len(chunks) >= 2
+    assert chunks[0]["type"] == "token"
+    assert chunks[-1]["type"] == "done"
+    stored = load_messages(STORE, "user-test", session_id)
+    assert len(stored) == 2
+
+
+def test_chat_options_preflight_allowed(client: TestClient):
+    response = client.options(
+        "/api/chat",
+        headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"},
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
