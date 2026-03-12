@@ -3,6 +3,7 @@
 
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 .venv/
 
@@ -14,6 +15,7 @@ frontend/dist/
 backend/local.settings.json
 backend/data/conversations/*.json
 frontend/.env
+backend/pytest.ini
 
 # Keep templates/examples in repo
 !backend/local.settings.example.json
