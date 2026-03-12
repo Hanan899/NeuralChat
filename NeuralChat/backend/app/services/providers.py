@@ -27,6 +27,7 @@ async def generate_reply(
     history: list[dict[str, Any]],
     memory_prompt: str = "",
     search_prompt: str = "",
+    file_prompt: str = "",
     timeout_seconds: float = 25.0,
 ) -> str:
     del model
@@ -43,6 +44,7 @@ async def generate_reply(
         history=history,
         memory_prompt=memory_prompt,
         search_prompt=search_prompt,
+        file_prompt=file_prompt,
         timeout_seconds=timeout_seconds,
     )
 
@@ -53,6 +55,7 @@ async def generate_reply_stream(
     history: list[dict[str, Any]],
     memory_prompt: str = "",
     search_prompt: str = "",
+    file_prompt: str = "",
     timeout_seconds: float = 60.0,
 ) -> AsyncIterator[str]:
     del model
@@ -69,6 +72,7 @@ async def generate_reply_stream(
         history=history,
         memory_prompt=memory_prompt,
         search_prompt=search_prompt,
+        file_prompt=file_prompt,
         timeout_seconds=timeout_seconds,
     ):
         yield token
@@ -79,12 +83,15 @@ def build_messages(
     newest_message: str,
     memory_prompt: str = "",
     search_prompt: str = "",
+    file_prompt: str = "",
 ) -> list[dict[str, str]]:
     filtered: list[dict[str, str]] = []
     if memory_prompt.strip():
         filtered.append({"role": "system", "content": memory_prompt.strip()})
     if search_prompt.strip():
         filtered.append({"role": "system", "content": search_prompt.strip()})
+    if file_prompt.strip():
+        filtered.append({"role": "system", "content": file_prompt.strip()})
     filtered.append({"role": "system", "content": BASE_INSTRUCTIONS})
     for entry in history[-8:]:
         role = str(entry.get("role", "")).strip()
@@ -124,6 +131,7 @@ async def call_azure_openai_chat(
     history: list[dict[str, Any]],
     memory_prompt: str = "",
     search_prompt: str = "",
+    file_prompt: str = "",
     timeout_seconds: float = 25.0,
 ) -> str:
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
@@ -139,6 +147,7 @@ async def call_azure_openai_chat(
             newest_message=message,
             memory_prompt=memory_prompt,
             search_prompt=search_prompt,
+            file_prompt=file_prompt,
         ),
         "temperature": 0.4,
     }
@@ -185,6 +194,7 @@ async def stream_azure_openai_chat(
     history: list[dict[str, Any]],
     memory_prompt: str = "",
     search_prompt: str = "",
+    file_prompt: str = "",
     timeout_seconds: float = 60.0,
 ) -> AsyncIterator[str]:
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
@@ -200,6 +210,7 @@ async def stream_azure_openai_chat(
             newest_message=message,
             memory_prompt=memory_prompt,
             search_prompt=search_prompt,
+            file_prompt=file_prompt,
         ),
         "temperature": 0.4,
         "stream": True,

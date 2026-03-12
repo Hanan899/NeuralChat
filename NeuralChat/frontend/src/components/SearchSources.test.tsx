@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageBubble } from "./MessageBubble";
 import { SearchSources } from "./SearchSources";
 
-const { authState, getTokenMock, checkSearchStatusMock, streamChatMock } = vi.hoisted(() => ({
+const {
+  authState,
+  getTokenMock,
+  checkSearchStatusMock,
+  streamChatMock,
+  getFilesMock,
+  deleteFileMock,
+  uploadFileWithProgressMock,
+} = vi.hoisted(() => ({
   authState: { signedIn: true },
   getTokenMock: vi.fn().mockResolvedValue("token"),
   checkSearchStatusMock: vi.fn().mockResolvedValue(true),
@@ -15,14 +23,26 @@ const { authState, getTokenMock, checkSearchStatusMock, streamChatMock } = vi.ho
     firstTokenMs: 5,
     tokensEmitted: 1,
     searchUsed: false,
+    fileContextUsed: false,
     sources: []
-  })
+  }),
+  getFilesMock: vi.fn().mockResolvedValue({ files: [] }),
+  deleteFileMock: vi.fn().mockResolvedValue({ message: "deleted" }),
+  uploadFileWithProgressMock: vi.fn().mockResolvedValue({
+    filename: "doc.txt",
+    blob_path: "user/sess/doc.txt",
+    chunk_count: 1,
+    message: "File uploaded successfully"
+  }),
 }));
 
 vi.mock("../api", () => ({
   checkHealth: vi.fn().mockResolvedValue(true),
   checkSearchStatus: checkSearchStatusMock,
-  streamChat: streamChatMock
+  streamChat: streamChatMock,
+  getFiles: getFilesMock,
+  deleteFile: deleteFileMock,
+  uploadFileWithProgress: uploadFileWithProgressMock
 }));
 
 vi.mock("@clerk/clerk-react", () => ({
@@ -166,6 +186,27 @@ describe("SearchSources and MessageBubble", () => {
     expect(container.querySelector(".typing-cursor")).toBeInTheDocument();
   });
 
+  it("shows uploaded files with the user message", () => {
+    render(
+      <MessageBubble
+        message={{
+          id: "msg-user-files",
+          role: "user",
+          content: "Please use these files.",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5",
+          attachedFiles: [
+            { filename: "brief.pdf", uploaded_at: "", blob_path: "user/session/brief.pdf" },
+            { filename: "notes.txt", uploaded_at: "", blob_path: "user/session/notes.txt" }
+          ]
+        }}
+      />
+    );
+
+    expect(screen.getByText("brief.pdf")).toBeInTheDocument();
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+  });
+
   it("renders code block header with copy behavior", async () => {
     render(
       <MessageBubble
@@ -207,12 +248,54 @@ describe("SearchSources and MessageBubble", () => {
     expect(screen.getByRole("button", { name: "Retry response" })).toBeInTheDocument();
   });
 
+  it("shows copied state after copy action", async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined)
+      }
+    });
+
+    render(
+      <MessageBubble
+        message={{
+          id: "msg-copy",
+          role: "assistant",
+          content: "Copy me",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5"
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    expect(screen.getByText("Copied to clipboard")).toBeInTheDocument();
+  });
+
+  it("toggles helpful feedback state", async () => {
+    render(
+      <MessageBubble
+        message={{
+          id: "msg-feedback",
+          role: "assistant",
+          content: "Feedback me",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5"
+        }}
+      />
+    );
+
+    const thumbsUpButton = screen.getByRole("button", { name: "Thumbs up" });
+    await userEvent.click(thumbsUpButton);
+    expect(thumbsUpButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Marked helpful")).toBeInTheDocument();
+  });
+
   it("test_search_status_badge_green_when_enabled", async () => {
     checkSearchStatusMock.mockResolvedValue(true);
     render(<App />);
 
-    expect(await screen.findByLabelText("Web search enabled")).toBeInTheDocument();
-    expect(screen.getByText("online")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Toggle web search" })).toBeInTheDocument();
+    expect(screen.getByText("Web search OFF")).toBeInTheDocument();
   });
 
   it("test_search_status_badge_grey_when_disabled", async () => {
@@ -220,9 +303,9 @@ describe("SearchSources and MessageBubble", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Web search disabled")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Toggle web search" })).toBeInTheDocument();
     });
 
-    expect(screen.getByText("offline")).toBeInTheDocument();
+    expect(screen.getByText("Search unavailable")).toBeInTheDocument();
   });
 });

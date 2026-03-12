@@ -1,12 +1,27 @@
-import type { ChatRequest, SearchSource, StreamChunk } from "./types";
+import type { ChatRequest, SearchSource, StreamChunk, UploadedFileItem } from "./types";
 
 // Default to Azure Functions local runtime (`func start`).
-// Override with VITE_API_BASE_URL when needed (e.g., uvicorn on :8000).
+// Override with VITE_API_BASE_URL for hosted backends like Azure App Service.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:7071";
 
 export interface MeResponse {
   user_id: string;
   profile: Record<string, unknown>;
+}
+
+export interface UploadResponse {
+  filename: string;
+  blob_path: string;
+  chunk_count: number;
+  message: string;
+}
+
+export interface FilesResponse {
+  files: UploadedFileItem[];
+}
+
+export function getApiBaseUrl(): string {
+  return API_BASE_URL;
 }
 
 export async function checkHealth(): Promise<boolean> {
@@ -25,6 +40,7 @@ export async function streamChat(
   firstTokenMs: number | null;
   tokensEmitted: number;
   searchUsed: boolean;
+  fileContextUsed: boolean;
   sources: SearchSource[];
 }> {
   const startedAt = performance.now();
@@ -122,6 +138,7 @@ export async function streamChat(
   const tokensEmitted = typeof doneChunk?.tokens_emitted === "number" ? doneChunk.tokens_emitted : 0;
   const responseMsFromDone = typeof doneChunk?.response_ms === "number" ? doneChunk.response_ms : responseMs;
   const searchUsed = doneChunk?.search_used === true;
+  const fileContextUsed = doneChunk?.file_context_used === true;
   const sources = Array.isArray(doneChunk?.sources) ? doneChunk.sources : [];
 
   return {
@@ -130,6 +147,7 @@ export async function streamChat(
     firstTokenMs,
     tokensEmitted,
     searchUsed,
+    fileContextUsed,
     sources
   };
 }
@@ -184,4 +202,75 @@ export async function deleteMemory(authToken: string): Promise<{ message: string
     throw new Error(errorText || "Failed to clear memory.");
   }
   return (await response.json()) as { message: string };
+}
+
+export async function getFiles(authToken: string, sessionId: string): Promise<FilesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/files?session_id=${encodeURIComponent(sessionId)}`, {
+    headers: {
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to load files.");
+  }
+  return (await response.json()) as FilesResponse;
+}
+
+export async function deleteFile(authToken: string, sessionId: string, filename: string): Promise<{ message: string }> {
+  const encodedFilename = encodeURIComponent(filename);
+  const response = await fetch(`${API_BASE_URL}/api/files/${encodedFilename}?session_id=${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to delete file.");
+  }
+  return (await response.json()) as { message: string };
+}
+
+export function uploadFileWithProgress(
+  authToken: string,
+  sessionId: string,
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<UploadResponse> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("session_id", sessionId);
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}/api/upload`);
+    xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      onProgress(percent);
+    };
+    xhr.onerror = () => reject(new Error("Upload failed due to a network error."));
+    xhr.onload = () => {
+      try {
+        const responseText = xhr.responseText || "";
+        const parsed = responseText ? (JSON.parse(responseText) as UploadResponse | { detail?: string }) : {};
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(parsed as UploadResponse);
+          return;
+        }
+        const detailMessage =
+          typeof (parsed as { detail?: unknown }).detail === "string"
+            ? String((parsed as { detail?: unknown }).detail)
+            : responseText || "File upload failed.";
+        reject(new Error(detailMessage));
+      } catch {
+        reject(new Error("File upload failed."));
+      }
+    };
+    xhr.send(formData);
+  });
 }

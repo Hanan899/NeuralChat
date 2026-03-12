@@ -1,82 +1,70 @@
-# NeuralChat Beginner Roadmap (45-60 min/day)
+# NeuralChat Roadmap (Beginner-Friendly)
 
-## Session Format (use every day)
+## Completed Milestones
 
-- Goal
-- What you type
-- Why it works
-- Break test
-- Own rewrite
+### Phase 1: Foundation
+- Streaming chat UI and backend
+- `GET /api/health` and `POST /api/chat`
+- GPT-5 Azure OpenAI integration
 
-## Completed Foundation
+### Phase 2: Auth + Cloud Persistence
+- Clerk login/logout
+- JWT verification on backend
+- User-scoped conversation storage in Blob
 
-- Chat shell + streaming UI
-- `/api/health` and `/api/chat`
-- Provider routing for Claude/GPT path
-- Stream metrics + interruption handling
+### Phase 3: Deep Memory
+- Profile extraction from chat exchanges
+- Prompt injection from profile memory
+- `/api/me` and memory CRUD endpoints
 
-## Completed Auth + Cloud Memory Phase
+### Phase 4: Web Search
+- Tavily integration with 24h Blob cache
+- Force-search toggle in frontend
+- Sources returned and rendered with `🌐` badge
 
-- Clerk login/logout integrated in frontend
-- Backend bearer token verification through Clerk JWKS
-- `/api/chat` protected with `401` on missing/invalid token
-- User-scoped Blob storage for conversations and profile metadata
-- Session id strategy scoped per authenticated user
+### Phase 5: File & PDF Upload (Task 9)
+- Upload endpoint with 25MB/type validation
+- Raw file storage in `neurarchat-uploads`
+- Parsed chunk storage in `neurarchat-parsed`
+- Session-scoped file listing and delete
+- File context injection into chat prompt
+- `📄` badge when answer used uploaded file context
 
-## Next Learning Sprint
+## What To Build Next
 
-### Day 1 — Auth Trace (Frontend to Backend)
+### Task 10: Retrieval Quality Upgrade
+- Replace keyword chunk scoring with embeddings + cosine similarity
+- Keep chunk fallback path for safety
+- Add relevance debug output in diagnostics panel
 
-- Goal: trace one full protected request.
-- What you type: login, send one message, inspect request headers in browser devtools.
-- Why it works: verifies token handoff and backend authorization path.
-- Break test: remove `Authorization` header from API call and confirm backend `401`.
-- Own rewrite: re-implement token injection in `api.ts` from memory.
+### Task 11: Source Attribution for Files
+- Track which filename produced each chunk
+- Return file citations with chunk snippets in done metadata
+- Show per-file citations in assistant message UI
 
-### Day 2 — Blob Object Inspection
+### Task 12: Image Understanding Path
+- Add OCR/vision extraction for PNG/JPG uploads
+- Keep existing text parser for docs/txt/csv
+- Add clear UI indicator when image context is used
 
-- Goal: understand how one chat is persisted.
-- What you type: send messages in one session and inspect resulting blob JSON.
-- Why it works: links runtime behavior to concrete stored state.
-- Break test: change `session_id` and verify a second blob is created.
-- Own rewrite: explain blob key format without looking.
+### Task 13: Deployment Hardening
+- Move secrets to managed secret storage and rotate exposed values
+- Add release checklist for Azure Function settings and CORS
+- Add browser-level smoke test automation for hosted backend
 
-### Day 3 — `/api/me` and User Context
+## Daily Learning Loop (45-60 minutes)
 
-- Goal: add and test a simple user metadata read path.
-- What you type: call `/api/me` after login and display user id in UI.
-- Why it works: confirms auth identity extraction independent of chat.
-- Break test: call `/api/me` signed out and confirm blocked request.
-- Own rewrite: re-create `require_user_id` dependency flow.
+1. Goal
+2. What you type
+3. Why it works
+4. Break test
+5. Own rewrite
 
-### Day 4 — Provider Visibility
+## Weekly Habit
 
-- Goal: make model/provider choice transparent.
-- What you type: add debug field showing selected model + active provider source.
-- Why it works: improves observability and reduces confusion during testing.
-- Break test: remove Azure config and confirm explicit provider-config error.
-- Own rewrite: summarize routing for `gpt-5`.
-
-### Day 5 — Error UX Hardening
-
-- Goal: improve user-facing auth/network/storage errors.
-- What you type: map backend error cases to actionable UI messages.
-- Why it works: beginner-friendly feedback speeds debugging.
-- Break test: force network drop and verify interrupted stream handling.
-- Own rewrite: write error mapping function from scratch.
-
-### Day 6 — Minimal Profile Preferences
-
-- Goal: store one user preference in `neurarchat-profiles`.
-- What you type: preference API + frontend toggle (e.g., default model).
-- Why it works: practices read/write with user-scoped profile data.
-- Break test: confirm preference does not leak across users.
-- Own rewrite: rebuild save/load preference logic from memory.
-
-### Day 7 — Deletion Test + Journal
-
-- Goal: lock in understanding.
-- What you type: delete one small module and rebuild from memory.
-- Why it works: active recall reveals real comprehension.
-- Break test: compare rebuilt version with tests.
-- Own rewrite: log mistakes and corrected mental model in bug journal.
+- Pick one feature file and rebuild it from memory.
+- Add one bug-journal entry with:
+  - bug
+  - root cause
+  - fix
+  - prevention rule

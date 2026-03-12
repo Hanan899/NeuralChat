@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from typing import AsyncIterator
 
-from fastapi import Body, Depends, FastAPI, HTTPException, status
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -34,6 +34,17 @@ from app.services.chat_service import (
     tokenize_text,
 )
 from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
+from app.services.file_handler import (
+    chunk_text,
+    delete_user_file,
+    get_relevant_chunks,
+    list_user_files,
+    load_parsed_chunks,
+    parse_file,
+    save_parsed_chunks,
+    upload_raw_file,
+    validate_file,
+)
 from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web, should_search
 from app.services.storage import init_store
 
@@ -105,6 +116,100 @@ def delete_memory(user_id: str = Depends(require_user_id)) -> dict[str, str]:
     return {"message": "Memory cleared"}
 
 
+@app.post("/api/upload")
+async def post_upload(
+    session_id: str = Form(...),
+    file: UploadFile = File(...),
+    user_id: str = Depends(require_user_id),
+) -> dict[str, Any]:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+
+    filename = file.filename or ""
+    file_bytes = await file.read()
+    file_size_bytes = len(file_bytes)
+
+    try:
+        validate_file(filename=filename, file_size_bytes=file_size_bytes)
+    except ValueError as validation_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(validation_error)) from validation_error
+
+    try:
+        blob_path = await asyncio.to_thread(
+            upload_raw_file,
+            user_id,
+            session_id,
+            filename,
+            file_bytes,
+        )
+        existing_chunks = await asyncio.to_thread(load_parsed_chunks, user_id, session_id, filename)
+        if existing_chunks is not None:
+            chunk_count = len(existing_chunks)
+        else:
+            parsed_text = await asyncio.to_thread(parse_file, filename, file_bytes)
+            parsed_chunks = await asyncio.to_thread(chunk_text, parsed_text)
+            await asyncio.to_thread(save_parsed_chunks, user_id, session_id, filename, parsed_chunks)
+            chunk_count = len(parsed_chunks)
+    except HTTPException:
+        raise
+    except Exception as upload_error:
+        LOGGER.exception("File upload failed for user=%s session=%s file=%s", user_id, session_id, filename)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"File upload failed: {upload_error}",
+        ) from upload_error
+
+    return {
+        "filename": Path(filename).name,
+        "blob_path": blob_path,
+        "chunk_count": chunk_count,
+        "message": "File uploaded successfully",
+    }
+
+
+@app.get("/api/files")
+async def get_files(
+    session_id: str = Query(...),
+    user_id: str = Depends(require_user_id),
+) -> dict[str, list[dict[str, str]]]:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+
+    try:
+        files = await asyncio.to_thread(list_user_files, user_id, session_id)
+    except Exception as list_error:
+        LOGGER.exception("File list failed for user=%s session=%s", user_id, session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to list files: {list_error}",
+        ) from list_error
+    return {"files": files}
+
+
+@app.delete("/api/files/{filename}")
+async def delete_file(
+    filename: str,
+    session_id: str = Query(...),
+    user_id: str = Depends(require_user_id),
+) -> dict[str, str]:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+
+    try:
+        await asyncio.to_thread(delete_user_file, user_id, session_id, filename)
+    except ValueError as not_found_error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(not_found_error)) from not_found_error
+    except Exception as delete_error:
+        LOGGER.exception("File delete failed for user=%s session=%s file=%s", user_id, session_id, filename)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to delete file: {delete_error}",
+        ) from delete_error
+
+    safe_filename = Path(filename).name
+    return {"message": f"{safe_filename} deleted successfully"}
+
+
 @app.post("/api/chat")
 async def post_chat(
     payload: dict[str, Any] = Body(...),
@@ -119,6 +224,8 @@ async def post_chat(
     search_used = False
     sources: list[dict[str, str]] = []
     search_prompt = ""
+    file_context_used = False
+    file_prompt = ""
     search_error_message: str | None = None
 
     search_needed = request["force_search"]
@@ -147,6 +254,23 @@ async def post_chat(
             search_used = True
             search_prompt = format_search_context(sources)
 
+    try:
+        all_session_chunks: list[str] = []
+        session_files = await asyncio.to_thread(list_user_files, user_id, request["session_id"])
+        for session_file in session_files:
+            file_name = str(session_file.get("filename", "")).strip()
+            if not file_name:
+                continue
+            parsed_chunks = await asyncio.to_thread(load_parsed_chunks, user_id, request["session_id"], file_name)
+            if parsed_chunks:
+                all_session_chunks.extend(parsed_chunks)
+        relevant_chunks = await asyncio.to_thread(get_relevant_chunks, all_session_chunks, request["message"], 3)
+        if relevant_chunks:
+            file_context_used = True
+            file_prompt = "Relevant content from uploaded files:\\n" + "\\n\\n".join(relevant_chunks)
+    except Exception as file_context_error:
+        LOGGER.warning("File context retrieval failed; continuing without file context: %s", file_context_error)
+
     direct_reply: str | None = None
     if request["force_search"] and not sources:
         if search_error_message:
@@ -170,6 +294,7 @@ async def post_chat(
                 user_id=user_id,
                 memory_prompt=memory_prompt,
                 search_prompt=search_prompt,
+                file_prompt=file_prompt,
             )
         response_ms = int((time.perf_counter() - start) * 1000)
         tokens_emitted = len(tokenize_text(reply))
@@ -185,6 +310,7 @@ async def post_chat(
             first_token_ms=response_ms,
             tokens_emitted=tokens_emitted,
             search_used=search_used,
+            file_context_used=file_context_used,
             sources=sources,
         )
         response_payload = build_chat_json_response(
@@ -193,6 +319,7 @@ async def post_chat(
             model=request["model"],
             response_ms=response_ms,
             search_used=search_used,
+            file_context_used=file_context_used,
             sources=sources,
         )
         asyncio.create_task(
@@ -220,6 +347,7 @@ async def post_chat(
                     user_id=user_id,
                     memory_prompt=memory_prompt,
                     search_prompt=search_prompt,
+                    file_prompt=file_prompt,
                 )
 
             async for token in token_stream:
@@ -244,6 +372,7 @@ async def post_chat(
                         "tokens_emitted": tokens_emitted,
                         "status": stream_status,
                         "search_used": search_used,
+                        "file_context_used": file_context_used,
                         "sources": sources,
                     },
                     ensure_ascii=True,
@@ -294,6 +423,7 @@ async def post_chat(
                     first_token_ms=resolved_first_token_ms,
                     tokens_emitted=tokens_emitted,
                     search_used=search_used,
+                    file_context_used=file_context_used,
                     sources=sources,
                 )
 

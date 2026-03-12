@@ -2,14 +2,33 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMeMock, patchMemoryMock, deleteMemoryMock, checkHealthMock, checkSearchStatusMock, streamChatMock, authState, getTokenMock } =
-  vi.hoisted(() => ({
+const {
+  getMeMock,
+  patchMemoryMock,
+  deleteMemoryMock,
+  checkHealthMock,
+  checkSearchStatusMock,
+  streamChatMock,
+  getFilesMock,
+  deleteFileMock,
+  uploadFileWithProgressMock,
+  authState,
+  getTokenMock,
+} = vi.hoisted(() => ({
     getMeMock: vi.fn(),
     patchMemoryMock: vi.fn(),
     deleteMemoryMock: vi.fn(),
     checkHealthMock: vi.fn().mockResolvedValue(true),
     checkSearchStatusMock: vi.fn().mockResolvedValue(false),
     streamChatMock: vi.fn(),
+    getFilesMock: vi.fn().mockResolvedValue({ files: [] }),
+    deleteFileMock: vi.fn().mockResolvedValue({ message: "deleted" }),
+    uploadFileWithProgressMock: vi.fn().mockResolvedValue({
+      filename: "doc.txt",
+      blob_path: "user/sess/doc.txt",
+      chunk_count: 1,
+      message: "File uploaded successfully",
+    }),
     authState: { signedIn: true },
     getTokenMock: vi.fn().mockResolvedValue("token"),
   }));
@@ -21,6 +40,9 @@ vi.mock("../api", () => ({
   checkHealth: checkHealthMock,
   checkSearchStatus: checkSearchStatusMock,
   streamChat: streamChatMock,
+  getFiles: getFilesMock,
+  deleteFile: deleteFileMock,
+  uploadFileWithProgress: uploadFileWithProgressMock,
 }));
 
 vi.mock("@clerk/clerk-react", () => ({

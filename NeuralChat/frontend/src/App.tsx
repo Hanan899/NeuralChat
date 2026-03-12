@@ -1,12 +1,13 @@
 import { SignIn, SignedIn, SignedOut, useAuth, useClerk, useUser } from "@clerk/clerk-react";
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { checkHealth, checkSearchStatus, streamChat } from "./api";
+import { checkHealth, checkSearchStatus, getFiles, streamChat } from "./api";
 import { ChatWindow } from "./components/ChatWindow";
 import { DebugPanel } from "./components/DebugPanel";
+import { FileUpload } from "./components/FileUpload";
 import { ModelSelector } from "./components/ModelSelector";
 import { Sidebar } from "./components/Sidebar";
-import type { ChatMessage, ChatModel, ConversationSummary, StreamChunk, ThemeMode } from "./types";
+import type { ChatMessage, ChatModel, ConversationSummary, StreamChunk, ThemeMode, UploadedFileItem } from "./types";
 
 const EMPTY_SUGGESTIONS = [
   "Summarize this project architecture in simple terms",
@@ -62,6 +63,70 @@ const SIGN_IN_APPEARANCE = {
     alertText: "nc-clerk-alert-text"
   }
 };
+
+function UiIcon({
+  kind,
+  className
+}: {
+  kind: "brand" | "attach" | "search" | "send" | "stop" | "menu";
+  className?: string;
+}) {
+  if (kind === "brand") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <circle cx="12" cy="12" r="8.3" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M8 12C8 9.8 9.8 8 12 8C14.2 8 16 9.8 16 12C16 14.2 14.2 16 12 16" stroke="currentColor" strokeWidth="1.7" />
+      </svg>
+    );
+  }
+
+  if (kind === "attach") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <path
+          d="M9.5 12.5L14.8 7.2C16.2 5.8 18.4 5.8 19.8 7.2C21.2 8.6 21.2 10.8 19.8 12.2L11.3 20.7C8.9 23.1 5 23.1 2.6 20.7C0.2 18.3 0.2 14.4 2.6 12L11.1 3.5"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  if (kind === "search") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M16 16L20 20" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        <path d="M11 4.5V17.5M4.5 11H17.5" stroke="currentColor" strokeWidth="1.2" opacity="0.65" />
+      </svg>
+    );
+  }
+
+  if (kind === "stop") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <rect x="7" y="7" width="10" height="10" rx="2" />
+      </svg>
+    );
+  }
+
+  if (kind === "menu") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <path d="M5 8H19M5 12H19M5 16H19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M12 6V18M6 12H18" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M12 6L15 9M12 6L9 9" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 function buildId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -180,15 +245,29 @@ function ChatShell() {
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messagesByConversation, setMessagesByConversation] = useState<Record<string, ChatMessage[]>>({});
+  const [fileCountsByConversation, setFileCountsByConversation] = useState<Record<string, number>>({});
+  const [filesByConversation, setFilesByConversation] = useState<Record<string, UploadedFileItem[]>>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [isFileModalOpen, setIsFileModalOpen] = useState(false);
+  const [fileModalAuthToken, setFileModalAuthToken] = useState("");
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const submitLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const toastTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({});
+  const typingQueueRef = useRef<string[]>([]);
+  const typingTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const typingTargetRef = useRef<{ conversationId: string; assistantId: string } | null>(null);
+  const typingFinishWhenEmptyRef = useRef(false);
 
   const searchReady = searchEnabled === true;
+  const searchToggleLabel = !searchReady ? "Search unavailable" : forceWebSearch ? "Web search ON" : "Web search OFF";
+  const searchToggleTitle = !searchReady
+    ? "Web search disabled — add TAVILY_API_KEY"
+    : forceWebSearch
+      ? "Web search is ON for the next message"
+      : "Web search is OFF for the next message";
   const resolvedThemeMode: "dark" | "light" = themeMode === "system" ? systemTheme : themeMode;
   const userDisplayName = resolveDisplayName(user, userId);
   const userSubtitle = resolveUserSubtitle(user);
@@ -207,6 +286,7 @@ function ChatShell() {
 
   const currentMessages = activeConversationId ? messagesByConversation[activeConversationId] ?? [] : [];
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
+  const activeFiles = activeConversationId ? filesByConversation[activeConversationId] ?? [] : [];
 
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
@@ -248,6 +328,10 @@ function ChatShell() {
     return () => {
       Object.values(toastTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
       toastTimersRef.current = {};
+      if (typingTimerRef.current) {
+        window.clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -324,6 +408,59 @@ function ChatShell() {
     textarea.style.height = `${nextHeight}px`;
   }, [input]);
 
+  useEffect(() => {
+    if (!activeConversationId || !userId) {
+      return;
+    }
+
+    if (filesByConversation[activeConversationId]) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function loadConversationFiles() {
+      try {
+        const authToken = await getToken();
+        if (!authToken) {
+          return;
+        }
+
+        const payload = await getFiles(authToken, activeConversationId);
+        if (isCancelled) {
+          return;
+        }
+
+        setFilesByConversation((previous) => ({
+          ...previous,
+          [activeConversationId]: payload.files
+        }));
+        setFileCountsByConversation((previous) => ({
+          ...previous,
+          [activeConversationId]: payload.files.length
+        }));
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+        setFilesByConversation((previous) => ({
+          ...previous,
+          [activeConversationId]: []
+        }));
+        setFileCountsByConversation((previous) => ({
+          ...previous,
+          [activeConversationId]: 0
+        }));
+      }
+    }
+
+    void loadConversationFiles();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeConversationId, userId, getToken, filesByConversation]);
+
   function updateConversationSummary(conversationId: string, prompt: string, replyPreview: string) {
     setConversations((previous) =>
       previous.map((conversation) => {
@@ -358,10 +495,76 @@ function ChatShell() {
     }, 2600);
   }
 
+  const flushTypingQueue = useCallback(() => {
+    typingTimerRef.current = null;
+
+    const target = typingTargetRef.current;
+    if (!target) {
+      typingQueueRef.current = [];
+      typingFinishWhenEmptyRef.current = false;
+      return;
+    }
+
+    if (typingQueueRef.current.length === 0) {
+      if (typingFinishWhenEmptyRef.current) {
+        typingFinishWhenEmptyRef.current = false;
+        typingTargetRef.current = null;
+        setActiveStreamingAssistantId(null);
+      }
+      return;
+    }
+
+    const nextSlice = typingQueueRef.current.splice(0, 3).join("");
+
+    setMessagesByConversation((previous) => ({
+      ...previous,
+      [target.conversationId]: (previous[target.conversationId] ?? []).map((message) =>
+        message.id === target.assistantId ? { ...message, content: `${message.content}${nextSlice}` } : message
+      )
+    }));
+
+    if (typingQueueRef.current.length > 0) {
+      typingTimerRef.current = window.setTimeout(() => {
+        flushTypingQueue();
+      }, 18);
+      return;
+    }
+
+    if (typingFinishWhenEmptyRef.current) {
+      typingFinishWhenEmptyRef.current = false;
+      typingTargetRef.current = null;
+      setActiveStreamingAssistantId(null);
+    }
+  }, []);
+
+  const scheduleTypingFlush = useCallback(() => {
+    if (typingTimerRef.current || typingQueueRef.current.length === 0) {
+      return;
+    }
+
+    typingTimerRef.current = window.setTimeout(() => {
+      flushTypingQueue();
+    }, 18);
+  }, [flushTypingQueue]);
+
+  const finishStreamingDisplay = useCallback(() => {
+    if (typingQueueRef.current.length === 0) {
+      typingFinishWhenEmptyRef.current = false;
+      typingTargetRef.current = null;
+      setActiveStreamingAssistantId(null);
+      return;
+    }
+
+    typingFinishWhenEmptyRef.current = true;
+    scheduleTypingFlush();
+  }, [scheduleTypingFlush]);
+
   function handleNewChat() {
     const next = buildConversationSummary();
     setConversations((previous) => [next, ...previous]);
     setMessagesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+    setFilesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+    setFileCountsByConversation((previous) => ({ ...previous, [next.id]: 0 }));
     setActiveConversationId(next.id);
     setInput("");
     setErrorText("");
@@ -470,6 +673,11 @@ function ChatShell() {
 
       return next;
     });
+    setFileCountsByConversation((previous) => {
+      const next = { ...previous };
+      delete next[conversationId];
+      return next;
+    });
 
     showToast("Chat deleted.", "success");
     setErrorText("");
@@ -534,12 +742,15 @@ function ChatShell() {
       )
     );
 
+    const attachedFilesForMessage = activeFiles.map((fileItem) => ({ ...fileItem }));
+
     const userMessage: ChatMessage = {
       id: buildId(),
       role: "user",
       content: trimmed,
       createdAt: new Date().toISOString(),
-      model
+      model,
+      attachedFiles: attachedFilesForMessage
     };
 
     const assistantId = buildId();
@@ -562,6 +773,13 @@ function ChatShell() {
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    typingQueueRef.current = [];
+    typingFinishWhenEmptyRef.current = false;
+    typingTargetRef.current = { conversationId, assistantId };
+    if (typingTimerRef.current) {
+      window.clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
 
     let streamedText = "";
 
@@ -584,12 +802,9 @@ function ChatShell() {
           if (chunk.type === "token") {
             streamedText += chunk.content;
             setTokensEmitted((value) => value + 1);
-            setMessagesByConversation((previous) => ({
-              ...previous,
-              [conversationId]: (previous[conversationId] ?? []).map((message) =>
-                message.id === assistantId ? { ...message, content: `${message.content}${chunk.content}` } : message
-              )
-            }));
+            typingTargetRef.current = { conversationId, assistantId };
+            typingQueueRef.current.push(...Array.from(chunk.content));
+            scheduleTypingFlush();
             return;
           }
 
@@ -620,12 +835,13 @@ function ChatShell() {
                 ? {
                     ...message,
                     searchUsed: chunk.search_used === true,
+                    fileContextUsed: chunk.file_context_used === true,
                     sources: Array.isArray(chunk.sources) ? chunk.sources : []
                   }
                 : message
             )
           }));
-          setActiveStreamingAssistantId(null);
+          finishStreamingDisplay();
         },
         controller.signal
       );
@@ -643,6 +859,7 @@ function ChatShell() {
             ? {
                 ...message,
                 searchUsed: result.searchUsed,
+                fileContextUsed: result.fileContextUsed,
                 sources: result.sources
               }
             : message
@@ -656,20 +873,30 @@ function ChatShell() {
       if (text !== "Generation stopped by user.") {
         setErrorText(text);
       }
-      window.setTimeout(() => {
-        setMessagesByConversation((previous) => ({
-          ...previous,
-          [conversationId]: (previous[conversationId] ?? []).filter(
-            (message) => !(message.id === assistantId && message.content.trim() === "")
-          )
-        }));
-      }, 0);
+      if (streamedText.trim() === "" && typingQueueRef.current.length === 0) {
+        typingTargetRef.current = null;
+        typingFinishWhenEmptyRef.current = false;
+        if (typingTimerRef.current) {
+          window.clearTimeout(typingTimerRef.current);
+          typingTimerRef.current = null;
+        }
+        window.setTimeout(() => {
+          setMessagesByConversation((previous) => ({
+            ...previous,
+            [conversationId]: (previous[conversationId] ?? []).filter(
+              (message) => !(message.id === assistantId && message.content.trim() === "")
+            )
+          }));
+        }, 0);
+        setActiveStreamingAssistantId(null);
+      } else {
+        finishStreamingDisplay();
+      }
       updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
     } finally {
       abortControllerRef.current = null;
       submitLockRef.current = false;
       setIsSending(false);
-      setActiveStreamingAssistantId(null);
     }
   }
 
@@ -710,6 +937,49 @@ function ChatShell() {
   function handleSignOut() {
     void clerk.signOut();
   }
+
+  async function handleOpenFileUpload() {
+    if (!activeConversationId) {
+      return;
+    }
+
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+      setFileModalAuthToken(authToken);
+      setIsFileModalOpen(true);
+      setErrorText("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to open file upload.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
+  }
+
+  const handleUploadedFilesChange = useCallback(
+    (files: UploadedFileItem[]) => {
+      if (!activeConversationId) {
+        return;
+      }
+      setFilesByConversation((previous) => ({
+        ...previous,
+        [activeConversationId]: files
+      }));
+      setFileCountsByConversation((previous) => {
+        const currentCount = previous[activeConversationId] ?? 0;
+        if (currentCount === files.length) {
+          return previous;
+        }
+        return {
+          ...previous,
+          [activeConversationId]: files.length,
+        };
+      });
+    },
+    [activeConversationId]
+  );
 
   function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -769,7 +1039,7 @@ function ChatShell() {
               aria-label="Open sidebar"
               onClick={() => setIsSidebarOpen(true)}
             >
-              ☰
+              <UiIcon kind="menu" className="nc-ui-icon" />
             </button>
             <h1>{activeConversation?.title ?? "New chat"}</h1>
           </div>
@@ -802,7 +1072,9 @@ function ChatShell() {
         <div className="nc-message-area">
           {currentMessages.length === 0 ? (
             <section className="nc-empty-state" data-testid="empty-state">
-              <div className="nc-empty-mark">✶</div>
+              <div className="nc-empty-mark">
+                <UiIcon kind="brand" className="nc-empty-mark__icon" />
+              </div>
               <h2>How can I help you today?</h2>
               <div className="nc-empty-chips">
                 {EMPTY_SUGGESTIONS.map((suggestion) => (
@@ -842,33 +1114,40 @@ function ChatShell() {
 
             <div className="nc-input-row">
               <div className="nc-input-left">
-                <button type="button" className="nc-icon-btn" aria-label="Attach file">
-                  📎
+                <button
+                  type="button"
+                  className="nc-attach-btn"
+                  aria-label="Add files to this chat"
+                  onClick={() => void handleOpenFileUpload()}
+                  title="Add or manage files for this chat"
+                >
+                  <UiIcon kind="attach" className="nc-ui-icon" />
+                  <span>Add files</span>
                 </button>
                 <button
                   type="button"
-                  className={`nc-icon-btn ${forceWebSearch ? "nc-icon-btn--active" : ""}`}
+                  className={`nc-search-toggle ${forceWebSearch ? "nc-search-toggle--active" : ""}`}
                   aria-label="Toggle web search"
                   aria-pressed={forceWebSearch}
-                  title={searchReady ? "Use web search" : "Web search disabled — add TAVILY_API_KEY"}
+                  title={searchToggleTitle}
                   disabled={!searchReady}
                   onClick={() => setForceWebSearch((value) => !value)}
                 >
-                  🌐
+                  <span className="nc-search-toggle__icon" aria-hidden="true">
+                    <UiIcon kind="search" className="nc-ui-icon" />
+                  </span>
+                  <span className="nc-search-toggle__label">{searchToggleLabel}</span>
                 </button>
-                <span className="nc-search-dot" aria-label={searchReady ? "Web search enabled" : "Web search disabled"}>
-                  {searchReady ? "online" : "offline"}
-                </span>
                 <ModelSelector value={model} onChange={setModel} />
               </div>
 
               {isSending ? (
                 <button type="button" className="nc-send-btn" aria-label="Stop generating" onClick={handleStopGenerating}>
-                  ■
+                  <UiIcon kind="stop" className="nc-send-btn__icon" />
                 </button>
               ) : (
                 <button type="submit" className="nc-send-btn" aria-label="Send message" disabled={!input.trim()}>
-                  ↑
+                  <UiIcon kind="send" className="nc-send-btn__icon" />
                 </button>
               )}
             </div>
@@ -891,6 +1170,16 @@ function ChatShell() {
             backendHealthy={backendHealthy}
           />
         </aside>
+      ) : null}
+
+      {isFileModalOpen && activeConversationId && fileModalAuthToken ? (
+        <FileUpload
+          open={isFileModalOpen}
+          authToken={fileModalAuthToken}
+          sessionId={activeConversationId}
+          onFilesChange={handleUploadedFilesChange}
+          onClose={() => setIsFileModalOpen(false)}
+        />
       ) : null}
     </main>
   );

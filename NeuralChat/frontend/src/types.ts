@@ -9,13 +9,21 @@ export interface SearchSource {
   snippet: string;
 }
 
+export interface UploadedFileItem {
+  filename: string;
+  uploaded_at: string;
+  blob_path: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
   content: string;
   createdAt: string;
   model: ChatModel;
+  attachedFiles?: UploadedFileItem[];
   searchUsed?: boolean;
+  fileContextUsed?: boolean;
   sources?: SearchSource[];
 }
 
@@ -36,6 +44,7 @@ export interface StreamChunk {
   tokens_emitted?: number;
   status?: "completed" | "interrupted";
   search_used?: boolean;
+  file_context_used?: boolean;
   sources?: SearchSource[];
 }
 
