@@ -170,12 +170,14 @@ def api_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         message: str,
         history: list[dict],
         memory_prompt: str = "",
+        search_prompt: str = "",
         timeout_seconds: float = 25.0,
     ) -> str:
         del timeout_seconds
-        return f"reply({model}): {message}; memory={memory_prompt}; history={len(history)}"
+        return f"reply({model}): {message}; memory={memory_prompt}; search={search_prompt}; history={len(history)}"
 
     monkeypatch.setattr(chat_service, "generate_model_reply", fake_generate_model_reply)
+    monkeypatch.setattr("app.main.should_search", lambda message: False)
 
     async def fake_process_memory_update(user_id: str, message: str, reply: str) -> None:
         del user_id, message, reply
@@ -230,9 +232,10 @@ def test_chat_injects_memory_into_system_prompt(api_client: TestClient, monkeypa
         message: str,
         history: list[dict],
         memory_prompt: str = "",
+        search_prompt: str = "",
         timeout_seconds: float = 25.0,
     ) -> str:
-        del model, message, history, timeout_seconds
+        del model, message, history, timeout_seconds, search_prompt
         captured_prompt["value"] = memory_prompt
         return "memory-aware-reply"
 

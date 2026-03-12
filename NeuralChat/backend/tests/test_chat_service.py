@@ -34,10 +34,11 @@ def test_generate_and_persist_messages(monkeypatch: pytest.MonkeyPatch):
         message: str,
         history: list[dict[str, Any]],
         memory_prompt: str = "",
+        search_prompt: str = "",
         timeout_seconds: float = 25.0,
     ) -> str:
         del timeout_seconds
-        return f"reply({model}): {message}; history={len(history)}; memory={memory_prompt}"
+        return f"reply({model}): {message}; history={len(history)}; memory={memory_prompt}; search={search_prompt}"
 
     monkeypatch.setattr(chat_service, "generate_model_reply", fake_generate_reply)
 

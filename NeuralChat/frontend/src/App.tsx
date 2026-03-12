@@ -1,7 +1,7 @@
 import { SignIn, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/clerk-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { checkHealth, streamChat } from "./api";
+import { checkHealth, checkSearchStatus, streamChat } from "./api";
 import { ChatWindow } from "./components/ChatWindow";
 import { DebugPanel } from "./components/DebugPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
@@ -38,6 +38,8 @@ function ChatShell() {
   const [streamStatus, setStreamStatus] = useState("idle");
   const [errorText, setErrorText] = useState("");
   const [isMemoryPanelOpen, setIsMemoryPanelOpen] = useState(false);
+  const [searchEnabled, setSearchEnabled] = useState<boolean | null>(null);
+  const [forceWebSearch, setForceWebSearch] = useState(false);
 
   const sessionId = useMemo(() => {
     if (!userId) {
@@ -48,6 +50,9 @@ function ChatShell() {
 
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
+    checkSearchStatus()
+      .then((status) => setSearchEnabled(status))
+      .catch(() => setSearchEnabled(false));
   }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -95,7 +100,8 @@ function ChatShell() {
           session_id: sessionId,
           message: trimmed,
           model,
-          stream: true
+          stream: true,
+          force_search: forceWebSearch && searchEnabled === true
         },
         authToken,
         (chunk: StreamChunk) => {
@@ -125,6 +131,17 @@ function ChatShell() {
             if (typeof chunk.tokens_emitted === "number") {
               setTokensEmitted(chunk.tokens_emitted);
             }
+            setMessages((previous) =>
+              previous.map((msg) =>
+                msg.id === assistantId
+                  ? {
+                      ...msg,
+                      searchUsed: chunk.search_used === true,
+                      sources: Array.isArray(chunk.sources) ? chunk.sources : []
+                    }
+                  : msg
+              )
+            );
           }
         }
       );
@@ -134,6 +151,11 @@ function ChatShell() {
       setFirstTokenMs(result.firstTokenMs);
       setTokensEmitted(result.tokensEmitted);
       setStreamStatus("completed");
+      setMessages((previous) =>
+        previous.map((msg) =>
+          msg.id === assistantId ? { ...msg, searchUsed: result.searchUsed, sources: result.sources } : msg
+        )
+      );
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown error";
       setStreamStatus("interrupted");
@@ -151,6 +173,11 @@ function ChatShell() {
           <p className="text-sm text-slate-700">Authenticated chat with user-scoped cloud memory.</p>
         </div>
         <div className="flex items-center gap-2">
+          <span
+            aria-label={searchEnabled ? "Web search enabled" : "Web search disabled"}
+            title={searchEnabled ? "Web search enabled" : "Web search disabled — add TAVILY_API_KEY"}
+            className={`h-3 w-3 rounded-full ${searchEnabled ? "bg-green-500" : "bg-slate-400"}`}
+          />
           <button
             type="button"
             aria-label="Open memory panel"
@@ -177,7 +204,27 @@ function ChatShell() {
 
       <form onSubmit={handleSubmit} className="rounded-lg border border-slate-300 bg-white p-3">
         <div className="mb-2 flex items-center justify-between">
-          <ModelSelector value={model} onChange={setModel} />
+          <div className="flex items-center gap-3">
+            <ModelSelector value={model} onChange={setModel} />
+            <label
+              className={`flex items-center gap-2 text-xs ${
+                searchEnabled ? "text-slate-700" : "text-slate-400"
+              }`}
+              title={
+                searchEnabled
+                  ? "Force web search for this message."
+                  : "Web search disabled — add TAVILY_API_KEY in backend/local.settings.json"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={forceWebSearch}
+                disabled={!searchEnabled}
+                onChange={(event) => setForceWebSearch(event.target.checked)}
+              />
+              Web Search
+            </label>
+          </div>
           <span className="text-xs text-slate-500">Session: {sessionId}</span>
         </div>
 

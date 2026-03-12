@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import uuid
@@ -26,10 +27,12 @@ from app.env_loader import load_local_settings_env
 from app.schemas import build_chat_json_response, build_health_response, validate_chat_request
 from app.services.chat_service import generate_reply, save_assistant_message, save_user_message, stream_tokens, tokenize_text
 from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
+from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web, should_search
 from app.services.storage import init_store
 
 APP_VERSION = "0.2.0"
 BASE_DIR = Path(__file__).resolve().parents[1]
+LOGGER = logging.getLogger(__name__)
 
 load_local_settings_env(BASE_DIR)
 STORE = init_store()
@@ -51,6 +54,11 @@ app.add_middleware(
 @app.get("/api/health")
 def get_health() -> dict[str, str]:
     return build_health_response(timestamp=datetime.now(UTC).isoformat(), version=APP_VERSION)
+
+
+@app.get("/api/search/status")
+def get_search_status() -> dict[str, bool]:
+    return {"search_enabled": bool(os.getenv("TAVILY_API_KEY", "").strip())}
 
 
 @app.get("/api/me")
@@ -101,7 +109,59 @@ async def post_chat(
 
     save_user_message(request=request, request_id=request_id, store=STORE, user_id=user_id)
     memory_prompt = build_memory_prompt(user_id=user_id)
-    reply = await generate_reply(request=request, store=STORE, user_id=user_id, memory_prompt=memory_prompt)
+    search_used = False
+    sources: list[dict[str, str]] = []
+    search_prompt = ""
+    search_error_message: str | None = None
+
+    if request["force_search"]:
+        search_needed = True
+    else:
+        search_needed = await asyncio.to_thread(should_search, request["message"])
+    if search_needed:
+        cached_results: list[dict[str, str]] | None = None
+        try:
+            cached_results = await asyncio.to_thread(load_cached_results, request["message"])
+        except Exception as cache_load_error:
+            LOGGER.warning("Search cache read failed: %s", cache_load_error)
+
+        if cached_results is not None:
+            sources = cached_results
+        else:
+            try:
+                sources = await asyncio.to_thread(search_web, request["message"])
+                try:
+                    await asyncio.to_thread(cache_search_results, request["message"], sources)
+                except Exception as cache_write_error:
+                    LOGGER.warning("Search cache write failed: %s", cache_write_error)
+            except Exception as search_error:
+                LOGGER.warning("Web search failed; continuing without search context: %s", search_error)
+                search_error_message = "Web search provider is currently unavailable."
+                sources = []
+
+        if sources:
+            search_used = True
+            search_prompt = format_search_context(sources)
+
+    if request["force_search"] and not sources:
+        if search_error_message:
+            reply = (
+                "Web search is enabled, but the search provider is unavailable right now. "
+                "Please try again in a moment."
+            )
+        else:
+            reply = (
+                "Web search is enabled, but no reliable public results were found for this query. "
+                "Try a more specific query with full name, company website, or location."
+            )
+    else:
+        reply = await generate_reply(
+            request=request,
+            store=STORE,
+            user_id=user_id,
+            memory_prompt=memory_prompt,
+            search_prompt=search_prompt,
+        )
 
     if not request["stream"]:
         response_ms = int((time.perf_counter() - start) * 1000)
@@ -117,12 +177,16 @@ async def post_chat(
             response_ms=response_ms,
             first_token_ms=response_ms,
             tokens_emitted=tokens_emitted,
+            search_used=search_used,
+            sources=sources,
         )
         response_payload = build_chat_json_response(
             request_id=request_id,
             reply=reply,
             model=request["model"],
             response_ms=response_ms,
+            search_used=search_used,
+            sources=sources,
         )
         asyncio.create_task(
             process_memory_update(
@@ -161,6 +225,8 @@ async def post_chat(
                         "first_token_ms": resolved_first_token_ms,
                         "tokens_emitted": tokens_emitted,
                         "status": stream_status,
+                        "search_used": search_used,
+                        "sources": sources,
                     },
                     ensure_ascii=True,
                 )
@@ -208,6 +274,8 @@ async def post_chat(
                     response_ms=response_ms_final,
                     first_token_ms=resolved_first_token_ms,
                     tokens_emitted=tokens_emitted,
+                    search_used=search_used,
+                    sources=sources,
                 )
 
     return StreamingResponse(
