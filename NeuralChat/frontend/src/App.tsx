@@ -27,7 +27,7 @@ function ChatShell() {
   const { getToken, userId } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [model, setModel] = useState<ChatModel>("claude");
+  const [model, setModel] = useState<ChatModel>("gpt-5");
   const [isSending, setIsSending] = useState(false);
   const [backendHealthy, setBackendHealthy] = useState(false);
   const [requestId, setRequestId] = useState("");

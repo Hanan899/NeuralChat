@@ -15,7 +15,7 @@ NeuralChat has two runtime parts:
 4. Frontend calls protected backend APIs with `Authorization: Bearer <token>`.
 5. Backend verifies token via Clerk JWKS and extracts `user_id` from `sub`.
 6. Backend stores user message in Azure Blob under `user_id/session_id`.
-7. Backend generates model reply (Claude or GPT-4o path).
+7. Backend generates model reply (Azure OpenAI GPT-5 path).
 8. Backend streams NDJSON token chunks to frontend.
 9. Frontend renders assistant message incrementally.
 10. Backend saves final assistant message and stream metadata.
@@ -57,10 +57,7 @@ Notes:
 
 ## 5) Model Routing
 
-- `model = "claude"`:
-  - Uses Anthropic API if `CLAUDE_API_KEY` exists.
-- `model = "gpt4o"`:
-  - Uses Azure OpenAI if `AZURE_OPENAI_*` config exists.
-  - Falls back to OpenAI if `OPENAI_API_KEY` exists and Azure config is absent.
-- Missing provider credentials:
-  - Returns mock response so local UI and streaming flow remain testable.
+- `model = "gpt-5"`:
+  - Uses Azure OpenAI deployment configured by `AZURE_OPENAI_DEPLOYMENT_NAME` (current default: `gpt-5-chat`).
+- Missing provider configuration:
+  - Returns explicit API errors (no mock responses).

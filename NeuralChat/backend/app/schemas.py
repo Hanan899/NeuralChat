@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 
-ChatModel = Literal["claude", "gpt4o"]
+ChatModel = Literal["gpt-5"]
 
 
 def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -19,9 +19,9 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(message, str) or not (1 <= len(message) <= 12000):
         raise HTTPException(status_code=422, detail="message must be a non-empty string (max 12000).")
 
-    model = payload.get("model", "claude")
-    if model not in {"claude", "gpt4o"}:
-        raise HTTPException(status_code=422, detail="model must be either 'claude' or 'gpt4o'.")
+    model = payload.get("model", "gpt-5")
+    if model != "gpt-5":
+        raise HTTPException(status_code=422, detail="model must be 'gpt-5'.")
 
     stream = payload.get("stream", True)
     if not isinstance(stream, bool):

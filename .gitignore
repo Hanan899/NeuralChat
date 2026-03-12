@@ -1,11 +1,23 @@
+# OS
 .DS_Store
+
+# Environment and local-only config
 .env
-.env.*
+.env.local
+.env.*.local
 *.json.local
 *.local.json
 *.local.settings.json
 
-__pycache__/
-*.pyc
+# Keep shareable examples tracked
+!**/.env.example
+!**/local.settings.example.json
 
+# Python
+__pycache__/
+*.py[cod]
 .venv/
+
+# Node / frontend outputs
+node_modules/
+dist/

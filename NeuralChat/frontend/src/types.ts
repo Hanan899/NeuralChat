@@ -1,4 +1,4 @@
-export type ChatModel = "claude" | "gpt4o";
+export type ChatModel = "gpt-5";
 
 export type ChatRole = "user" | "assistant";
 

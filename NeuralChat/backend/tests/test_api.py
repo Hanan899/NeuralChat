@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.auth import require_user_id
 from app.main import STORE, app
+from app.services import chat_service
 from app.services.storage import load_messages, load_profile, reset_memory_store
 
 
@@ -22,9 +23,17 @@ class APITests(unittest.TestCase):
     def setUp(self):
         reset_memory_store()
         app.dependency_overrides[require_user_id] = lambda: "user-test"
+        self._original_generate_model_reply = chat_service.generate_model_reply
+
+        async def fake_generate_model_reply(model: str, message: str, history: list[dict], timeout_seconds: float = 25.0):
+            del timeout_seconds
+            return f"reply({model}): {message}; history={len(history)}"
+
+        chat_service.generate_model_reply = fake_generate_model_reply
 
     def tearDown(self):
         app.dependency_overrides.clear()
+        chat_service.generate_model_reply = self._original_generate_model_reply
 
     def test_health_returns_expected_shape(self):
         response = self.client.get("/api/health")
@@ -42,7 +51,7 @@ class APITests(unittest.TestCase):
             json={
                 "session_id": "s-1",
                 "message": "hello",
-                "model": "claude",
+                "model": "gpt-5",
                 "stream": False,
             },
         )
@@ -63,16 +72,18 @@ class APITests(unittest.TestCase):
         self.assertEqual(load_profile(STORE, "user-test").get("user_id"), "user-test")
 
     def test_chat_rejects_invalid_model(self):
-        response = self.client.post(
-            "/api/chat",
-            json={
-                "session_id": "s-1",
-                "message": "hello",
-                "model": "invalid-model",
-                "stream": False,
-            },
-        )
-        self.assertEqual(response.status_code, 422)
+        for model in ["invalid-model", "gpt4o", "claude"]:
+            with self.subTest(model=model):
+                response = self.client.post(
+                    "/api/chat",
+                    json={
+                        "session_id": "s-1",
+                        "message": "hello",
+                        "model": model,
+                        "stream": False,
+                    },
+                )
+                self.assertEqual(response.status_code, 422)
 
     def test_chat_stream_emits_token_then_done(self):
         session_id = f"s-{uuid.uuid4()}"
@@ -81,7 +92,7 @@ class APITests(unittest.TestCase):
             json={
                 "session_id": session_id,
                 "message": "test stream",
-                "model": "claude",
+                "model": "gpt-5",
                 "stream": True,
             },
         )
