@@ -17,7 +17,8 @@ export async function checkHealth(): Promise<boolean> {
 export async function streamChat(
   payload: ChatRequest,
   authToken: string,
-  onChunk: (chunk: StreamChunk) => void
+  onChunk: (chunk: StreamChunk) => void,
+  signal?: AbortSignal
 ): Promise<{
   requestId: string;
   responseMs: number;
@@ -28,14 +29,23 @@ export async function streamChat(
 }> {
   const startedAt = performance.now();
 
-  const response = await fetch(`${API_BASE_URL}/api/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`
-    },
-    body: JSON.stringify(payload)
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`
+      },
+      body: JSON.stringify(payload),
+      signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Generation stopped by user.");
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const text = await response.text();
@@ -53,30 +63,37 @@ export async function streamChat(
   let doneChunk: StreamChunk | null = null;
   let streamError = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      if (!line.trim()) {
-        continue;
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue;
+        }
+        const chunk = JSON.parse(line) as StreamChunk;
+        if (chunk.type === "done") {
+          sawDone = true;
+          doneChunk = chunk;
+        }
+        if (chunk.type === "error") {
+          streamError = chunk.content || "Streaming interrupted.";
+        }
+        onChunk(chunk);
       }
-      const chunk = JSON.parse(line) as StreamChunk;
-      if (chunk.type === "done") {
-        sawDone = true;
-        doneChunk = chunk;
-      }
-      if (chunk.type === "error") {
-        streamError = chunk.content || "Streaming interrupted.";
-      }
-      onChunk(chunk);
     }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Generation stopped by user.");
+    }
+    throw error;
   }
 
   if (buffer.trim()) {
@@ -106,7 +123,15 @@ export async function streamChat(
   const responseMsFromDone = typeof doneChunk?.response_ms === "number" ? doneChunk.response_ms : responseMs;
   const searchUsed = doneChunk?.search_used === true;
   const sources = Array.isArray(doneChunk?.sources) ? doneChunk.sources : [];
-  return { requestId, responseMs: responseMsFromDone, firstTokenMs, tokensEmitted, searchUsed, sources };
+
+  return {
+    requestId,
+    responseMs: responseMsFromDone,
+    firstTokenMs,
+    tokensEmitted,
+    searchUsed,
+    sources
+  };
 }
 
 export async function checkSearchStatus(): Promise<boolean> {

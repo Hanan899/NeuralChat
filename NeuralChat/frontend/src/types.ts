@@ -1,4 +1,5 @@
 export type ChatModel = "gpt-5";
+export type ThemeMode = "system" | "dark" | "light";
 
 export type ChatRole = "user" | "assistant";
 
@@ -37,3 +38,13 @@ export interface StreamChunk {
   search_used?: boolean;
   sources?: SearchSource[];
 }
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  preview: string;
+  updatedAt: string;
+  archived?: boolean;
+}
+
+export type ConversationGroup = "Today" | "Yesterday" | "Previous 7 Days" | "Older";
