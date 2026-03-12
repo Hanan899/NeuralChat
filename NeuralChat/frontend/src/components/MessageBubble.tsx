@@ -134,6 +134,14 @@ function ActionIcon({ kind }: { kind: "up" | "down" | "copy" | "retry" }) {
   );
 }
 
+function StatusIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+      <path d="M6 12.5L10 16.5L18 8.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function CodeBlock({ className, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const language = className?.replace("language-", "").trim() || "text";
@@ -177,6 +185,8 @@ export function MessageBubble({
   onRetry
 }: MessageBubbleProps) {
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
+  const [copiedMessage, setCopiedMessage] = useState(false);
+  const [actionStatus, setActionStatus] = useState("");
   const isUser = message.role === "user";
   const hasAssistantContent = message.content.trim().length > 0;
   const showMessageActions = hasAssistantContent && !isStreaming;
@@ -204,8 +214,23 @@ export function MessageBubble({
     );
   }
 
+  function handleFeedback(nextFeedback: "up" | "down") {
+    const resolvedFeedback = feedback === nextFeedback ? null : nextFeedback;
+    setFeedback(resolvedFeedback);
+    setActionStatus(
+      resolvedFeedback === null ? "Feedback cleared" : resolvedFeedback === "up" ? "Marked helpful" : "Marked unhelpful"
+    );
+    window.setTimeout(() => setActionStatus(""), 1800);
+  }
+
   async function handleCopyMessage() {
     await navigator.clipboard.writeText(message.content);
+    setCopiedMessage(true);
+    setActionStatus("Copied to clipboard");
+    window.setTimeout(() => {
+      setCopiedMessage(false);
+      setActionStatus("");
+    }, 1800);
   }
 
   return (
@@ -261,25 +286,36 @@ export function MessageBubble({
             <button
               type="button"
               aria-label="Thumbs up"
+              aria-pressed={feedback === "up"}
+              title={feedback === "up" ? "Remove helpful feedback" : "Mark response helpful"}
               className={feedback === "up" ? "nc-message-actions__active" : ""}
-              onClick={() => setFeedback("up")}
+              onClick={() => handleFeedback("up")}
             >
               <ActionIcon kind="up" />
             </button>
             <button
               type="button"
               aria-label="Thumbs down"
+              aria-pressed={feedback === "down"}
+              title={feedback === "down" ? "Remove unhelpful feedback" : "Mark response unhelpful"}
               className={feedback === "down" ? "nc-message-actions__active" : ""}
-              onClick={() => setFeedback("down")}
+              onClick={() => handleFeedback("down")}
             >
               <ActionIcon kind="down" />
             </button>
-            <button type="button" aria-label="Copy message" onClick={handleCopyMessage}>
-              <ActionIcon kind="copy" />
+            <button
+              type="button"
+              aria-label="Copy message"
+              title={copiedMessage ? "Copied" : "Copy response"}
+              className={copiedMessage ? "nc-message-actions__active" : ""}
+              onClick={handleCopyMessage}
+            >
+              {copiedMessage ? <StatusIcon /> : <ActionIcon kind="copy" />}
             </button>
-            <button type="button" aria-label="Retry response" onClick={onRetry} disabled={!onRetry}>
+            <button type="button" aria-label="Retry response" title="Generate again" onClick={onRetry} disabled={!onRetry}>
               <ActionIcon kind="retry" />
             </button>
+            {actionStatus ? <span className="nc-message-actions__status">{actionStatus}</span> : null}
           </div>
         ) : null}
       </article>

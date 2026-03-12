@@ -248,6 +248,48 @@ describe("SearchSources and MessageBubble", () => {
     expect(screen.getByRole("button", { name: "Retry response" })).toBeInTheDocument();
   });
 
+  it("shows copied state after copy action", async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined)
+      }
+    });
+
+    render(
+      <MessageBubble
+        message={{
+          id: "msg-copy",
+          role: "assistant",
+          content: "Copy me",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5"
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    expect(screen.getByText("Copied to clipboard")).toBeInTheDocument();
+  });
+
+  it("toggles helpful feedback state", async () => {
+    render(
+      <MessageBubble
+        message={{
+          id: "msg-feedback",
+          role: "assistant",
+          content: "Feedback me",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5"
+        }}
+      />
+    );
+
+    const thumbsUpButton = screen.getByRole("button", { name: "Thumbs up" });
+    await userEvent.click(thumbsUpButton);
+    expect(thumbsUpButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Marked helpful")).toBeInTheDocument();
+  });
+
   it("test_search_status_badge_green_when_enabled", async () => {
     checkSearchStatusMock.mockResolvedValue(true);
     render(<App />);
