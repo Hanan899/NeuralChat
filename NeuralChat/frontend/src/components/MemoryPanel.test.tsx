@@ -32,9 +32,18 @@ vi.mock("@clerk/clerk-react", () => ({
     userId: "user_1",
     getToken: getTokenMock,
   }),
+  useUser: () => ({
+    user: {
+      fullName: "Abdul Hanan",
+      firstName: "Abdul",
+      username: "hanan",
+      primaryEmailAddress: {
+        emailAddress: "hanan@example.com"
+      }
+    }
+  }),
 }));
 
-import App from "../App";
 import { MemoryPanel } from "./MemoryPanel";
 
 describe("MemoryPanel", () => {
@@ -93,7 +102,24 @@ describe("MemoryPanel", () => {
     render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
 
     expect(await screen.findByText("preferences")).toBeInTheDocument();
-    expect(screen.getByText('{\"style\":\"concise\",\"language\":\"en\"}')).toBeInTheDocument();
+    expect(screen.getByText("style: concise | language: en")).toBeInTheDocument();
+  });
+
+  it("hides technical profile keys from user panel", async () => {
+    getMeMock.mockResolvedValue({
+      user_id: "user_1",
+      profile: {
+        user_id: "internal-user",
+        updated_at: "2026-03-11T22:54:16Z",
+        city: "Lahore"
+      }
+    });
+
+    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+
+    expect(await screen.findByText("city")).toBeInTheDocument();
+    expect(screen.queryByText("user_id")).not.toBeInTheDocument();
+    expect(screen.queryByText("updated_at")).not.toBeInTheDocument();
   });
 
   it("test_edit_fact_calls_patch_endpoint", async () => {
@@ -129,11 +155,4 @@ describe("MemoryPanel", () => {
     expect(await screen.findByText("No memory yet — start chatting!")).toBeInTheDocument();
   });
 
-  it("test_memory_panel_opens_on_brain_icon_click", async () => {
-    render(<App />);
-
-    expect(screen.queryByText("What NeuralChat knows about you")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Open memory panel" }));
-    expect(await screen.findByText("What NeuralChat knows about you")).toBeInTheDocument();
-  });
 });

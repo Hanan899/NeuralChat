@@ -1,8 +1,8 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { authState, getTokenMock, streamChatMock } = vi.hoisted(() => ({
+const { authState, getTokenMock, streamChatMock, checkSearchStatusMock } = vi.hoisted(() => ({
   authState: { signedIn: true },
   getTokenMock: vi.fn().mockResolvedValue("token"),
   streamChatMock: vi.fn().mockResolvedValue({
@@ -12,7 +12,8 @@ const { authState, getTokenMock, streamChatMock } = vi.hoisted(() => ({
     tokensEmitted: 1,
     searchUsed: false,
     sources: []
-  })
+  }),
+  checkSearchStatusMock: vi.fn().mockResolvedValue(false)
 }));
 
 vi.mock("@clerk/clerk-react", () => ({
@@ -23,12 +24,26 @@ vi.mock("@clerk/clerk-react", () => ({
   useAuth: () => ({
     userId: "user_1",
     getToken: getTokenMock
+  }),
+  useUser: () => ({
+    user: {
+      fullName: "Abdul Hanan",
+      firstName: "Abdul",
+      username: "hanan",
+      primaryEmailAddress: {
+        emailAddress: "hanan@example.com"
+      }
+    }
+  }),
+  useClerk: () => ({
+    signOut: vi.fn(),
+    openUserProfile: vi.fn()
   })
 }));
 
 vi.mock("../api", () => ({
   checkHealth: vi.fn().mockResolvedValue(true),
-  checkSearchStatus: vi.fn().mockResolvedValue(false),
+  checkSearchStatus: checkSearchStatusMock,
   streamChat: streamChatMock
 }));
 
@@ -46,6 +61,8 @@ describe("App", () => {
       searchUsed: false,
       sources: []
     });
+    checkSearchStatusMock.mockResolvedValue(false);
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -57,26 +74,94 @@ describe("App", () => {
     authState.signedIn = false;
     render(<App />);
 
-    expect(screen.getByText("NeuralChat")).toBeInTheDocument();
+    expect(screen.getAllByText("NeuralChat").length).toBeGreaterThan(0);
     expect(screen.getByText("Clerk Sign In")).toBeInTheDocument();
   });
 
-  it("renders title and send button", () => {
+  it("renders sidebar groups and empty state", async () => {
     render(<App />);
 
-    expect(screen.getByText("NeuralChat")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+    expect(await screen.findByText("Your chats")).toBeInTheDocument();
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+    expect(screen.getByText("How can I help you today?")).toBeInTheDocument();
   });
 
   it("sends bearer-authenticated chat request", async () => {
     render(<App />);
 
-    await userEvent.type(screen.getByPlaceholderText("Ask NeuralChat anything..."), "hello");
-    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.type(screen.getByPlaceholderText("Message NeuralChat..."), "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(getTokenMock).toHaveBeenCalled();
     expect(streamChatMock).toHaveBeenCalledTimes(1);
     const [, tokenArg] = streamChatMock.mock.calls[0];
     expect(tokenArg).toBe("token");
+  });
+
+  it("opens sidebar from mobile menu button", async () => {
+    render(<App />);
+    const sidebar = await screen.findByTestId("conversation-sidebar");
+
+    await userEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    expect(sidebar.className).toContain("nc-sidebar--open");
+  });
+
+  it("shows stop generating while stream is active", async () => {
+    streamChatMock.mockImplementation(
+      (_payload, _authToken, _onChunk, signal: AbortSignal | undefined) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("Generation stopped by user.")));
+        })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByPlaceholderText("Message NeuralChat..."), "stream");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByRole("button", { name: "Stop generating" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Stop generating" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
+    });
+  });
+
+  it("prevents duplicate submit when Enter and form submit fire together", async () => {
+    streamChatMock.mockImplementation(
+      () =>
+        new Promise(() => {
+          // Keep the stream pending so repeated submissions would stack if not locked.
+        })
+    );
+
+    render(<App />);
+    const textarea = screen.getByPlaceholderText("Message NeuralChat...");
+    await userEvent.type(textarea, "hello");
+
+    fireEvent.keyDown(textarea, { key: "Enter", code: "Enter" });
+    fireEvent.submit(textarea.closest("form") as HTMLFormElement);
+
+    await waitFor(() => {
+      expect(streamChatMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("removes empty assistant placeholder when stream fails before first token", async () => {
+    streamChatMock.mockRejectedValue(new Error("Azure OpenAI streaming request failed: 400."));
+
+    const { container } = render(<App />);
+
+    await userEvent.type(screen.getByPlaceholderText("Message NeuralChat..."), "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Azure OpenAI streaming request failed: 400.")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll(".nc-message--user")).toHaveLength(1);
+      expect(container.querySelectorAll(".nc-message--assistant")).toHaveLength(0);
+    });
   });
 });

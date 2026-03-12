@@ -5,6 +5,7 @@ import json
 import os
 import uuid
 from typing import Any
+from typing import AsyncIterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,7 +35,24 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         del timeout_seconds
         return f"reply({model}): {message}; history={len(history)}; memory={memory_prompt}; search={search_prompt}"
 
+    async def fake_generate_model_reply_stream(
+        model: str,
+        message: str,
+        history: list[dict[str, Any]],
+        memory_prompt: str = "",
+        search_prompt: str = "",
+        timeout_seconds: float = 60.0,
+    ) -> AsyncIterator[str]:
+        del timeout_seconds
+        reply = (
+            f"reply({model}): {message}; history={len(history)}; "
+            f"memory={memory_prompt}; search={search_prompt}"
+        )
+        for token in reply.split():
+            yield f"{token} "
+
     monkeypatch.setattr(chat_service, "generate_model_reply", fake_generate_model_reply)
+    monkeypatch.setattr(chat_service, "generate_model_reply_stream", fake_generate_model_reply_stream)
     monkeypatch.setattr("app.main.build_memory_prompt", lambda user_id: "")
     monkeypatch.setattr("app.main.should_search", lambda message: False)
 

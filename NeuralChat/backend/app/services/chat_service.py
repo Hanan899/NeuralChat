@@ -16,6 +16,7 @@ from typing import AsyncIterator
 
 from app.schemas import ChatModel
 from app.services.providers import generate_reply as generate_model_reply
+from app.services.providers import generate_reply_stream as generate_model_reply_stream
 from app.services.storage import append_message, load_messages
 
 
@@ -34,6 +35,24 @@ async def generate_reply(
         memory_prompt=memory_prompt,
         search_prompt=search_prompt,
     )
+
+
+async def generate_reply_stream(
+    request: dict[str, Any],
+    store: dict[str, Any],
+    user_id: str,
+    memory_prompt: str = "",
+    search_prompt: str = "",
+) -> AsyncIterator[str]:
+    history = load_messages(store, user_id, request["session_id"])
+    async for token in generate_model_reply_stream(
+        model=request["model"],
+        message=request["message"],
+        history=history,
+        memory_prompt=memory_prompt,
+        search_prompt=search_prompt,
+    ):
+        yield token
 
 
 def save_user_message(request: dict[str, Any], request_id: str, store: dict[str, Any], user_id: str) -> None:

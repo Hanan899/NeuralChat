@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from typing import AsyncIterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,7 +33,21 @@ def chat_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         del timeout_seconds, memory_prompt
         return f"reply({model}): {message}; search={search_prompt}; history={len(history)}"
 
+    async def fake_generate_model_reply_stream(
+        model: str,
+        message: str,
+        history: list[dict],
+        memory_prompt: str = "",
+        search_prompt: str = "",
+        timeout_seconds: float = 60.0,
+    ) -> AsyncIterator[str]:
+        del timeout_seconds, memory_prompt
+        reply = f"reply({model}): {message}; search={search_prompt}; history={len(history)}"
+        for token in reply.split():
+            yield f"{token} "
+
     monkeypatch.setattr(chat_service, "generate_model_reply", fake_generate_model_reply)
+    monkeypatch.setattr(chat_service, "generate_model_reply_stream", fake_generate_model_reply_stream)
     monkeypatch.setattr("app.main.build_memory_prompt", lambda user_id: "")
 
     async def fake_process_memory_update(user_id: str, message: str, reply: str) -> None:
@@ -271,7 +286,13 @@ def test_chat_injects_search_results_when_search_needed(chat_client: TestClient,
 
     response = chat_client.post(
         "/api/chat",
-        json={"session_id": "session_1", "message": "latest market updates", "model": "gpt-5", "stream": False},
+        json={
+            "session_id": "session_1",
+            "message": "latest market updates",
+            "model": "gpt-5",
+            "stream": False,
+            "force_search": True,
+        },
     )
 
     assert response.status_code == 200
@@ -288,7 +309,13 @@ def test_chat_uses_cache_instead_of_calling_tavily(chat_client: TestClient, monk
 
     response = chat_client.post(
         "/api/chat",
-        json={"session_id": "session_2", "message": "latest cloud pricing", "model": "gpt-5", "stream": False},
+        json={
+            "session_id": "session_2",
+            "message": "latest cloud pricing",
+            "model": "gpt-5",
+            "stream": False,
+            "force_search": True,
+        },
     )
 
     assert response.status_code == 200
@@ -307,7 +334,13 @@ def test_chat_continues_without_search_when_tavily_fails(chat_client: TestClient
 
     response = chat_client.post(
         "/api/chat",
-        json={"session_id": "session_3", "message": "latest startup news", "model": "gpt-5", "stream": False},
+        json={
+            "session_id": "session_3",
+            "message": "latest startup news",
+            "model": "gpt-5",
+            "stream": False,
+            "force_search": True,
+        },
     )
 
     assert response.status_code == 200
@@ -324,7 +357,13 @@ def test_done_chunk_includes_search_metadata(chat_client: TestClient, monkeypatc
 
     response = chat_client.post(
         "/api/chat",
-        json={"session_id": "session_4", "message": "latest ai policy", "model": "gpt-5", "stream": True},
+        json={
+            "session_id": "session_4",
+            "message": "latest ai policy",
+            "model": "gpt-5",
+            "stream": True,
+            "force_search": True,
+        },
     )
 
     assert response.status_code == 200

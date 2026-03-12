@@ -33,12 +33,26 @@ vi.mock("@clerk/clerk-react", () => ({
   useAuth: () => ({
     userId: "user_1",
     getToken: getTokenMock
+  }),
+  useUser: () => ({
+    user: {
+      fullName: "Abdul Hanan",
+      firstName: "Abdul",
+      username: "hanan",
+      primaryEmailAddress: {
+        emailAddress: "hanan@example.com"
+      }
+    }
+  }),
+  useClerk: () => ({
+    signOut: vi.fn(),
+    openUserProfile: vi.fn()
   })
 }));
 
 import App from "../App";
 
-describe("SearchSources", () => {
+describe("SearchSources and MessageBubble", () => {
   const sources = [
     { title: "OpenAI", url: "https://openai.com", snippet: "AI company" },
     { title: "Azure", url: "https://azure.microsoft.com", snippet: "Cloud platform" },
@@ -49,6 +63,11 @@ describe("SearchSources", () => {
     vi.clearAllMocks();
     checkSearchStatusMock.mockResolvedValue(true);
     authState.signedIn = true;
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined)
+      }
+    });
   });
 
   afterEach(() => {
@@ -93,6 +112,7 @@ describe("SearchSources", () => {
   it("test_globe_badge_shows_on_message_with_search_used", () => {
     render(
       <MessageBubble
+        showAssistantLabel={true}
         message={{
           id: "msg-1",
           role: "assistant",
@@ -111,6 +131,7 @@ describe("SearchSources", () => {
   it("test_globe_badge_hidden_on_message_without_search", () => {
     render(
       <MessageBubble
+        showAssistantLabel={true}
         message={{
           id: "msg-2",
           role: "assistant",
@@ -126,13 +147,72 @@ describe("SearchSources", () => {
     expect(screen.queryByLabelText("Search used")).not.toBeInTheDocument();
   });
 
+  it("shows typing cursor while assistant stream is active", () => {
+    const { container } = render(
+      <MessageBubble
+        isStreaming={true}
+        message={{
+          id: "msg-typing",
+          role: "assistant",
+          content: "Streaming reply",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5",
+          searchUsed: false,
+          sources: []
+        }}
+      />
+    );
+
+    expect(container.querySelector(".typing-cursor")).toBeInTheDocument();
+  });
+
+  it("renders code block header with copy behavior", async () => {
+    render(
+      <MessageBubble
+        message={{
+          id: "msg-code",
+          role: "assistant",
+          content: "```js\nconsole.log('hello')\n```",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5"
+        }}
+      />
+    );
+
+    expect(screen.getByText("js")).toBeInTheDocument();
+    const copyButton = screen.getByRole("button", { name: "Copy" });
+    await userEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Copied ✓" })).toBeInTheDocument();
+    });
+  });
+
+  it("shows message action buttons for assistant", () => {
+    render(
+      <MessageBubble
+        message={{
+          id: "msg-actions",
+          role: "assistant",
+          content: "Action row",
+          createdAt: new Date().toISOString(),
+          model: "gpt-5"
+        }}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Thumbs up" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Thumbs down" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy message" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry response" })).toBeInTheDocument();
+  });
+
   it("test_search_status_badge_green_when_enabled", async () => {
     checkSearchStatusMock.mockResolvedValue(true);
     render(<App />);
 
-    const indicator = await screen.findByLabelText("Web search enabled");
-    expect(indicator).toBeInTheDocument();
-    expect(indicator.className).toContain("bg-green-500");
+    expect(await screen.findByLabelText("Web search enabled")).toBeInTheDocument();
+    expect(screen.getByText("online")).toBeInTheDocument();
   });
 
   it("test_search_status_badge_grey_when_disabled", async () => {
@@ -143,8 +223,6 @@ describe("SearchSources", () => {
       expect(screen.getByLabelText("Web search disabled")).toBeInTheDocument();
     });
 
-    const indicator = screen.getByLabelText("Web search disabled");
-    expect(indicator.className).toContain("bg-slate-400");
-    expect(indicator).toHaveAttribute("title", "Web search disabled — add TAVILY_API_KEY");
+    expect(screen.getByText("offline")).toBeInTheDocument();
   });
 });

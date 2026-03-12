@@ -1,32 +1,166 @@
-import { SignIn, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/clerk-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { SignIn, SignedIn, SignedOut, useAuth, useClerk, useUser } from "@clerk/clerk-react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { checkHealth, checkSearchStatus, streamChat } from "./api";
 import { ChatWindow } from "./components/ChatWindow";
 import { DebugPanel } from "./components/DebugPanel";
-import { MemoryPanel } from "./components/MemoryPanel";
 import { ModelSelector } from "./components/ModelSelector";
-import type { ChatMessage, ChatModel, StreamChunk } from "./types";
+import { Sidebar } from "./components/Sidebar";
+import type { ChatMessage, ChatModel, ConversationSummary, StreamChunk, ThemeMode } from "./types";
+
+const EMPTY_SUGGESTIONS = [
+  "Summarize this project architecture in simple terms",
+  "Help me debug my API latency",
+  "Write a clean README section for setup",
+  "Give me a step-by-step learning path"
+];
+
+const THEME_STORAGE_KEY = "neuralchat:theme-mode:v1";
+type ToastTone = "success" | "info" | "error";
+
+interface ToastItem {
+  id: string;
+  message: string;
+  tone: ToastTone;
+}
+
+const SIGN_IN_APPEARANCE = {
+  variables: {
+    colorPrimary: "#d97757",
+    colorText: "#ececec",
+    colorTextSecondary: "#9b9995",
+    colorBackground: "#1e1d1c",
+    colorInputBackground: "#262524",
+    colorInputText: "#ececec",
+    colorDanger: "#ff8b8b",
+    borderRadius: "12px",
+    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
+  },
+  layout: {
+    socialButtonsPlacement: "top",
+    socialButtonsVariant: "blockButton"
+  },
+  elements: {
+    rootBox: "nc-clerk-root",
+    cardBox: "nc-clerk-card-box",
+    card: "nc-clerk-card",
+    header: "nc-clerk-header",
+    headerTitle: "nc-clerk-header-title",
+    headerSubtitle: "nc-clerk-header-subtitle",
+    formButtonPrimary: "nc-clerk-button-primary",
+    socialButtonsBlockButton: "nc-clerk-social-button",
+    socialButtonsBlockButtonText: "nc-clerk-social-button-text",
+    formFieldLabel: "nc-clerk-field-label",
+    formFieldInput: "nc-clerk-input",
+    dividerLine: "nc-clerk-divider-line",
+    dividerText: "nc-clerk-divider-text",
+    footer: "nc-clerk-footer",
+    footerActionText: "nc-clerk-footer-text",
+    footerActionLink: "nc-clerk-footer-link",
+    identityPreviewText: "nc-clerk-identity-text",
+    formResendCodeLink: "nc-clerk-footer-link",
+    alertText: "nc-clerk-alert-text"
+  }
+};
 
 function buildId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function resolveSessionId(userId: string): string {
-  const storageKey = `neuralchat:session:${userId}`;
-  const existing = window.localStorage.getItem(storageKey);
-  if (existing) {
-    return existing;
+function toTitleFromPrompt(prompt: string): string {
+  const clean = prompt.trim();
+  if (!clean) {
+    return "New chat";
+  }
+  return clean.length > 56 ? `${clean.slice(0, 56)}...` : clean;
+}
+
+function getUserStorageKey(userId: string) {
+  return `neuralchat:workspace-ui:v2:${userId}`;
+}
+
+function buildConversationSummary(title = "New chat"): ConversationSummary {
+  return {
+    id: `c-${crypto.randomUUID()}`,
+    title,
+    preview: "",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function resolveDisplayName(
+  user:
+    | {
+        fullName?: string | null;
+        firstName?: string | null;
+        username?: string | null;
+        primaryEmailAddress?: { emailAddress?: string | null } | null;
+      }
+    | null
+    | undefined,
+  fallbackUserId: string | null | undefined
+): string {
+  const preferredName =
+    user?.fullName?.trim() ||
+    user?.firstName?.trim() ||
+    user?.username?.trim() ||
+    user?.primaryEmailAddress?.emailAddress?.split("@")[0]?.trim();
+
+  if (preferredName) {
+    return preferredName;
   }
 
-  const created = `session-${userId}-${crypto.randomUUID()}`;
-  window.localStorage.setItem(storageKey, created);
-  return created;
+  if (fallbackUserId) {
+    return fallbackUserId;
+  }
+
+  return "NeuralChat User";
+}
+
+function resolveUserSubtitle(
+  user:
+    | {
+        primaryEmailAddress?: { emailAddress?: string | null } | null;
+      }
+    | null
+    | undefined
+): string {
+  const emailAddress = user?.primaryEmailAddress?.emailAddress?.trim();
+  if (emailAddress) {
+    return emailAddress;
+  }
+  return "Personal account";
+}
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value === "system" || value === "dark" || value === "light";
+}
+
+function readInitialThemeMode(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "system";
+  }
+
+  const savedThemeMode = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (isThemeMode(savedThemeMode)) {
+    return savedThemeMode;
+  }
+
+  return "system";
+}
+
+function readSystemTheme(): "dark" | "light" {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "dark";
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function ChatShell() {
   const { getToken, userId } = useAuth();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const clerk = useClerk();
+  const { user } = useUser();
   const [input, setInput] = useState("");
   const [model, setModel] = useState<ChatModel>("gpt-5");
   const [isSending, setIsSending] = useState(false);
@@ -37,16 +171,42 @@ function ChatShell() {
   const [tokensEmitted, setTokensEmitted] = useState(0);
   const [streamStatus, setStreamStatus] = useState("idle");
   const [errorText, setErrorText] = useState("");
-  const [isMemoryPanelOpen, setIsMemoryPanelOpen] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readInitialThemeMode());
+  const [systemTheme, setSystemTheme] = useState<"dark" | "light">(() => readSystemTheme());
   const [searchEnabled, setSearchEnabled] = useState<boolean | null>(null);
   const [forceWebSearch, setForceWebSearch] = useState(false);
+  const [activeStreamingAssistantId, setActiveStreamingAssistantId] = useState<string | null>(null);
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [messagesByConversation, setMessagesByConversation] = useState<Record<string, ChatMessage[]>>({});
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
 
-  const sessionId = useMemo(() => {
-    if (!userId) {
-      return "session-unknown";
-    }
-    return resolveSessionId(userId);
-  }, [userId]);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const submitLockRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const toastTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({});
+
+  const searchReady = searchEnabled === true;
+  const resolvedThemeMode: "dark" | "light" = themeMode === "system" ? systemTheme : themeMode;
+  const userDisplayName = resolveDisplayName(user, userId);
+  const userSubtitle = resolveUserSubtitle(user);
+  const sortedConversations = useMemo(
+    () => [...conversations].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()),
+    [conversations]
+  );
+  const historyItems = useMemo(
+    () => sortedConversations.filter((conversation) => conversation.archived !== true),
+    [sortedConversations]
+  );
+  const archivedHistoryItems = useMemo(
+    () => sortedConversations.filter((conversation) => conversation.archived === true),
+    [sortedConversations]
+  );
+
+  const currentMessages = activeConversationId ? messagesByConversation[activeConversationId] ?? [] : [];
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
 
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
@@ -55,19 +215,324 @@ function ChatShell() {
       .catch(() => setSearchEnabled(false));
   }, []);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const trimmed = input.trim();
-    if (!trimmed || isSending) {
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return;
     }
 
+    const mediaQueryList = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncSystemTheme = (event: MediaQueryListEvent) => {
+      setSystemTheme(event.matches ? "dark" : "light");
+    };
+
+    setSystemTheme(mediaQueryList.matches ? "dark" : "light");
+    if (typeof mediaQueryList.addEventListener === "function") {
+      mediaQueryList.addEventListener("change", syncSystemTheme);
+      return () => mediaQueryList.removeEventListener("change", syncSystemTheme);
+    }
+
+    mediaQueryList.addListener(syncSystemTheme);
+    return () => mediaQueryList.removeListener(syncSystemTheme);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    }
+
+    document.documentElement.setAttribute("data-theme", resolvedThemeMode);
+    document.documentElement.style.colorScheme = resolvedThemeMode;
+  }, [themeMode, resolvedThemeMode]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(toastTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
+      toastTimersRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+
+    const storageKey = getUserStorageKey(userId);
+    const serialized = window.localStorage.getItem(storageKey);
+
+    if (!serialized) {
+      const summary = buildConversationSummary();
+      setConversations([summary]);
+      setMessagesByConversation({ [summary.id]: [] });
+      setActiveConversationId(summary.id);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(serialized) as {
+        conversations?: ConversationSummary[];
+        messagesByConversation?: Record<string, ChatMessage[]>;
+        activeConversationId?: string;
+      };
+
+      const loadedConversations = Array.isArray(parsed.conversations) ? parsed.conversations : [];
+      const loadedMessages = parsed.messagesByConversation ?? {};
+      const normalizedConversations = loadedConversations.map((conversation) => ({
+        ...conversation,
+        archived: conversation.archived === true
+      }));
+
+      if (normalizedConversations.length === 0) {
+        const summary = buildConversationSummary();
+        setConversations([summary]);
+        setMessagesByConversation({ [summary.id]: [] });
+        setActiveConversationId(summary.id);
+        return;
+      }
+
+      setConversations(normalizedConversations);
+      setMessagesByConversation(loadedMessages);
+      setActiveConversationId(parsed.activeConversationId ?? normalizedConversations[0].id);
+    } catch {
+      const summary = buildConversationSummary();
+      setConversations([summary]);
+      setMessagesByConversation({ [summary.id]: [] });
+      setActiveConversationId(summary.id);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId || !activeConversationId) {
+      return;
+    }
+    window.localStorage.setItem(
+      getUserStorageKey(userId),
+      JSON.stringify({
+        conversations,
+        messagesByConversation,
+        activeConversationId
+      })
+    );
+  }, [userId, conversations, messagesByConversation, activeConversationId]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.style.height = "0px";
+    const nextHeight = Math.min(textarea.scrollHeight, 200);
+    textarea.style.height = `${nextHeight}px`;
+  }, [input]);
+
+  function updateConversationSummary(conversationId: string, prompt: string, replyPreview: string) {
+    setConversations((previous) =>
+      previous.map((conversation) => {
+        if (conversation.id !== conversationId) {
+          return conversation;
+        }
+
+        return {
+          ...conversation,
+          title: conversation.title === "New chat" ? toTitleFromPrompt(prompt) : conversation.title,
+          preview: replyPreview || prompt,
+          updatedAt: new Date().toISOString()
+        };
+      })
+    );
+  }
+
+  function removeToast(toastId: string) {
+    setToasts((previous) => previous.filter((toast) => toast.id !== toastId));
+    const timerId = toastTimersRef.current[toastId];
+    if (timerId) {
+      window.clearTimeout(timerId);
+      delete toastTimersRef.current[toastId];
+    }
+  }
+
+  function showToast(message: string, tone: ToastTone = "info") {
+    const toastId = `toast-${buildId()}`;
+    setToasts((previous) => [...previous, { id: toastId, message, tone }]);
+    toastTimersRef.current[toastId] = window.setTimeout(() => {
+      removeToast(toastId);
+    }, 2600);
+  }
+
+  function handleNewChat() {
+    const next = buildConversationSummary();
+    setConversations((previous) => [next, ...previous]);
+    setMessagesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+    setActiveConversationId(next.id);
+    setInput("");
+    setErrorText("");
+    setIsSidebarOpen(false);
+  }
+
+  function handleSelectConversation(conversationId: string) {
+    if (isSending) {
+      return;
+    }
+    setActiveConversationId(conversationId);
+    setErrorText("");
+  }
+
+  function pickFallbackConversationId(
+    nextConversations: ConversationSummary[],
+    preferredConversationId?: string
+  ): string | null {
+    if (preferredConversationId) {
+      const preferred = nextConversations.find((conversation) => conversation.id === preferredConversationId);
+      if (preferred) {
+        return preferred.id;
+      }
+    }
+
+    const firstUnarchived = nextConversations.find((conversation) => conversation.archived !== true);
+    if (firstUnarchived) {
+      return firstUnarchived.id;
+    }
+
+    return nextConversations[0]?.id ?? null;
+  }
+
+  function handleToggleArchiveConversation(conversationId: string) {
+    if (isSending) {
+      return;
+    }
+
+    const wasArchived = conversations.find((conversation) => conversation.id === conversationId)?.archived === true;
+
+    setConversations((previous) => {
+      const next = previous.map((conversation) =>
+        conversation.id === conversationId ? { ...conversation, archived: conversation.archived !== true } : conversation
+      );
+
+      const updated = next.find((conversation) => conversation.id === conversationId);
+      if (!updated) {
+        return previous;
+      }
+
+      if (activeConversationId === conversationId && updated.archived === true) {
+        const fallbackId = pickFallbackConversationId(next, undefined);
+        if (fallbackId) {
+          setActiveConversationId(fallbackId);
+        } else {
+          const createdConversation = buildConversationSummary();
+          setMessagesByConversation((previousMessages) => ({
+            ...previousMessages,
+            [createdConversation.id]: []
+          }));
+          setActiveConversationId(createdConversation.id);
+          return [createdConversation];
+        }
+      }
+
+      return next;
+    });
+
+    showToast(wasArchived ? "Chat restored from archive." : "Chat archived.", "success");
+    setErrorText("");
+  }
+
+  function handleDeleteConversation(conversationId: string) {
+    if (isSending) {
+      return;
+    }
+
+    setMessagesByConversation((previous) => {
+      const next = { ...previous };
+      delete next[conversationId];
+      return next;
+    });
+
+    setConversations((previous) => {
+      let next = previous.filter((conversation) => conversation.id !== conversationId);
+
+      if (next.length === 0) {
+        const createdConversation = buildConversationSummary();
+        next = [createdConversation];
+        setMessagesByConversation((previousMessages) => ({
+          ...Object.fromEntries(
+            Object.entries(previousMessages).filter(([existingConversationId]) => existingConversationId !== conversationId)
+          ),
+          [createdConversation.id]: []
+        }));
+        setActiveConversationId(createdConversation.id);
+        return next;
+      }
+
+      if (activeConversationId === conversationId) {
+        const fallbackId = pickFallbackConversationId(next, undefined);
+        if (fallbackId) {
+          setActiveConversationId(fallbackId);
+        }
+      }
+
+      return next;
+    });
+
+    showToast("Chat deleted.", "success");
+    setErrorText("");
+  }
+
+  async function handleShareConversation(conversationId: string) {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    const messages = messagesByConversation[conversationId] ?? [];
+    const title = conversation?.title?.trim() || "NeuralChat chat";
+    const transcript =
+      messages.length > 0
+        ? messages
+            .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content || "(empty)"}`)
+            .join("\n\n")
+        : "(No messages yet)";
+
+    const shareText = `${title}\n\n${transcript}`;
+
+    try {
+      if (typeof navigator.share === "function") {
+        await navigator.share({
+          title,
+          text: shareText
+        });
+        showToast("Chat shared.", "success");
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(shareText);
+        showToast("Chat copied to clipboard.", "success");
+      } else {
+        throw new Error("Sharing is not supported in this browser.");
+      }
+      setErrorText("");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to share chat.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
+  }
+
+  async function submitPrompt(rawPrompt: string) {
+    const trimmed = rawPrompt.trim();
+    if (!trimmed || isSending || !activeConversationId || submitLockRef.current) {
+      return;
+    }
+
+    submitLockRef.current = true;
     setErrorText("");
     setIsSending(true);
     setStreamStatus("streaming");
     setTokensEmitted(0);
     setFirstTokenMs(null);
+
+    const conversationId = activeConversationId;
+    setConversations((previous) =>
+      previous.map((conversation) =>
+        conversation.id === conversationId && conversation.archived === true
+          ? { ...conversation, archived: false }
+          : conversation
+      )
+    );
 
     const userMessage: ChatMessage = {
       id: buildId(),
@@ -86,8 +551,19 @@ function ChatShell() {
       model
     };
 
-    setMessages((previous) => [...previous, userMessage, assistantMessage]);
+    setMessagesByConversation((previous) => ({
+      ...previous,
+      [conversationId]: [...(previous[conversationId] ?? []), userMessage, assistantMessage]
+    }));
+    updateConversationSummary(conversationId, trimmed, trimmed);
+
+    setActiveStreamingAssistantId(assistantId);
     setInput("");
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    let streamedText = "";
 
     try {
       const authToken = await getToken();
@@ -97,53 +573,61 @@ function ChatShell() {
 
       const result = await streamChat(
         {
-          session_id: sessionId,
+          session_id: conversationId,
           message: trimmed,
           model,
           stream: true,
-          force_search: forceWebSearch && searchEnabled === true
+          force_search: forceWebSearch && searchReady
         },
         authToken,
         (chunk: StreamChunk) => {
           if (chunk.type === "token") {
+            streamedText += chunk.content;
             setTokensEmitted((value) => value + 1);
-            setMessages((previous) =>
-              previous.map((msg) => (msg.id === assistantId ? { ...msg, content: `${msg.content}${chunk.content}` } : msg))
-            );
+            setMessagesByConversation((previous) => ({
+              ...previous,
+              [conversationId]: (previous[conversationId] ?? []).map((message) =>
+                message.id === assistantId ? { ...message, content: `${message.content}${chunk.content}` } : message
+              )
+            }));
+            return;
           }
 
           if (chunk.type === "error") {
             setStreamStatus("interrupted");
             setErrorText(chunk.content || "Streaming error received.");
+            return;
           }
 
-          if (chunk.type === "done") {
-            setStreamStatus(chunk.status ?? "completed");
-            if (chunk.request_id) {
-              setRequestId(chunk.request_id);
-            }
-            if (typeof chunk.response_ms === "number") {
-              setResponseMs(chunk.response_ms);
-            }
-            if (typeof chunk.first_token_ms === "number") {
-              setFirstTokenMs(chunk.first_token_ms);
-            }
-            if (typeof chunk.tokens_emitted === "number") {
-              setTokensEmitted(chunk.tokens_emitted);
-            }
-            setMessages((previous) =>
-              previous.map((msg) =>
-                msg.id === assistantId
-                  ? {
-                      ...msg,
-                      searchUsed: chunk.search_used === true,
-                      sources: Array.isArray(chunk.sources) ? chunk.sources : []
-                    }
-                  : msg
-              )
-            );
+          setStreamStatus(chunk.status ?? "completed");
+          if (chunk.request_id) {
+            setRequestId(chunk.request_id);
           }
-        }
+          if (typeof chunk.response_ms === "number") {
+            setResponseMs(chunk.response_ms);
+          }
+          if (typeof chunk.first_token_ms === "number") {
+            setFirstTokenMs(chunk.first_token_ms);
+          }
+          if (typeof chunk.tokens_emitted === "number") {
+            setTokensEmitted(chunk.tokens_emitted);
+          }
+
+          setMessagesByConversation((previous) => ({
+            ...previous,
+            [conversationId]: (previous[conversationId] ?? []).map((message) =>
+              message.id === assistantId
+                ? {
+                    ...message,
+                    searchUsed: chunk.search_used === true,
+                    sources: Array.isArray(chunk.sources) ? chunk.sources : []
+                  }
+                : message
+            )
+          }));
+          setActiveStreamingAssistantId(null);
+        },
+        controller.signal
       );
 
       setRequestId(result.requestId);
@@ -151,104 +635,263 @@ function ChatShell() {
       setFirstTokenMs(result.firstTokenMs);
       setTokensEmitted(result.tokensEmitted);
       setStreamStatus("completed");
-      setMessages((previous) =>
-        previous.map((msg) =>
-          msg.id === assistantId ? { ...msg, searchUsed: result.searchUsed, sources: result.sources } : msg
+
+      setMessagesByConversation((previous) => ({
+        ...previous,
+        [conversationId]: (previous[conversationId] ?? []).map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                searchUsed: result.searchUsed,
+                sources: result.sources
+              }
+            : message
         )
-      );
+      }));
+
+      updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown error";
       setStreamStatus("interrupted");
-      setErrorText(`${text} (Partial response may be saved in backend memory.)`);
+      if (text !== "Generation stopped by user.") {
+        setErrorText(text);
+      }
+      window.setTimeout(() => {
+        setMessagesByConversation((previous) => ({
+          ...previous,
+          [conversationId]: (previous[conversationId] ?? []).filter(
+            (message) => !(message.id === assistantId && message.content.trim() === "")
+          )
+        }));
+      }, 0);
+      updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
     } finally {
+      abortControllerRef.current = null;
+      submitLockRef.current = false;
       setIsSending(false);
+      setActiveStreamingAssistantId(null);
+    }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitPrompt(input);
+  }
+
+  function handleRetryPrompt(prompt: string) {
+    if (!isSending) {
+      void submitPrompt(prompt);
+    }
+  }
+
+  function handleStopGenerating() {
+    abortControllerRef.current?.abort();
+  }
+
+  function handleThemeModeChange(nextThemeMode: ThemeMode) {
+    setThemeMode(nextThemeMode);
+    const themeLabel = nextThemeMode[0].toUpperCase() + nextThemeMode.slice(1);
+    showToast(`Theme updated: ${themeLabel}.`, "info");
+    setErrorText("");
+  }
+
+  function handleOpenUserSettings() {
+    const openUserProfile = (clerk as unknown as { openUserProfile?: () => void }).openUserProfile;
+    if (typeof openUserProfile === "function") {
+      openUserProfile();
+      showToast("Opening account settings...", "info");
+      return;
+    }
+    const message = "Account settings are not available in this build.";
+    setErrorText(message);
+    showToast(message, "error");
+  }
+
+  function handleSignOut() {
+    void clerk.signOut();
+  }
+
+  function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!isSending) {
+        void submitPrompt(input);
+      }
     }
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-4 p-4">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-brand-dark">NeuralChat</h1>
-          <p className="text-sm text-slate-700">Authenticated chat with user-scoped cloud memory.</p>
+    <main className={`nc-shell ${isDiagnosticsOpen ? "nc-shell--with-panel" : ""}`}>
+      {toasts.length > 0 ? (
+        <div className="nc-toast-stack" aria-live="polite" aria-label="Notifications">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`nc-toast nc-toast--${toast.tone}`}
+              role={toast.tone === "error" ? "alert" : "status"}
+            >
+              <span>{toast.message}</span>
+              <button type="button" aria-label="Dismiss notification" onClick={() => removeToast(toast.id)}>
+                ×
+              </button>
+            </div>
+          ))}
         </div>
-        <div className="flex items-center gap-2">
-          <span
-            aria-label={searchEnabled ? "Web search enabled" : "Web search disabled"}
-            title={searchEnabled ? "Web search enabled" : "Web search disabled — add TAVILY_API_KEY"}
-            className={`h-3 w-3 rounded-full ${searchEnabled ? "bg-green-500" : "bg-slate-400"}`}
-          />
-          <button
-            type="button"
-            aria-label="Open memory panel"
-            onClick={() => setIsMemoryPanelOpen(true)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 hover:bg-slate-50"
-          >
-            🧠
-          </button>
-          <UserButton afterSignOutUrl="/" />
-        </div>
-      </header>
+      ) : null}
 
-      <DebugPanel
-        selectedModel={model}
-        requestId={requestId}
-        responseMs={responseMs}
-        firstTokenMs={firstTokenMs}
-        tokensEmitted={tokensEmitted}
-        streamStatus={streamStatus}
-        backendHealthy={backendHealthy}
+      <Sidebar
+        historyItems={historyItems}
+        archivedHistoryItems={archivedHistoryItems}
+        activeConversationId={activeConversationId}
+        isMobileOpen={isSidebarOpen}
+        userName={userDisplayName}
+        userSubtitle={userSubtitle}
+        onNewChat={handleNewChat}
+        onSelectConversation={handleSelectConversation}
+        onToggleArchiveConversation={handleToggleArchiveConversation}
+        onDeleteConversation={handleDeleteConversation}
+        onShareConversation={handleShareConversation}
+        themeMode={themeMode}
+        onThemeModeChange={handleThemeModeChange}
+        onOpenUserSettings={handleOpenUserSettings}
+        onSignOut={handleSignOut}
+        onCloseMobile={() => setIsSidebarOpen(false)}
       />
 
-      <ChatWindow messages={messages} />
+      {isSidebarOpen ? <button className="nc-sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} /> : null}
 
-      <form onSubmit={handleSubmit} className="rounded-lg border border-slate-300 bg-white p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ModelSelector value={model} onChange={setModel} />
-            <label
-              className={`flex items-center gap-2 text-xs ${
-                searchEnabled ? "text-slate-700" : "text-slate-400"
-              }`}
-              title={
-                searchEnabled
-                  ? "Force web search for this message."
-                  : "Web search disabled — add TAVILY_API_KEY in backend/local.settings.json"
-              }
+      <section className="nc-main">
+        <header className="nc-topbar">
+          <div className="nc-topbar__left">
+            <button
+              type="button"
+              className="nc-mobile-menu"
+              aria-label="Open sidebar"
+              onClick={() => setIsSidebarOpen(true)}
             >
-              <input
-                type="checkbox"
-                checked={forceWebSearch}
-                disabled={!searchEnabled}
-                onChange={(event) => setForceWebSearch(event.target.checked)}
-              />
-              Web Search
-            </label>
+              ☰
+            </button>
+            <h1>{activeConversation?.title ?? "New chat"}</h1>
           </div>
-          <span className="text-xs text-slate-500">Session: {sessionId}</span>
+
+          <div className="nc-topbar__right">
+            <button
+              type="button"
+              className="nc-topbar-btn"
+              aria-label="Share chat"
+              onClick={() => {
+                if (activeConversationId) {
+                  void handleShareConversation(activeConversationId);
+                }
+              }}
+            >
+              Share
+            </button>
+            <ModelSelector value={model} onChange={setModel} variant="topbar" />
+            <button
+              type="button"
+              className="nc-topbar-btn"
+              aria-label="Toggle diagnostics"
+              onClick={() => setIsDiagnosticsOpen((value) => !value)}
+            >
+              Debug
+            </button>
+          </div>
+        </header>
+
+        <div className="nc-message-area">
+          {currentMessages.length === 0 ? (
+            <section className="nc-empty-state" data-testid="empty-state">
+              <div className="nc-empty-mark">✶</div>
+              <h2>How can I help you today?</h2>
+              <div className="nc-empty-chips">
+                {EMPTY_SUGGESTIONS.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className="nc-empty-chip"
+                    onClick={() => {
+                      setInput(suggestion);
+                      textareaRef.current?.focus();
+                    }}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : (
+            <ChatWindow
+              messages={currentMessages}
+              streamingMessageId={activeStreamingAssistantId}
+              onRetryPrompt={handleRetryPrompt}
+            />
+          )}
         </div>
 
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          rows={4}
-          className="w-full rounded-md border border-slate-300 p-2"
-          placeholder="Ask NeuralChat anything..."
-        />
+        <footer className="nc-input-wrap">
+          <form onSubmit={handleSubmit} className="nc-input-shell">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={handleTextareaKeyDown}
+              placeholder="Message NeuralChat..."
+              rows={1}
+            />
 
-        <div className="mt-2 flex items-center justify-between">
-          <button
-            type="submit"
-            disabled={isSending}
-            className="rounded-md bg-brand-dark px-4 py-2 text-white disabled:opacity-50"
-          >
-            {isSending ? "Streaming..." : "Send"}
-          </button>
-          {errorText ? <p className="text-sm text-red-600">{errorText}</p> : null}
-        </div>
-      </form>
+            <div className="nc-input-row">
+              <div className="nc-input-left">
+                <button type="button" className="nc-icon-btn" aria-label="Attach file">
+                  📎
+                </button>
+                <button
+                  type="button"
+                  className={`nc-icon-btn ${forceWebSearch ? "nc-icon-btn--active" : ""}`}
+                  aria-label="Toggle web search"
+                  aria-pressed={forceWebSearch}
+                  title={searchReady ? "Use web search" : "Web search disabled — add TAVILY_API_KEY"}
+                  disabled={!searchReady}
+                  onClick={() => setForceWebSearch((value) => !value)}
+                >
+                  🌐
+                </button>
+                <span className="nc-search-dot" aria-label={searchReady ? "Web search enabled" : "Web search disabled"}>
+                  {searchReady ? "online" : "offline"}
+                </span>
+                <ModelSelector value={model} onChange={setModel} />
+              </div>
 
-      <MemoryPanel isOpen={isMemoryPanelOpen} onClose={() => setIsMemoryPanelOpen(false)} getAuthToken={getToken} />
+              {isSending ? (
+                <button type="button" className="nc-send-btn" aria-label="Stop generating" onClick={handleStopGenerating}>
+                  ■
+                </button>
+              ) : (
+                <button type="submit" className="nc-send-btn" aria-label="Send message" disabled={!input.trim()}>
+                  ↑
+                </button>
+              )}
+            </div>
+          </form>
+
+          {errorText ? <p className="nc-error">{errorText}</p> : null}
+          <p className="nc-input-note">NeuralChat can make mistakes. Verify important info.</p>
+        </footer>
+      </section>
+
+      {isDiagnosticsOpen ? (
+        <aside className="nc-right-panel">
+          <DebugPanel
+            selectedModel={model}
+            requestId={requestId}
+            responseMs={responseMs}
+            firstTokenMs={firstTokenMs}
+            tokensEmitted={tokensEmitted}
+            streamStatus={streamStatus}
+            backendHealthy={backendHealthy}
+          />
+        </aside>
+      ) : null}
     </main>
   );
 }
@@ -257,12 +900,39 @@ export default function App() {
   return (
     <>
       <SignedOut>
-        <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col items-center justify-center gap-6 p-4">
-          <div className="text-center">
-            <h1 className="text-4xl font-bold text-brand-dark">NeuralChat</h1>
-            <p className="mt-2 text-slate-700">Sign in to access your personal AI workspace.</p>
+        <main className="nc-auth-shell">
+          <div className="nc-auth-grid">
+            <section className="nc-auth-brand">
+              <div className="nc-auth-brand__top">
+                <span className="nc-auth-brand__mark" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="8.3" stroke="currentColor" strokeWidth="1.7" />
+                    <path d="M8 12C8 9.8 9.8 8 12 8C14.2 8 16 9.8 16 12C16 14.2 14.2 16 12 16" stroke="currentColor" strokeWidth="1.7" />
+                  </svg>
+                </span>
+                <span className="nc-auth-brand__wordmark">NeuralChat</span>
+              </div>
+
+              <h1>NeuralChat</h1>
+              <p>Personal AI workspace with streaming answers, optional web search, and your own private chat memory.</p>
+
+              <ul className="nc-auth-brand__list">
+                <li>Secure sign-in with Clerk</li>
+                <li>GPT-5 streaming responses</li>
+                <li>User-scoped chat history and memory</li>
+              </ul>
+            </section>
+
+            <section className="nc-auth-card">
+              <div className="nc-auth-card__head">
+                <h2>Welcome back</h2>
+                <p>Sign in to continue to NeuralChat.</p>
+              </div>
+              <div className="nc-auth-clerk-wrap">
+                <SignIn appearance={SIGN_IN_APPEARANCE as unknown as never} />
+              </div>
+            </section>
           </div>
-          <SignIn />
         </main>
       </SignedOut>
 

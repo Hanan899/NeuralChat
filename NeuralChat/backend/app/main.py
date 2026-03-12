@@ -25,7 +25,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
 from app.schemas import build_chat_json_response, build_health_response, validate_chat_request
-from app.services.chat_service import generate_reply, save_assistant_message, save_user_message, stream_tokens, tokenize_text
+from app.services.chat_service import (
+    generate_reply,
+    generate_reply_stream,
+    save_assistant_message,
+    save_user_message,
+    stream_tokens,
+    tokenize_text,
+)
 from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
 from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web, should_search
 from app.services.storage import init_store
@@ -114,10 +121,7 @@ async def post_chat(
     search_prompt = ""
     search_error_message: str | None = None
 
-    if request["force_search"]:
-        search_needed = True
-    else:
-        search_needed = await asyncio.to_thread(should_search, request["message"])
+    search_needed = request["force_search"]
     if search_needed:
         cached_results: list[dict[str, str]] | None = None
         try:
@@ -143,27 +147,30 @@ async def post_chat(
             search_used = True
             search_prompt = format_search_context(sources)
 
+    direct_reply: str | None = None
     if request["force_search"] and not sources:
         if search_error_message:
-            reply = (
+            direct_reply = (
                 "Web search is enabled, but the search provider is unavailable right now. "
                 "Please try again in a moment."
             )
         else:
-            reply = (
+            direct_reply = (
                 "Web search is enabled, but no reliable public results were found for this query. "
                 "Try a more specific query with full name, company website, or location."
             )
-    else:
-        reply = await generate_reply(
-            request=request,
-            store=STORE,
-            user_id=user_id,
-            memory_prompt=memory_prompt,
-            search_prompt=search_prompt,
-        )
 
     if not request["stream"]:
+        if direct_reply is not None:
+            reply = direct_reply
+        else:
+            reply = await generate_reply(
+                request=request,
+                store=STORE,
+                user_id=user_id,
+                memory_prompt=memory_prompt,
+                search_prompt=search_prompt,
+            )
         response_ms = int((time.perf_counter() - start) * 1000)
         tokens_emitted = len(tokenize_text(reply))
         save_assistant_message(
@@ -204,7 +211,18 @@ async def post_chat(
         stream_status = "interrupted"
 
         try:
-            async for token in stream_tokens(reply):
+            if direct_reply is not None:
+                token_stream = stream_tokens(direct_reply)
+            else:
+                token_stream = generate_reply_stream(
+                    request=request,
+                    store=STORE,
+                    user_id=user_id,
+                    memory_prompt=memory_prompt,
+                    search_prompt=search_prompt,
+                )
+
+            async for token in token_stream:
                 if first_token_ms is None:
                     first_token_ms = int((time.perf_counter() - start) * 1000)
                 tokens_emitted += 1
@@ -237,11 +255,12 @@ async def post_chat(
             raise
         except Exception as stream_error:
             stream_status = "interrupted"
+            error_text = getattr(stream_error, "detail", None) or str(stream_error)
             yield (
                 json.dumps(
                     {
                         "type": "error",
-                        "content": f"Streaming interrupted: {stream_error}",
+                        "content": f"Streaming interrupted: {error_text}",
                         "request_id": request_id,
                     },
                     ensure_ascii=True,

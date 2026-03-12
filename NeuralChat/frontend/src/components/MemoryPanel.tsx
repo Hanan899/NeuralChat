@@ -8,6 +8,8 @@ interface MemoryPanelProps {
   getAuthToken: () => Promise<string | null>;
 }
 
+const HIDDEN_PROFILE_KEYS = new Set(["user_id", "updated_at"]);
+
 function normalizeFactValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -31,9 +33,36 @@ function normalizeFacts(profile: Record<string, unknown> | null | undefined): Re
   }
   const normalized: Record<string, string> = {};
   for (const [factKey, factValue] of Object.entries(profile)) {
+    if (HIDDEN_PROFILE_KEYS.has(factKey)) {
+      continue;
+    }
     normalized[factKey] = normalizeFactValue(factValue);
   }
   return normalized;
+}
+
+function formatFactForDisplay(value: string): string {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return "";
+  }
+  if (!(trimmedValue.startsWith("{") || trimmedValue.startsWith("["))) {
+    return value;
+  }
+
+  try {
+    const parsedValue = JSON.parse(trimmedValue);
+    if (Array.isArray(parsedValue)) {
+      return parsedValue.map((item) => String(item)).join(", ");
+    }
+    if (parsedValue && typeof parsedValue === "object") {
+      const entries = Object.entries(parsedValue as Record<string, unknown>);
+      return entries.map(([key, entryValue]) => `${key}: ${String(entryValue)}`).join(" | ");
+    }
+    return value;
+  } catch {
+    return value;
+  }
 }
 
 export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps) {
@@ -136,50 +165,53 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/30 transition-opacity opacity-100"
+        className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-[1px] transition-opacity"
         onClick={onClose}
         aria-hidden={false}
       />
       <aside
-        className="fixed right-0 top-0 z-50 h-full w-full max-w-md translate-x-0 transform border-l border-slate-300 bg-white p-4 shadow-xl transition-transform dark:border-slate-700 dark:bg-slate-900"
+        className="fixed right-0 top-0 z-50 h-full w-full max-w-md translate-x-0 transform border-l border-slate-300 bg-white/95 p-4 shadow-2xl transition-transform"
         aria-hidden={false}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">What NeuralChat knows about you</h2>
+          <div>
+            <p className="metric-code text-xs uppercase tracking-[0.14em] text-slate-500">Profile Memory</p>
+            <h2 className="text-lg font-semibold text-slate-900">What NeuralChat knows about you</h2>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="rounded-xl border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
           >
             Close
           </button>
         </div>
 
         {errorText ? (
-          <p className="mb-3 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+          <p className="mb-3 rounded-xl border border-red-300 bg-red-50 p-2 text-sm text-red-700">
             {errorText}
           </p>
         ) : null}
 
-        <div className="space-y-2">
+        <div className="space-y-2 overflow-y-auto pr-1">
           {isLoading ? (
             <>
-              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-xl bg-slate-200" />
+              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-xl bg-slate-200" />
+              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-xl bg-slate-200" />
             </>
           ) : factEntries.length === 0 ? (
-            <p className="rounded-md border border-dashed border-slate-300 p-3 text-sm text-slate-600 dark:border-slate-600 dark:text-slate-300">
+            <p className="rounded-xl border border-dashed border-slate-300 p-3 text-sm text-slate-600">
               No memory yet — start chatting!
             </p>
           ) : (
             factEntries.map(([key, value]) => (
               <div
                 key={key}
-                className="rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/70"
+                className="rounded-xl border border-slate-200 bg-white p-3"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{key}</p>
+                  <p className="metric-code text-xs uppercase tracking-[0.12em] text-slate-500">{key}</p>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -187,14 +219,14 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
                         setEditingKey(key);
                         setEditingValue(value);
                       }}
-                      className="text-xs text-blue-700 hover:underline dark:text-blue-300"
+                      className="text-xs font-medium text-blue-700 hover:underline"
                     >
                       Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteKey(key)}
-                      className="text-xs text-red-700 hover:underline dark:text-red-300"
+                      className="text-xs font-medium text-red-700 hover:underline"
                     >
                       Delete
                     </button>
@@ -215,21 +247,21 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
                         setEditingValue("");
                       }
                     }}
-                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-200"
                   />
                 ) : (
-                  <p className="mt-1 text-sm text-slate-800 dark:text-slate-100">{value}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-800">{formatFactForDisplay(value)}</p>
                 )}
               </div>
             ))
           )}
         </div>
 
-        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
+        <div className="mt-6 border-t border-slate-200 pt-4">
           <button
             type="button"
             onClick={handleClearAll}
-            className="w-full rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
+            className="w-full rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700"
           >
             Clear All Memory
           </button>

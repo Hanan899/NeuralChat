@@ -17,16 +17,27 @@ export function DebugPanel({
   streamStatus,
   backendHealthy
 }: DebugPanelProps) {
+  const items = [
+    { label: "Backend", value: backendHealthy ? "online" : "offline" },
+    { label: "Model", value: selectedModel },
+    { label: "Request", value: requestId || "none" },
+    { label: "Stream", value: streamStatus },
+    { label: "First token", value: firstTokenMs === null ? "n/a" : `${firstTokenMs} ms` },
+    { label: "Tokens", value: String(tokensEmitted) },
+    { label: "Response", value: responseMs === null ? "n/a" : `${responseMs} ms` }
+  ];
+
   return (
-    <section className="rounded-lg border border-slate-300 bg-white p-3 text-sm">
-      <h2 className="mb-2 font-semibold">Debug Panel</h2>
-      <p>Backend health: {backendHealthy ? "online" : "offline"}</p>
-      <p>Selected model: {selectedModel}</p>
-      <p>Last request id: {requestId || "none"}</p>
-      <p>Stream status: {streamStatus}</p>
-      <p>First token latency: {firstTokenMs === null ? "n/a" : `${firstTokenMs} ms`}</p>
-      <p>Tokens emitted: {tokensEmitted}</p>
-      <p>Last response time: {responseMs === null ? "n/a" : `${responseMs} ms`}</p>
+    <section className="nc-diagnostics" aria-label="Diagnostics panel">
+      <h2>Diagnostics</h2>
+      <div>
+        {items.map((item) => (
+          <p key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </p>
+        ))}
+      </div>
     </section>
   );
 }
