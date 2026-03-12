@@ -27,11 +27,16 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(stream, bool):
         raise HTTPException(status_code=422, detail="stream must be boolean true/false.")
 
+    force_search = payload.get("force_search", False)
+    if not isinstance(force_search, bool):
+        raise HTTPException(status_code=422, detail="force_search must be boolean true/false.")
+
     return {
         "session_id": session_id,
         "message": message,
         "model": model,
         "stream": stream,
+        "force_search": force_search,
     }
 
 
@@ -44,10 +49,15 @@ def build_chat_json_response(
     reply: str,
     model: ChatModel,
     response_ms: int,
+    search_used: bool = False,
+    sources: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "request_id": request_id,
         "reply": reply,
         "model": model,
         "response_ms": response_ms,
+        "search_used": search_used,
+        "sources": sources or [],
     }
+    return payload

@@ -5,6 +5,7 @@ import json
 import os
 import uuid
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,13 +28,15 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         message: str,
         history: list[dict[str, Any]],
         memory_prompt: str = "",
+        search_prompt: str = "",
         timeout_seconds: float = 25.0,
     ) -> str:
         del timeout_seconds
-        return f"reply({model}): {message}; history={len(history)}; memory={memory_prompt}"
+        return f"reply({model}): {message}; history={len(history)}; memory={memory_prompt}; search={search_prompt}"
 
     monkeypatch.setattr(chat_service, "generate_model_reply", fake_generate_model_reply)
     monkeypatch.setattr("app.main.build_memory_prompt", lambda user_id: "")
+    monkeypatch.setattr("app.main.should_search", lambda message: False)
 
     async def fake_process_memory_update(user_id: str, message: str, reply: str) -> None:
         del user_id, message, reply
@@ -96,3 +99,49 @@ def test_chat_options_preflight_allowed(client: TestClient):
     )
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_search_status_public_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+    response = client.get("/api/search/status")
+    assert response.status_code == 200
+    assert response.json() == {"search_enabled": True}
+
+
+def test_chat_force_search_true_bypasses_auto_decider(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    search_web_mock = MagicMock(return_value=[{"title": "A", "url": "https://a.test", "snippet": "snippet"}])
+    monkeypatch.setattr("app.main.should_search", lambda message: False)
+    monkeypatch.setattr("app.main.load_cached_results", lambda query: None)
+    monkeypatch.setattr("app.main.search_web", search_web_mock)
+    monkeypatch.setattr("app.main.cache_search_results", lambda query, results: None)
+
+    response = client.post(
+        "/api/chat",
+        json={"session_id": "s-force", "message": "who is x", "model": "gpt-5", "stream": False, "force_search": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["search_used"] is True
+    search_web_mock.assert_called_once()
+
+
+def test_chat_force_search_returns_web_only_message_when_no_results(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("app.main.should_search", lambda message: False)
+    monkeypatch.setattr("app.main.load_cached_results", lambda query: None)
+    monkeypatch.setattr("app.main.search_web", lambda query: [])
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "s-force-empty",
+            "message": "who is unknown person",
+            "model": "gpt-5",
+            "stream": False,
+            "force_search": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["search_used"] is False
+    assert "no reliable public results were found" in payload["reply"].lower()

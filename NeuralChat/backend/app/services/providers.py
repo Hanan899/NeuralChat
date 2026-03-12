@@ -14,6 +14,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.schemas import ChatModel
+from app.services.search import BASE_INSTRUCTIONS
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 
@@ -23,6 +24,7 @@ async def generate_reply(
     message: str,
     history: list[dict[str, Any]],
     memory_prompt: str = "",
+    search_prompt: str = "",
     timeout_seconds: float = 25.0,
 ) -> str:
     del model
@@ -38,14 +40,23 @@ async def generate_reply(
         message=message,
         history=history,
         memory_prompt=memory_prompt,
+        search_prompt=search_prompt,
         timeout_seconds=timeout_seconds,
     )
 
 
-def build_messages(history: list[dict[str, Any]], newest_message: str, memory_prompt: str = "") -> list[dict[str, str]]:
+def build_messages(
+    history: list[dict[str, Any]],
+    newest_message: str,
+    memory_prompt: str = "",
+    search_prompt: str = "",
+) -> list[dict[str, str]]:
     filtered: list[dict[str, str]] = []
     if memory_prompt.strip():
         filtered.append({"role": "system", "content": memory_prompt.strip()})
+    if search_prompt.strip():
+        filtered.append({"role": "system", "content": search_prompt.strip()})
+    filtered.append({"role": "system", "content": BASE_INSTRUCTIONS})
     for entry in history[-8:]:
         role = str(entry.get("role", "")).strip()
         content = str(entry.get("content", "")).strip()
@@ -67,6 +78,7 @@ async def call_azure_openai_chat(
     message: str,
     history: list[dict[str, Any]],
     memory_prompt: str = "",
+    search_prompt: str = "",
     timeout_seconds: float = 25.0,
 ) -> str:
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
@@ -77,7 +89,12 @@ async def call_azure_openai_chat(
     url = f"{endpoint}/openai/deployments/{deployment}/chat/completions"
     params = {"api-version": api_version}
     payload = {
-        "messages": build_messages(history=history, newest_message=message, memory_prompt=memory_prompt),
+        "messages": build_messages(
+            history=history,
+            newest_message=message,
+            memory_prompt=memory_prompt,
+            search_prompt=search_prompt,
+        ),
         "temperature": 0.4,
     }
     headers = {

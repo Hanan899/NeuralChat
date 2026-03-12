@@ -24,6 +24,7 @@ async def generate_reply(
     store: dict[str, Any],
     user_id: str,
     memory_prompt: str = "",
+    search_prompt: str = "",
 ) -> str:
     history = load_messages(store, user_id, request["session_id"])
     return await generate_model_reply(
@@ -31,6 +32,7 @@ async def generate_reply(
         message=request["message"],
         history=history,
         memory_prompt=memory_prompt,
+        search_prompt=search_prompt,
     )
 
 
@@ -60,6 +62,8 @@ def save_assistant_message(
     response_ms: int | None = None,
     first_token_ms: int | None = None,
     tokens_emitted: int | None = None,
+    search_used: bool | None = None,
+    sources: list[dict[str, str]] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "role": "assistant",
@@ -75,6 +79,10 @@ def save_assistant_message(
         payload["first_token_ms"] = first_token_ms
     if tokens_emitted is not None:
         payload["tokens_emitted"] = tokens_emitted
+    if search_used is not None:
+        payload["search_used"] = search_used
+    if sources is not None:
+        payload["sources"] = sources
 
     append_message(
         store,

@@ -9,7 +9,9 @@ const { authState, getTokenMock, streamChatMock } = vi.hoisted(() => ({
     requestId: "req-1",
     responseMs: 10,
     firstTokenMs: 5,
-    tokensEmitted: 1
+    tokensEmitted: 1,
+    searchUsed: false,
+    sources: []
   })
 }));
 
@@ -26,6 +28,7 @@ vi.mock("@clerk/clerk-react", () => ({
 
 vi.mock("../api", () => ({
   checkHealth: vi.fn().mockResolvedValue(true),
+  checkSearchStatus: vi.fn().mockResolvedValue(false),
   streamChat: streamChatMock
 }));
 
@@ -39,7 +42,9 @@ describe("App", () => {
       requestId: "req-1",
       responseMs: 10,
       firstTokenMs: 5,
-      tokensEmitted: 1
+      tokensEmitted: 1,
+      searchUsed: false,
+      sources: []
     });
   });
 

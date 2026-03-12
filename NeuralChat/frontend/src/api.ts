@@ -1,4 +1,4 @@
-import type { ChatRequest, StreamChunk } from "./types";
+import type { ChatRequest, SearchSource, StreamChunk } from "./types";
 
 // Default to Azure Functions local runtime (`func start`).
 // Override with VITE_API_BASE_URL when needed (e.g., uvicorn on :8000).
@@ -6,7 +6,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:7071
 
 export interface MeResponse {
   user_id: string;
-  profile: Record<string, string>;
+  profile: Record<string, unknown>;
 }
 
 export async function checkHealth(): Promise<boolean> {
@@ -18,7 +18,14 @@ export async function streamChat(
   payload: ChatRequest,
   authToken: string,
   onChunk: (chunk: StreamChunk) => void
-): Promise<{ requestId: string; responseMs: number; firstTokenMs: number | null; tokensEmitted: number }> {
+): Promise<{
+  requestId: string;
+  responseMs: number;
+  firstTokenMs: number | null;
+  tokensEmitted: number;
+  searchUsed: boolean;
+  sources: SearchSource[];
+}> {
   const startedAt = performance.now();
 
   const response = await fetch(`${API_BASE_URL}/api/chat`, {
@@ -97,7 +104,18 @@ export async function streamChat(
   const firstTokenMs = typeof doneChunk?.first_token_ms === "number" ? doneChunk.first_token_ms : null;
   const tokensEmitted = typeof doneChunk?.tokens_emitted === "number" ? doneChunk.tokens_emitted : 0;
   const responseMsFromDone = typeof doneChunk?.response_ms === "number" ? doneChunk.response_ms : responseMs;
-  return { requestId, responseMs: responseMsFromDone, firstTokenMs, tokensEmitted };
+  const searchUsed = doneChunk?.search_used === true;
+  const sources = Array.isArray(doneChunk?.sources) ? doneChunk.sources : [];
+  return { requestId, responseMs: responseMsFromDone, firstTokenMs, tokensEmitted, searchUsed, sources };
+}
+
+export async function checkSearchStatus(): Promise<boolean> {
+  const response = await fetch(`${API_BASE_URL}/api/search/status`);
+  if (!response.ok) {
+    return false;
+  }
+  const payload = (await response.json()) as { search_enabled?: boolean };
+  return payload.search_enabled === true;
 }
 
 export async function getMe(authToken: string): Promise<MeResponse> {

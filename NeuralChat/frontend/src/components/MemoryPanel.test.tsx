@@ -2,12 +2,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMeMock, patchMemoryMock, deleteMemoryMock, checkHealthMock, streamChatMock, authState, getTokenMock } =
+const { getMeMock, patchMemoryMock, deleteMemoryMock, checkHealthMock, checkSearchStatusMock, streamChatMock, authState, getTokenMock } =
   vi.hoisted(() => ({
     getMeMock: vi.fn(),
     patchMemoryMock: vi.fn(),
     deleteMemoryMock: vi.fn(),
     checkHealthMock: vi.fn().mockResolvedValue(true),
+    checkSearchStatusMock: vi.fn().mockResolvedValue(false),
     streamChatMock: vi.fn(),
     authState: { signedIn: true },
     getTokenMock: vi.fn().mockResolvedValue("token"),
@@ -18,6 +19,7 @@ vi.mock("../api", () => ({
   patchMemory: patchMemoryMock,
   deleteMemory: deleteMemoryMock,
   checkHealth: checkHealthMock,
+  checkSearchStatus: checkSearchStatusMock,
   streamChat: streamChatMock,
 }));
 
@@ -80,6 +82,18 @@ describe("MemoryPanel", () => {
     render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
     expect(screen.getAllByTestId("memory-skeleton").length).toBeGreaterThan(0);
     expect(await screen.findByText("Ali")).toBeInTheDocument();
+  });
+
+  it("renders object memory values without crashing", async () => {
+    getMeMock.mockResolvedValue({
+      user_id: "user_1",
+      profile: { preferences: { style: "concise", language: "en" } }
+    });
+
+    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+
+    expect(await screen.findByText("preferences")).toBeInTheDocument();
+    expect(screen.getByText('{\"style\":\"concise\",\"language\":\"en\"}')).toBeInTheDocument();
   });
 
   it("test_edit_fact_calls_patch_endpoint", async () => {

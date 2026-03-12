@@ -8,6 +8,34 @@ interface MemoryPanelProps {
   getAuthToken: () => Promise<string | null>;
 }
 
+function normalizeFactValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function normalizeFacts(profile: Record<string, unknown> | null | undefined): Record<string, string> {
+  if (!profile) {
+    return {};
+  }
+  const normalized: Record<string, string> = {};
+  for (const [factKey, factValue] of Object.entries(profile)) {
+    normalized[factKey] = normalizeFactValue(factValue);
+  }
+  return normalized;
+}
+
 export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps) {
   const [facts, setFacts] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
@@ -33,7 +61,7 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
         }
         const response = await getMe(authToken);
         if (isMounted) {
-          setFacts(response.profile ?? {});
+          setFacts(normalizeFacts(response.profile));
         }
       } catch (error) {
         if (isMounted) {
@@ -58,7 +86,7 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
       throw new Error("Authentication token unavailable. Please sign in again.");
     }
     const response = await patchMemory(authToken, key, value);
-    setFacts(response.profile ?? {});
+    setFacts(normalizeFacts(response.profile));
   }
 
   async function handleClearAll() {
