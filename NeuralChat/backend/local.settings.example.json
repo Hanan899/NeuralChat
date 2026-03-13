@@ -10,6 +10,7 @@
     "AZURE_BLOB_PROFILES_CONTAINER": "neurarchat-profiles",
     "AZURE_BLOB_UPLOADS_CONTAINER": "neurarchat-uploads",
     "AZURE_BLOB_PARSED_CONTAINER": "neurarchat-parsed",
+    "AZURE_BLOB_AGENTS_CONTAINER": "neurarchat-agents",
 
     "CLERK_JWKS_URL": "....",
     "CLERK_ISSUER": "....",

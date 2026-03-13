@@ -15,6 +15,48 @@ export interface UploadedFileItem {
   blob_path: string;
 }
 
+export interface AgentPlanStep {
+  step_number: number;
+  description: string;
+  tool: "web_search" | "read_file" | "memory_recall" | null;
+  tool_input: string | null;
+}
+
+export interface AgentPlan {
+  plan_id: string;
+  goal: string;
+  created_at?: string;
+  steps: AgentPlanStep[];
+}
+
+export interface AgentStepResult {
+  step_number: number;
+  description: string;
+  tool: "web_search" | "read_file" | "memory_recall" | null;
+  tool_input: string | null;
+  result: string;
+  status: "done" | "failed";
+  error?: string | null;
+}
+
+export interface AgentTaskSummary {
+  plan_id: string;
+  goal: string;
+  created_at: string;
+  steps_count: number;
+}
+
+export interface AgentTaskState {
+  plan: AgentPlan;
+  stepResults: AgentStepResult[];
+  runningStepNumber: number | null;
+  summary: string;
+  warning: string;
+  status: "preview" | "running" | "completed" | "failed";
+  error: string;
+  stepsCompleted: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -25,6 +67,7 @@ export interface ChatMessage {
   searchUsed?: boolean;
   fileContextUsed?: boolean;
   sources?: SearchSource[];
+  agentTask?: AgentTaskState;
 }
 
 export interface ChatRequest {

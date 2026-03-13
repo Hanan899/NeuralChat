@@ -25,11 +25,16 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     userName: "Hanan",
     userSubtitle: "hanan@example.com",
     themeMode: "system",
+    isWebSearchMode: false,
+    isWebSearchAvailable: true,
+    isAgentMode: false,
     onNewChat: vi.fn(),
     onSelectConversation: vi.fn(),
     onToggleArchiveConversation: vi.fn(),
     onDeleteConversation: vi.fn(),
     onShareConversation: vi.fn(),
+    onToggleWebSearchMode: vi.fn(),
+    onToggleAgentMode: vi.fn(),
     onThemeModeChange: vi.fn(),
     onOpenUserSettings: vi.fn(),
     onSignOut: vi.fn(),
@@ -93,5 +98,23 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("menuitemradio", { name: /dark/i }));
 
     expect(onThemeModeChange).toHaveBeenCalledWith("dark");
+  });
+
+  it("toggles web search mode from the sidebar subitem", async () => {
+    const onToggleWebSearchMode = vi.fn();
+    renderSidebar({ onToggleWebSearchMode });
+
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Web Search Mode" }));
+
+    expect(onToggleWebSearchMode).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles agent mode from the sidebar subitem", async () => {
+    const onToggleAgentMode = vi.fn();
+    renderSidebar({ onToggleAgentMode });
+
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+
+    expect(onToggleAgentMode).toHaveBeenCalledTimes(1);
   });
 });
