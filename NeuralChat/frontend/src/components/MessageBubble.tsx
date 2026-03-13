@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import hljs from "highlight.js";
 
 import type { ChatMessage } from "../types";
+import { AgentProgress } from "./AgentProgress";
 import { SearchSources } from "./SearchSources";
 
 interface MessageBubbleProps {
@@ -11,6 +12,7 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
   showAssistantLabel?: boolean;
   onRetry?: () => void;
+  onRunAgentPlan?: () => void;
 }
 
 interface CodeBlockProps {
@@ -182,14 +184,15 @@ export function MessageBubble({
   message,
   isStreaming = false,
   showAssistantLabel = false,
-  onRetry
+  onRetry,
+  onRunAgentPlan,
 }: MessageBubbleProps) {
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
   const [copiedMessage, setCopiedMessage] = useState(false);
   const [actionStatus, setActionStatus] = useState("");
   const isUser = message.role === "user";
   const hasAssistantContent = message.content.trim().length > 0;
-  const showMessageActions = hasAssistantContent && !isStreaming;
+  const showMessageActions = hasAssistantContent && !isStreaming && !message.agentTask;
 
   if (isUser) {
     return (
@@ -256,30 +259,36 @@ export function MessageBubble({
           </p>
         ) : null}
 
-        <div className="nc-markdown">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code({ className, children, ...props }) {
-                const isInline = !(className && className.startsWith("language-"));
-                if (isInline) {
-                  return (
-                    <code className="nc-inline-code" {...props}>
-                      {children}
-                    </code>
-                  );
-                }
-                return <CodeBlock className={className}>{children}</CodeBlock>;
-              }
-            }}
-          >
-            {message.content}
-          </ReactMarkdown>
+        {message.agentTask ? (
+          <AgentProgress task={message.agentTask} onRun={onRunAgentPlan} />
+        ) : (
+          <>
+            <div className="nc-markdown">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  code({ className, children, ...props }) {
+                    const isInline = !(className && className.startsWith("language-"));
+                    if (isInline) {
+                      return (
+                        <code className="nc-inline-code" {...props}>
+                          {children}
+                        </code>
+                      );
+                    }
+                    return <CodeBlock className={className}>{children}</CodeBlock>;
+                  }
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
 
-          {isStreaming ? <span className="typing-cursor" aria-hidden="true" /> : null}
-        </div>
+              {isStreaming ? <span className="typing-cursor" aria-hidden="true" /> : null}
+            </div>
 
-        {message.searchUsed ? <SearchSources sources={message.sources ?? []} /> : null}
+            {message.searchUsed ? <SearchSources sources={message.sources ?? []} /> : null}
+          </>
+        )}
 
         {showMessageActions ? (
           <div className="nc-message-actions" aria-label="Assistant message actions">

@@ -8,6 +8,7 @@ interface ChatWindowProps {
   messages: ChatMessage[];
   streamingMessageId?: string | null;
   onRetryPrompt?: (prompt: string) => void;
+  onRunAgentPlan?: (messageId: string) => void;
 }
 
 function findPreviousUserPrompt(messages: ChatMessage[], assistantIndex: number): string | null {
@@ -19,7 +20,7 @@ function findPreviousUserPrompt(messages: ChatMessage[], assistantIndex: number)
   return null;
 }
 
-export function ChatWindow({ messages, streamingMessageId, onRetryPrompt }: ChatWindowProps) {
+export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunAgentPlan }: ChatWindowProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
 
@@ -32,7 +33,7 @@ export function ChatWindow({ messages, streamingMessageId, onRetryPrompt }: Chat
         return {
           message,
           showAssistantLabel,
-          retryPrompt
+          retryPrompt,
         };
       }),
     [messages]
@@ -43,7 +44,7 @@ export function ChatWindow({ messages, streamingMessageId, onRetryPrompt }: Chat
       if (typeof scrollRef.current.scrollTo === "function") {
         scrollRef.current.scrollTo({
           top: scrollRef.current.scrollHeight,
-          behavior: "smooth"
+          behavior: "smooth",
         });
       } else {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -79,6 +80,7 @@ export function ChatWindow({ messages, streamingMessageId, onRetryPrompt }: Chat
                       }
                     : undefined
                 }
+                onRunAgentPlan={message.agentTask && onRunAgentPlan ? () => onRunAgentPlan(message.id) : undefined}
               />
             </motion.div>
           ))}

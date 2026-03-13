@@ -2,12 +2,24 @@ import { SignIn, SignedIn, SignedOut, useAuth, useClerk, useUser } from "@clerk/
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { checkHealth, checkSearchStatus, getFiles, streamChat } from "./api";
+import { createAgentPlan, runAgent } from "./api/agent";
+import { AgentHistory } from "./components/AgentHistory";
 import { ChatWindow } from "./components/ChatWindow";
 import { DebugPanel } from "./components/DebugPanel";
 import { FileUpload } from "./components/FileUpload";
 import { ModelSelector } from "./components/ModelSelector";
 import { Sidebar } from "./components/Sidebar";
-import type { ChatMessage, ChatModel, ConversationSummary, StreamChunk, ThemeMode, UploadedFileItem } from "./types";
+import type {
+  AgentPlan,
+  AgentStepResult,
+  AgentTaskState,
+  ChatMessage,
+  ChatModel,
+  ConversationSummary,
+  StreamChunk,
+  ThemeMode,
+  UploadedFileItem,
+} from "./types";
 
 const EMPTY_SUGGESTIONS = [
   "Summarize this project architecture in simple terms",
@@ -68,7 +80,7 @@ function UiIcon({
   kind,
   className
 }: {
-  kind: "brand" | "attach" | "search" | "send" | "stop" | "menu";
+  kind: "brand" | "attach" | "search" | "send" | "stop" | "menu" | "agent";
   className?: string;
 }) {
   if (kind === "brand") {
@@ -120,6 +132,17 @@ function UiIcon({
     );
   }
 
+  if (kind === "agent") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+        <rect x="7" y="8" width="10" height="8" rx="3" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M12 4V8M9 18H15M8 21H16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        <circle cx="10" cy="12" r="0.8" fill="currentColor" />
+        <circle cx="14" cy="12" r="0.8" fill="currentColor" />
+      </svg>
+    );
+  }
+
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
       <path d="M12 6V18M6 12H18" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
@@ -150,6 +173,19 @@ function buildConversationSummary(title = "New chat"): ConversationSummary {
     title,
     preview: "",
     updatedAt: new Date().toISOString()
+  };
+}
+
+function buildAgentTaskState(plan: AgentPlan): AgentTaskState {
+  return {
+    plan,
+    stepResults: [],
+    runningStepNumber: null,
+    summary: "",
+    warning: "",
+    status: "preview",
+    error: "",
+    stepsCompleted: 0,
   };
 }
 
@@ -241,6 +277,7 @@ function ChatShell() {
   const [systemTheme, setSystemTheme] = useState<"dark" | "light">(() => readSystemTheme());
   const [searchEnabled, setSearchEnabled] = useState<boolean | null>(null);
   const [forceWebSearch, setForceWebSearch] = useState(false);
+  const [isAgentMode, setIsAgentMode] = useState(false);
   const [activeStreamingAssistantId, setActiveStreamingAssistantId] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -251,6 +288,8 @@ function ChatShell() {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isFileModalOpen, setIsFileModalOpen] = useState(false);
   const [fileModalAuthToken, setFileModalAuthToken] = useState("");
+  const [isAgentHistoryOpen, setIsAgentHistoryOpen] = useState(false);
+  const [agentHistoryAuthToken, setAgentHistoryAuthToken] = useState("");
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const submitLockRef = useRef(false);
@@ -262,12 +301,6 @@ function ChatShell() {
   const typingFinishWhenEmptyRef = useRef(false);
 
   const searchReady = searchEnabled === true;
-  const searchToggleLabel = !searchReady ? "Search unavailable" : forceWebSearch ? "Web search ON" : "Web search OFF";
-  const searchToggleTitle = !searchReady
-    ? "Web search disabled — add TAVILY_API_KEY"
-    : forceWebSearch
-      ? "Web search is ON for the next message"
-      : "Web search is OFF for the next message";
   const resolvedThemeMode: "dark" | "light" = themeMode === "system" ? systemTheme : themeMode;
   const userDisplayName = resolveDisplayName(user, userId);
   const userSubtitle = resolveUserSubtitle(user);
@@ -477,6 +510,24 @@ function ChatShell() {
       })
     );
   }
+
+  const updateAgentMessageState = useCallback(
+    (conversationId: string, messageId: string, updater: (currentTask: AgentTaskState) => AgentTaskState) => {
+      setMessagesByConversation((previous) => ({
+        ...previous,
+        [conversationId]: (previous[conversationId] ?? []).map((message) => {
+          if (message.id !== messageId || !message.agentTask) {
+            return message;
+          }
+          return {
+            ...message,
+            agentTask: updater(message.agentTask),
+          };
+        }),
+      }));
+    },
+    []
+  );
 
   function removeToast(toastId: string) {
     setToasts((previous) => previous.filter((toast) => toast.id !== toastId));
@@ -720,7 +771,7 @@ function ChatShell() {
     }
   }
 
-  async function submitPrompt(rawPrompt: string) {
+  async function submitChatPrompt(rawPrompt: string) {
     const trimmed = rawPrompt.trim();
     if (!trimmed || isSending || !activeConversationId || submitLockRef.current) {
       return;
@@ -900,6 +951,211 @@ function ChatShell() {
     }
   }
 
+  async function submitAgentGoal(rawPrompt: string) {
+    const trimmed = rawPrompt.trim();
+    if (!trimmed || isSending || !activeConversationId || submitLockRef.current) {
+      return;
+    }
+
+    submitLockRef.current = true;
+    setErrorText("");
+    setIsSending(true);
+    setStreamStatus("planning");
+
+    const conversationId = activeConversationId;
+    const attachedFilesForMessage = activeFiles.map((fileItem) => ({ ...fileItem }));
+    const userMessage: ChatMessage = {
+      id: buildId(),
+      role: "user",
+      content: trimmed,
+      createdAt: new Date().toISOString(),
+      model,
+      attachedFiles: attachedFilesForMessage,
+    };
+    const assistantId = buildId();
+    const placeholderPlan: AgentPlan = {
+      plan_id: `pending-${assistantId}`,
+      goal: trimmed,
+      steps: [],
+    };
+    const assistantMessage: ChatMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      createdAt: new Date().toISOString(),
+      model,
+      agentTask: buildAgentTaskState(placeholderPlan),
+    };
+
+    setMessagesByConversation((previous) => ({
+      ...previous,
+      [conversationId]: [...(previous[conversationId] ?? []), userMessage, assistantMessage],
+    }));
+    updateConversationSummary(conversationId, trimmed, trimmed);
+    setInput("");
+
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+
+      const plan = await createAgentPlan(authToken, trimmed, conversationId);
+      updateAgentMessageState(conversationId, assistantId, () => buildAgentTaskState(plan));
+      updateConversationSummary(conversationId, trimmed, `Agent plan ready: ${plan.steps.length} steps`);
+      setStreamStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create agent plan.";
+      setErrorText(message);
+      setMessagesByConversation((previous) => ({
+        ...previous,
+        [conversationId]: (previous[conversationId] ?? []).filter((entry) => entry.id !== assistantId),
+      }));
+      setStreamStatus("failed");
+    } finally {
+      submitLockRef.current = false;
+      setIsSending(false);
+    }
+  }
+
+  async function handleRunAgentPlan(messageId: string) {
+    if (!activeConversationId || isSending) {
+      return;
+    }
+
+    const conversationId = activeConversationId;
+    const targetMessage = (messagesByConversation[conversationId] ?? []).find((message) => message.id === messageId);
+    const agentTask = targetMessage?.agentTask;
+    if (!agentTask) {
+      return;
+    }
+
+    submitLockRef.current = true;
+    setIsSending(true);
+    setErrorText("");
+    setStreamStatus("running");
+    setActiveStreamingAssistantId(messageId);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+      ...currentTask,
+      status: "running",
+      error: "",
+      warning: "",
+      summary: "",
+      runningStepNumber: null,
+      stepResults: [],
+      stepsCompleted: 0,
+    }));
+
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+
+      await runAgent(
+        authToken,
+        agentTask.plan.plan_id,
+        conversationId,
+        {
+          onPlan: (plan) => {
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+              ...currentTask,
+              plan,
+            }));
+          },
+          onStepStart: ({ step_number }) => {
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+              ...currentTask,
+              status: "running",
+              runningStepNumber: step_number,
+            }));
+          },
+          onStepDone: (payload) => {
+            updateAgentMessageState(conversationId, messageId, (currentTask) => {
+              const stepTemplate = currentTask.plan.steps.find((step) => step.step_number === payload.step_number);
+              const nextStepResult: AgentStepResult = {
+                step_number: payload.step_number,
+                description: stepTemplate?.description ?? "",
+                tool: stepTemplate?.tool ?? null,
+                tool_input: stepTemplate?.tool_input ?? null,
+                result: payload.result,
+                status: payload.status,
+                error: payload.error ?? null,
+              };
+              const remainingResults = currentTask.stepResults.filter((entry) => entry.step_number !== payload.step_number);
+              return {
+                ...currentTask,
+                stepResults: [...remainingResults, nextStepResult].sort((left, right) => left.step_number - right.step_number),
+                runningStepNumber: null,
+              };
+            });
+          },
+          onWarning: (message) => {
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+              ...currentTask,
+              warning: message,
+            }));
+          },
+          onSummaryToken: (token) => {
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+              ...currentTask,
+              summary: `${currentTask.summary}${token}`,
+            }));
+          },
+          onDone: ({ steps_completed, warning }) => {
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+              ...currentTask,
+              status: "completed",
+              stepsCompleted: steps_completed,
+              warning: warning ?? currentTask.warning,
+              runningStepNumber: null,
+            }));
+          },
+          onError: (message) => {
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+              ...currentTask,
+              status: "failed",
+              error: message,
+              runningStepNumber: null,
+            }));
+            setErrorText(message);
+          },
+        },
+        controller.signal
+      );
+
+      setStreamStatus("completed");
+      updateConversationSummary(conversationId, agentTask.plan.goal, "Agent task completed");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent run failed.";
+      setErrorText(message);
+      updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+        ...currentTask,
+        status: "failed",
+        error: message,
+        runningStepNumber: null,
+      }));
+      setStreamStatus("failed");
+    } finally {
+      abortControllerRef.current = null;
+      submitLockRef.current = false;
+      setIsSending(false);
+      setActiveStreamingAssistantId(null);
+    }
+  }
+
+  async function submitPrompt(rawPrompt: string) {
+    if (isAgentMode) {
+      await submitAgentGoal(rawPrompt);
+      return;
+    }
+    await submitChatPrompt(rawPrompt);
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void submitPrompt(input);
@@ -907,7 +1163,7 @@ function ChatShell() {
 
   function handleRetryPrompt(prompt: string) {
     if (!isSending) {
-      void submitPrompt(prompt);
+      void submitChatPrompt(prompt);
     }
   }
 
@@ -953,6 +1209,22 @@ function ChatShell() {
       setErrorText("");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to open file upload.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
+  }
+
+  async function handleOpenAgentHistory() {
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+      setAgentHistoryAuthToken(authToken);
+      setIsAgentHistoryOpen(true);
+      setErrorText("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to open agent history.";
       setErrorText(message);
       showToast(message, "error");
     }
@@ -1016,11 +1288,20 @@ function ChatShell() {
         isMobileOpen={isSidebarOpen}
         userName={userDisplayName}
         userSubtitle={userSubtitle}
+        isWebSearchMode={forceWebSearch}
+        isWebSearchAvailable={searchReady}
+        isAgentMode={isAgentMode}
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
         onToggleArchiveConversation={handleToggleArchiveConversation}
         onDeleteConversation={handleDeleteConversation}
         onShareConversation={handleShareConversation}
+        onToggleWebSearchMode={() => {
+          if (searchReady) {
+            setForceWebSearch((value) => !value);
+          }
+        }}
+        onToggleAgentMode={() => setIsAgentMode((value) => !value)}
         themeMode={themeMode}
         onThemeModeChange={handleThemeModeChange}
         onOpenUserSettings={handleOpenUserSettings}
@@ -1045,6 +1326,15 @@ function ChatShell() {
           </div>
 
           <div className="nc-topbar__right">
+            <button
+              type="button"
+              className="nc-topbar-btn nc-topbar-btn--icon-label"
+              aria-label="Open agent history"
+              onClick={() => void handleOpenAgentHistory()}
+            >
+              <UiIcon kind="agent" className="nc-ui-icon" />
+              <span>Agents</span>
+            </button>
             <button
               type="button"
               className="nc-topbar-btn"
@@ -1097,6 +1387,7 @@ function ChatShell() {
               messages={currentMessages}
               streamingMessageId={activeStreamingAssistantId}
               onRetryPrompt={handleRetryPrompt}
+              onRunAgentPlan={handleRunAgentPlan}
             />
           )}
         </div>
@@ -1108,7 +1399,7 @@ function ChatShell() {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={handleTextareaKeyDown}
-              placeholder="Message NeuralChat..."
+              placeholder={isAgentMode ? "Describe a goal for the agent..." : "Message NeuralChat..."}
               rows={1}
             />
 
@@ -1124,21 +1415,6 @@ function ChatShell() {
                   <UiIcon kind="attach" className="nc-ui-icon" />
                   <span>Add files</span>
                 </button>
-                <button
-                  type="button"
-                  className={`nc-search-toggle ${forceWebSearch ? "nc-search-toggle--active" : ""}`}
-                  aria-label="Toggle web search"
-                  aria-pressed={forceWebSearch}
-                  title={searchToggleTitle}
-                  disabled={!searchReady}
-                  onClick={() => setForceWebSearch((value) => !value)}
-                >
-                  <span className="nc-search-toggle__icon" aria-hidden="true">
-                    <UiIcon kind="search" className="nc-ui-icon" />
-                  </span>
-                  <span className="nc-search-toggle__label">{searchToggleLabel}</span>
-                </button>
-                <ModelSelector value={model} onChange={setModel} />
               </div>
 
               {isSending ? (
@@ -1180,6 +1456,10 @@ function ChatShell() {
           onFilesChange={handleUploadedFilesChange}
           onClose={() => setIsFileModalOpen(false)}
         />
+      ) : null}
+
+      {isAgentHistoryOpen && agentHistoryAuthToken ? (
+        <AgentHistory authToken={agentHistoryAuthToken} open={isAgentHistoryOpen} onClose={() => setIsAgentHistoryOpen(false)} />
       ) : null}
     </main>
   );

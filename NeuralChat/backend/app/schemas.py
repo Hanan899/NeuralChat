@@ -40,6 +40,27 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_agent_plan_request(payload: dict[str, Any]) -> dict[str, str]:
+    """Validate and normalize POST /api/agent/plan payload."""
+    session_id = payload.get("session_id", "")
+    if not isinstance(session_id, str) or not (1 <= len(session_id) <= 128):
+        raise HTTPException(status_code=422, detail="session_id must be a non-empty string (max 128).")
+
+    goal = payload.get("goal", "")
+    if not isinstance(goal, str) or not (1 <= len(goal) <= 12000):
+        raise HTTPException(status_code=422, detail="goal must be a non-empty string (max 12000).")
+
+    return {"session_id": session_id, "goal": goal}
+
+
+def validate_agent_run_request(payload: dict[str, Any]) -> dict[str, str]:
+    """Validate and normalize POST /api/agent/run/{plan_id} payload."""
+    session_id = payload.get("session_id", "")
+    if not isinstance(session_id, str) or not (1 <= len(session_id) <= 128):
+        raise HTTPException(status_code=422, detail="session_id must be a non-empty string (max 128).")
+    return {"session_id": session_id}
+
+
 def build_health_response(timestamp: str, version: str) -> dict[str, str]:
     return {"status": "ok", "timestamp": timestamp, "version": version}
 

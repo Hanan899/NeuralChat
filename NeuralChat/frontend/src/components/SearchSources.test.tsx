@@ -1,4 +1,5 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +14,10 @@ const {
   getFilesMock,
   deleteFileMock,
   uploadFileWithProgressMock,
+  createAgentPlanMock,
+  runAgentMock,
+  getAgentHistoryMock,
+  getAgentTaskMock,
 } = vi.hoisted(() => ({
   authState: { signedIn: true },
   getTokenMock: vi.fn().mockResolvedValue("token"),
@@ -34,6 +39,10 @@ const {
     chunk_count: 1,
     message: "File uploaded successfully"
   }),
+  createAgentPlanMock: vi.fn(),
+  runAgentMock: vi.fn(),
+  getAgentHistoryMock: vi.fn().mockResolvedValue([]),
+  getAgentTaskMock: vi.fn().mockResolvedValue({ plan: { plan_id: "plan-1", goal: "Goal", steps: [] }, log: [] }),
 }));
 
 vi.mock("../api", () => ({
@@ -43,6 +52,13 @@ vi.mock("../api", () => ({
   getFiles: getFilesMock,
   deleteFile: deleteFileMock,
   uploadFileWithProgress: uploadFileWithProgressMock
+}));
+
+vi.mock("../api/agent", () => ({
+  createAgentPlan: createAgentPlanMock,
+  runAgent: runAgentMock,
+  getAgentHistory: getAgentHistoryMock,
+  getAgentTask: getAgentTaskMock,
 }));
 
 vi.mock("@clerk/clerk-react", () => ({
@@ -294,8 +310,10 @@ describe("SearchSources and MessageBubble", () => {
     checkSearchStatusMock.mockResolvedValue(true);
     render(<App />);
 
-    expect(await screen.findByRole("button", { name: "Toggle web search" })).toBeInTheDocument();
-    expect(screen.getByText("Web search OFF")).toBeInTheDocument();
+    const webSearchToggle = await screen.findByRole("button", { name: "Toggle Web Search Mode" });
+    expect(webSearchToggle).toBeInTheDocument();
+    expect(screen.getByText("Web search")).toBeInTheDocument();
+    expect(within(webSearchToggle).getByText("Off")).toBeInTheDocument();
   });
 
   it("test_search_status_badge_grey_when_disabled", async () => {
@@ -303,9 +321,9 @@ describe("SearchSources and MessageBubble", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Toggle web search" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Toggle Web Search Mode" })).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Search unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
   });
 });

@@ -1,4 +1,6 @@
 data/
+__queuestorage__/
+__blobstorage__/
 .pytest_cache/
 __pycache__/
 *.pyc

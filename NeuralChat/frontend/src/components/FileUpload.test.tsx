@@ -14,6 +14,10 @@ const {
   getFilesMock,
   deleteFileMock,
   uploadFileWithProgressMock,
+  createAgentPlanMock,
+  runAgentMock,
+  getAgentHistoryMock,
+  getAgentTaskMock,
 } = vi.hoisted(() => ({
   authState: { signedIn: true },
   getTokenMock: vi.fn().mockResolvedValue("token"),
@@ -35,6 +39,10 @@ const {
     chunk_count: 1,
     message: "File uploaded successfully",
   }),
+  createAgentPlanMock: vi.fn(),
+  runAgentMock: vi.fn(),
+  getAgentHistoryMock: vi.fn().mockResolvedValue([]),
+  getAgentTaskMock: vi.fn().mockResolvedValue({ plan: { plan_id: "plan-1", goal: "Goal", steps: [] }, log: [] }),
 }));
 
 vi.mock("../api", () => ({
@@ -44,6 +52,13 @@ vi.mock("../api", () => ({
   getFiles: getFilesMock,
   deleteFile: deleteFileMock,
   uploadFileWithProgress: uploadFileWithProgressMock,
+}));
+
+vi.mock("../api/agent", () => ({
+  createAgentPlan: createAgentPlanMock,
+  runAgent: runAgentMock,
+  getAgentHistory: getAgentHistoryMock,
+  getAgentTask: getAgentTaskMock,
 }));
 
 vi.mock("@clerk/clerk-react", () => ({

@@ -3,6 +3,7 @@
 Explain this code:
 - `/api/health` proves backend is alive.
 - `/api/chat` validates input, enforces auth, and returns NDJSON token stream.
+- `/api/agent/*` adds plan-first autonomous execution with streaming progress.
 """
 
 from __future__ import annotations
@@ -15,8 +16,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +24,24 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
-from app.schemas import build_chat_json_response, build_health_response, validate_chat_request
+from app.schemas import (
+    build_chat_json_response,
+    build_health_response,
+    validate_agent_plan_request,
+    validate_agent_run_request,
+    validate_chat_request,
+)
+from app.services.agent import (
+    AGENT_TIMEOUT_SECONDS,
+    AVAILABLE_AGENT_TOOLS,
+    create_task_plan,
+    list_task_plans,
+    load_execution_log,
+    load_task_plan,
+    save_execution_log,
+    save_task_plan,
+    stream_agent_execution,
+)
 from app.services.chat_service import (
     generate_reply,
     generate_reply_stream,
@@ -33,7 +50,6 @@ from app.services.chat_service import (
     stream_tokens,
     tokenize_text,
 )
-from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
 from app.services.file_handler import (
     chunk_text,
     delete_user_file,
@@ -45,10 +61,11 @@ from app.services.file_handler import (
     upload_raw_file,
     validate_file,
 )
-from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web, should_search
+from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
+from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web
 from app.services.storage import init_store
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 BASE_DIR = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger(__name__)
 
@@ -210,6 +227,143 @@ async def delete_file(
     return {"message": f"{safe_filename} deleted successfully"}
 
 
+@app.post("/api/agent/plan")
+async def post_agent_plan(
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+) -> dict[str, Any]:
+    request = validate_agent_plan_request(payload)
+
+    try:
+        plan = await create_task_plan(request["goal"], AVAILABLE_AGENT_TOOLS)
+        save_task_plan(user_id, plan)
+    except Exception as plan_error:
+        LOGGER.exception("Agent plan creation failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to create agent plan: {plan_error}",
+        ) from plan_error
+
+    return {"plan": plan}
+
+
+@app.post("/api/agent/run/{plan_id}")
+async def post_agent_run(
+    plan_id: str,
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+):
+    request = validate_agent_run_request(payload)
+    plan = await asyncio.to_thread(load_task_plan, user_id, plan_id)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent plan not found.")
+
+    async def stream() -> AsyncIterator[str]:
+        execution_log: list[dict[str, Any]] = []
+        warning_message: str | None = None
+
+        yield json.dumps({"type": "plan", "plan": plan}, ensure_ascii=True) + "\n"
+
+        try:
+            async with asyncio.timeout(AGENT_TIMEOUT_SECONDS):
+                async for event in stream_agent_execution(plan, user_id, request["session_id"]):
+                    event_type = str(event.get("type", "")).strip()
+                    if event_type == "final_state":
+                        execution_log = list(event.get("execution_log", []))
+                        warning_message = event.get("warning_message") if isinstance(event.get("warning_message"), str) else warning_message
+                        await asyncio.to_thread(save_execution_log, user_id, plan_id, execution_log)
+                        summary_text = str(event.get("summary", "")).strip()
+                        for token in tokenize_text(summary_text):
+                            yield json.dumps({"type": "summary", "content": token}, ensure_ascii=True) + "\n"
+                        yield (
+                            json.dumps(
+                                {
+                                    "type": "done",
+                                    "plan_id": plan_id,
+                                    "steps_completed": len(execution_log),
+                                    "warning": warning_message,
+                                },
+                                ensure_ascii=True,
+                            )
+                            + "\n"
+                        )
+                        return
+
+                    if event_type == "step_done":
+                        execution_log.append(
+                            {
+                                "step_number": event.get("step_number"),
+                                "description": next(
+                                    (
+                                        step.get("description")
+                                        for step in plan.get("steps", [])
+                                        if step.get("step_number") == event.get("step_number")
+                                    ),
+                                    "",
+                                ),
+                                "tool": next(
+                                    (
+                                        step.get("tool")
+                                        for step in plan.get("steps", [])
+                                        if step.get("step_number") == event.get("step_number")
+                                    ),
+                                    None,
+                                ),
+                                "tool_input": next(
+                                    (
+                                        step.get("tool_input")
+                                        for step in plan.get("steps", [])
+                                        if step.get("step_number") == event.get("step_number")
+                                    ),
+                                    None,
+                                ),
+                                "result": event.get("result", ""),
+                                "status": event.get("status", "failed"),
+                                "error": event.get("error"),
+                            }
+                        )
+
+                    if event_type == "warning":
+                        warning_message = str(event.get("message", "")).strip() or warning_message
+
+                    yield json.dumps(event, ensure_ascii=True) + "\n"
+        except TimeoutError:
+            warning_message = f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds."
+            await asyncio.to_thread(save_execution_log, user_id, plan_id, execution_log)
+            yield json.dumps({"type": "warning", "message": warning_message}, ensure_ascii=True) + "\n"
+            yield json.dumps({"type": "summary", "content": warning_message}, ensure_ascii=True) + "\n"
+            yield json.dumps({"type": "done", "plan_id": plan_id, "steps_completed": len(execution_log)}, ensure_ascii=True) + "\n"
+        except Exception as agent_error:
+            await asyncio.to_thread(save_execution_log, user_id, plan_id, execution_log)
+            LOGGER.exception("Agent run failed for user=%s plan=%s", user_id, plan_id)
+            yield json.dumps({"type": "error", "message": f"Agent run failed: {agent_error}"}, ensure_ascii=True) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+@app.get("/api/agent/history")
+async def get_agent_history(user_id: str = Depends(require_user_id)) -> dict[str, list[dict[str, Any]]]:
+    try:
+        tasks = await asyncio.to_thread(list_task_plans, user_id)
+    except Exception as history_error:
+        LOGGER.exception("Agent history load failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load agent history: {history_error}",
+        ) from history_error
+    return {"tasks": tasks}
+
+
+@app.get("/api/agent/history/{plan_id}")
+async def get_agent_history_detail(plan_id: str, user_id: str = Depends(require_user_id)) -> dict[str, Any]:
+    plan = await asyncio.to_thread(load_task_plan, user_id, plan_id)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent plan not found.")
+
+    log = await asyncio.to_thread(load_execution_log, user_id, plan_id)
+    return {"plan": plan, "log": log}
+
+
 @app.post("/api/chat")
 async def post_chat(
     payload: dict[str, Any] = Body(...),
@@ -267,7 +421,7 @@ async def post_chat(
         relevant_chunks = await asyncio.to_thread(get_relevant_chunks, all_session_chunks, request["message"], 3)
         if relevant_chunks:
             file_context_used = True
-            file_prompt = "Relevant content from uploaded files:\\n" + "\\n\\n".join(relevant_chunks)
+            file_prompt = "Relevant content from uploaded files:\n" + "\n\n".join(relevant_chunks)
     except Exception as file_context_error:
         LOGGER.warning("File context retrieval failed; continuing without file context: %s", file_context_error)
 
