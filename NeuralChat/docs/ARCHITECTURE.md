@@ -1,18 +1,19 @@
-# NeuralChat Architecture (Auth + Memory + Search + File Upload)
+# NeuralChat Architecture (Auth + Memory + Search + File Upload + Agent Mode)
 
 ## 1) Runtime Components
 
 - `frontend/`:
   - React + TypeScript + Tailwind + Clerk
-  - Streams assistant tokens, manages conversation UI, search toggle, and file upload modal
+  - Streams assistant tokens, manages conversation UI, sidebar mode controls, file upload modal, and agent progress/history
 - `backend/`:
   - FastAPI mounted in Azure Functions ASGI
-  - Auth verification, chat orchestration, prompt assembly, Blob persistence
+  - Auth verification, chat orchestration, prompt assembly, agent execution, Blob persistence
 - `Azure Blob Storage` containers:
   - `neurarchat-memory` (conversations + search cache)
   - `neurarchat-profiles` (deep memory profile)
   - `neurarchat-uploads` (raw uploaded files)
   - `neurarchat-parsed` (parsed chunk JSON)
+  - `neurarchat-agents` (agent plans + execution logs)
 
 ## 2) Auth and Identity Flow
 
@@ -28,7 +29,7 @@
 1. Validate request body (`session_id`, `message`, `model`, `stream`, optional `force_search`).
 2. Persist user message to conversation blob.
 3. Build memory prompt from profile facts.
-4. If force-search is enabled, load/search/cached web sources and build search prompt.
+4. If force-search is enabled from the sidebar `Web search` control, load/search/cached web sources and build search prompt.
 5. Load uploaded files for `(user_id, session_id)`, read parsed chunks, rank relevant chunks, and build file prompt.
 6. Compose model system context in this exact order:
    - memory facts
@@ -64,6 +65,10 @@
   - `POST /api/upload`
   - `GET /api/files?session_id=...`
   - `DELETE /api/files/{filename}?session_id=...`
+  - `POST /api/agent/plan`
+  - `POST /api/agent/run/{plan_id}`
+  - `GET /api/agent/history`
+  - `GET /api/agent/history/{plan_id}`
 
 ## 6) Stream Contracts
 
@@ -88,7 +93,39 @@ Flow:
 4. Protected calls include Clerk bearer token.
 5. Backend verifies token, runs chat/search/file pipeline, and returns JSON or NDJSON stream.
 
-## 8) Deployment Verification
+## 8) Agent Mode Pipeline
+
+1. User enables `Agent mode` from the left sidebar under `Codex`.
+2. Frontend sends `POST /api/agent/plan` with:
+   - `goal`
+   - `session_id`
+3. Backend creates a plan using GPT-5 and truncates to max 6 steps.
+4. Frontend shows plan preview in-thread and waits for explicit `Run plan`.
+5. Frontend calls `POST /api/agent/run/{plan_id}`.
+6. Backend executes steps sequentially with LangGraph using:
+   - `web_search`
+   - `read_file`
+   - `memory_recall`
+   - reasoning-only steps
+7. Backend streams:
+   - `plan`
+   - `step_start`
+   - `step_done`
+   - `warning`
+   - `summary`
+   - `done`
+8. Backend stores:
+   - `neurarchat-agents/{user_id}/plans/{plan_id}.json`
+   - `neurarchat-agents/{user_id}/logs/{plan_id}.json`
+
+Safety constraints:
+
+- max 6 steps
+- repeated same tool + same input -> stop early with warning
+- failed steps are logged, not fatal
+- total timeout: 60 seconds
+
+## 9) Deployment Verification
 
 The deployed backend was smoke-tested on **March 12, 2026** and passed:
 

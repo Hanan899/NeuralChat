@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.13-3776ab)](#prerequisites)
 [![Node](https://img.shields.io/badge/node-24.x-339933)](#prerequisites)
 
-NeuralChat is a beginner-first AI chat platform with secure login, streaming responses, user-scoped cloud memory, optional web search with citations, and file/PDF upload Q&A context.
+NeuralChat is a beginner-first AI workspace with secure login, streaming responses, user-scoped cloud memory, optional web search with citations, file/PDF upload Q&A, and plan-first agent execution.
 
 This repository is organized as a workspace root with implementation inside [`NeuralChat/`](./NeuralChat).
 
@@ -26,11 +26,17 @@ As of **March 12, 2026**, the following are implemented and working:
 - Azure Blob conversation persistence scoped by `user_id/session_id`
 - Deep Memory profile facts extraction + prompt injection for chat
 - Tavily web search integration with 24-hour Blob cache (`search-cache/{sha256(query)}.json`)
-- Frontend web-search UX: status dot, per-message globe badge, expandable source citations
-- Manual force web-search toggle in chat compose
+- Frontend web-search UX: sidebar control, per-message search badge, expandable source citations
 - Azure OpenAI GPT-5 path only (`model: "gpt-5"`, deployment example `gpt-5-chat`)
 - File upload pipeline (raw + parsed chunks in Blob) with session-scoped retrieval
 - Chat file-context injection and `📄` badge when file context is used
+- Agent Mode with LangChain + LangGraph:
+  - `POST /api/agent/plan`
+  - `POST /api/agent/run/{plan_id}`
+  - `GET /api/agent/history`
+  - `GET /api/agent/history/{plan_id}`
+- Agent plan preview, explicit `Run plan`, streamed step execution, and final summary
+- Agent plan/log persistence in Blob
 - Deployed Azure Function backend smoke-tested successfully for auth, chat, search, file upload/list/delete, and file-context chat
 
 ## Architecture
@@ -44,6 +50,7 @@ As of **March 12, 2026**, the following are implemented and working:
   - `neurarchat-profiles` (user profile facts)
   - `neurarchat-uploads` (raw uploaded files)
   - `neurarchat-parsed` (parsed chunk JSON)
+  - `neurarchat-agents` (agent plans + execution logs)
 
 ## Deployment Status
 
@@ -83,16 +90,16 @@ Where data is stored:
 
 ## Web Search
 
-NeuralChat supports two search modes per message:
+NeuralChat supports:
 
-- **Auto mode:** backend decides via a small GPT call (`should_search`).
-- **Force mode (UI toggle):** backend always attempts web search.
+- **Auto decision logic** in the backend (`should_search`)
+- **Manual Web search control** in the left sidebar under `New chat`
 
 Behavior:
 
 - Search results are cached for 24 hours in Blob.
-- If search is used, UI shows `🌐` badge and a collapsible Sources section.
-- If force-search is enabled and no results are found, backend returns a clear web-only message (no silent fallback to model-only answer).
+- If search is used, UI shows a search badge and a collapsible Sources section.
+- If force-search is enabled and no results are found, backend returns a clear web-only message instead of silently falling back.
 
 ## File Upload Q&A Flow
 
@@ -104,6 +111,38 @@ When a user uploads a document:
 4. Parsed chunks are reused from `neurarchat-parsed` if already available; otherwise backend parses and chunks the file, then saves parsed JSON.
 5. On `POST /api/chat`, backend loads session file chunks and injects top relevant chunks into the GPT system prompt.
 6. Response metadata includes `file_context_used`; frontend shows `📄` badge on that assistant message.
+
+Important session rule:
+
+- uploaded files are scoped to `user_id + session_id`
+- files added in one chat stay in that chat only
+- starting a new chat creates a separate file set
+
+## Agent Mode
+
+Agent Mode is a separate workflow from normal chat:
+
+1. User turns on `Agent mode` from the left sidebar under `Codex`.
+2. User submits a goal instead of a normal prompt.
+3. Backend creates a plan first and returns it to the UI.
+4. User explicitly clicks `Run plan`.
+5. Backend streams:
+   - plan
+   - step start
+   - step done / failed
+   - warning
+   - final summary
+   - done
+6. Plans and execution logs are stored in:
+   - `neurarchat-agents/{user_id}/plans/{plan_id}.json`
+   - `neurarchat-agents/{user_id}/logs/{plan_id}.json`
+
+Safety rules:
+
+- max 6 steps
+- loop detection stops repeated same-tool execution
+- failed steps are logged but do not abort the whole task
+- total execution timeout: 60 seconds
 
 ## Repository Layout
 
@@ -216,6 +255,26 @@ Frontend (`NeuralChat/frontend/.env`):
 - `DELETE /api/files/{filename}` (auth required)
   - Query: `session_id`
   - Returns: `{"message":"<filename> deleted successfully"}`
+
+- `POST /api/agent/plan` (auth required)
+  - Request: `{"goal":"...","session_id":"..."}`
+  - Returns: `{"plan":{"plan_id":"...","goal":"...","steps":[...]}}`
+
+- `POST /api/agent/run/{plan_id}` (auth required, NDJSON stream)
+  - Request: `{"session_id":"..."}`
+  - Stream chunks:
+    - `{"type":"plan","plan":{...}}`
+    - `{"type":"step_start","step_number":1,"description":"..."}`
+    - `{"type":"step_done","step_number":1,"result":"...","status":"done|failed","error":null}`
+    - `{"type":"warning","message":"..."}`
+    - `{"type":"summary","content":"..."}`
+    - `{"type":"done","plan_id":"...","steps_completed":2}`
+
+- `GET /api/agent/history` (auth required)
+  - Returns: `{"tasks":[{"plan_id","goal","created_at","steps_count"}]}`
+
+- `GET /api/agent/history/{plan_id}` (auth required)
+  - Returns: `{"plan":{...},"log":[...]}`
 
 ## Verification
 

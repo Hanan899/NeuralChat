@@ -1,6 +1,6 @@
 # NeuralChat
 
-Beginner-first AI chat app with secure login, streaming responses, deep memory, and optional web search with citations.
+Beginner-first AI workspace with secure login, streaming responses, deep memory, optional web search with citations, session-scoped file Q&A, and plan-first Agent Mode.
 
 ## Current Scope
 
@@ -10,6 +10,7 @@ Beginner-first AI chat app with secure login, streaming responses, deep memory, 
 - Storage: Azure Blob per user/session
 - Model: Azure OpenAI GPT-5 only (`model: "gpt-5"`, deployment example `gpt-5-chat`)
 - Search: Tavily with 24-hour Blob cache
+- Agent orchestration: LangChain + LangGraph
 
 ## Current Deployment
 
@@ -35,18 +36,24 @@ Beginner-first AI chat app with secure login, streaming responses, deep memory, 
   - `DELETE /api/me/memory`
 - Web search flow:
   - Auto decision (`should_search`)
-  - Force search from frontend toggle (`force_search`)
+  - Force search from sidebar control (`force_search`)
   - Search cache in `neurarchat-memory/search-cache/{hash}.json`
   - Source citations returned to frontend
 - Search UX:
-  - Nav status dot (`GET /api/search/status`)
-  - `🌐` badge on assistant messages when search is used
+  - sidebar `Web search` control under `New chat`
+  - search badge on assistant messages when search is used
   - Collapsible Sources panel below assistant message
 - File upload flow:
   - `POST /api/upload` (session-scoped multipart upload)
   - `GET /api/files` and `DELETE /api/files/{filename}`
   - Parsed chunk reuse in `neurarchat-parsed`
-  - `📄` badge on assistant messages when uploaded-file context is used
+  - file badge on assistant messages when uploaded-file context is used
+- Agent Mode:
+  - sidebar `Agent mode` control under `Codex`
+  - plan preview before execution
+  - explicit `Run plan`
+  - streamed step execution + final summary
+  - top-bar `Agents` control to open agent history
 
 ## What Happens When You Upload a Document
 
@@ -58,6 +65,41 @@ Beginner-first AI chat app with secure login, streaming responses, deep memory, 
    - if missing, file text is extracted and chunked, then saved
 5. Later on `/api/chat`, backend loads parsed chunks for that session and injects only the most relevant chunks into the GPT system prompt.
 6. If file context is used in the answer, stream metadata sets `file_context_used: true` and frontend shows `📄`.
+
+Session rule:
+
+- files belong to the active chat session only
+- same user, different chat = different file set
+- uploads are stored under `user_id/session_id`
+
+## What Agent Mode Does
+
+Normal chat:
+
+- user asks
+- model answers
+- request ends
+
+Agent Mode:
+
+1. user enters a goal
+2. backend creates a plan first
+3. user reviews the plan
+4. user clicks `Run plan`
+5. backend executes each step in order
+6. frontend shows live progress and final summary
+
+Supported tools in v1:
+
+- `web_search`
+- `read_file`
+- `memory_recall`
+- reasoning-only step (no tool)
+
+Storage:
+
+- `neurarchat-agents/{user_id}/plans/{plan_id}.json`
+- `neurarchat-agents/{user_id}/logs/{plan_id}.json`
 
 ## How Login Works
 
@@ -83,6 +125,10 @@ Where data is stored:
 - `POST /api/upload` (auth required, multipart)
 - `GET /api/files` (auth required)
 - `DELETE /api/files/{filename}` (auth required)
+- `POST /api/agent/plan` (auth required)
+- `POST /api/agent/run/{plan_id}` (auth required, NDJSON stream)
+- `GET /api/agent/history` (auth required)
+- `GET /api/agent/history/{plan_id}` (auth required)
 
 `/api/chat` request body:
 
@@ -118,6 +164,9 @@ Notes:
   - `{user_id}/{session_id}/{filename}`
 - Container `neurarchat-parsed`:
   - `{user_id}/{session_id}/{filename}.json`
+- Container `neurarchat-agents`:
+  - `{user_id}/plans/{plan_id}.json`
+  - `{user_id}/logs/{plan_id}.json`
 
 ## Folder Structure
 
@@ -158,6 +207,7 @@ npm run dev
 - `AZURE_BLOB_PROFILES_CONTAINER`
 - `AZURE_BLOB_UPLOADS_CONTAINER`
 - `AZURE_BLOB_PARSED_CONTAINER`
+- `AZURE_BLOB_AGENTS_CONTAINER`
 - `CLERK_JWKS_URL`
 - `CLERK_ISSUER` (recommended)
 - `CLERK_AUDIENCE` (optional)
@@ -181,6 +231,15 @@ See [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for:
 - CORS requirements for local frontend
 - Clerk JWT template setup for longer-lived smoke test tokens
 - secret/token handling rules
+
+## UI Notes
+
+Current layout decisions:
+
+- model selector stays in the top bar, not in the composer
+- `Web search` and `Agent mode` live in the left sidebar
+- top bar includes `Agents`, `Share`, model selector, and `Debug`
+- message composer stays focused on input, file attach, and send/stop
 
 ## Grip Workflow
 

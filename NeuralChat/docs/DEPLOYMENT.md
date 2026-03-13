@@ -15,6 +15,7 @@ Set these in Azure Application Settings:
 - `AZURE_BLOB_PROFILES_CONTAINER=neurarchat-profiles`
 - `AZURE_BLOB_UPLOADS_CONTAINER=neurarchat-uploads`
 - `AZURE_BLOB_PARSED_CONTAINER=neurarchat-parsed`
+- `AZURE_BLOB_AGENTS_CONTAINER=neurarchat-agents`
 - `CLERK_JWKS_URL`
 - `CLERK_ISSUER`
 - `CLERK_AUDIENCE` (leave empty unless you enforce audience validation)
@@ -41,6 +42,13 @@ Use this in `frontend/.env`:
 ```env
 VITE_API_BASE_URL=https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net
 ```
+
+Current frontend control layout:
+
+- sidebar: `Web search` under `New chat`
+- sidebar: `Agent mode` under `Codex`
+- top bar: `Agents`, `Share`, model selector, `Debug`
+- composer: `Add files`, textarea, send or stop
 
 ## 4. Clerk Smoke-Test Token Setup
 
@@ -77,6 +85,10 @@ Authenticated endpoints:
 - `GET /api/files?session_id=...`
 - `DELETE /api/files/{filename}?session_id=...`
 - streamed `POST /api/chat` using uploaded-file context
+- `POST /api/agent/plan`
+- streamed `POST /api/agent/run/{plan_id}`
+- `GET /api/agent/history`
+- `GET /api/agent/history/{plan_id}`
 
 ## 6. Verified Result On March 12, 2026
 
@@ -89,6 +101,9 @@ The deployed backend passed:
 - file listing
 - file deletion
 - streamed file-context chat with `file_context_used: true`
+- agent plan creation
+- streamed agent execution with `plan`, `step_start`, `step_done`, `summary`, and `done`
+- agent history retrieval from Blob-backed plan and log storage
 
 ## 7. Secret and Token Handling Rules
 
