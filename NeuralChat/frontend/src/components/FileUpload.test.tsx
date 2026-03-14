@@ -13,7 +13,9 @@ const {
   streamChatMock,
   getFilesMock,
   deleteFileMock,
+  deleteConversationSessionMock,
   uploadFileWithProgressMock,
+  generateConversationTitleMock,
   createAgentPlanMock,
   runAgentMock,
   getAgentHistoryMock,
@@ -33,12 +35,21 @@ const {
   }),
   getFilesMock: vi.fn().mockResolvedValue({ files: [] }),
   deleteFileMock: vi.fn().mockResolvedValue({ message: "deleted" }),
+  deleteConversationSessionMock: vi.fn().mockResolvedValue({
+    message: "Conversation deleted successfully",
+    conversation_deleted: true,
+    uploads_deleted: 0,
+    parsed_deleted: 0,
+    plans_deleted: 0,
+    logs_deleted: 0,
+  }),
   uploadFileWithProgressMock: vi.fn().mockResolvedValue({
     filename: "doc.txt",
     blob_path: "user/sess/doc.txt",
     chunk_count: 1,
     message: "File uploaded successfully",
   }),
+  generateConversationTitleMock: vi.fn().mockResolvedValue({ title: "Document Review" }),
   createAgentPlanMock: vi.fn(),
   runAgentMock: vi.fn(),
   getAgentHistoryMock: vi.fn().mockResolvedValue([]),
@@ -51,7 +62,9 @@ vi.mock("../api", () => ({
   streamChat: streamChatMock,
   getFiles: getFilesMock,
   deleteFile: deleteFileMock,
+  deleteConversationSession: deleteConversationSessionMock,
   uploadFileWithProgress: uploadFileWithProgressMock,
+  generateConversationTitle: generateConversationTitleMock,
 }));
 
 vi.mock("../api/agent", () => ({
@@ -164,6 +177,32 @@ describe("File upload and file context UI", () => {
     fireEvent.change(fileInput, { target: { files: [file] } });
 
     expect(await screen.findByText("doc.txt")).toBeInTheDocument();
+  });
+
+  it("passes naming context into file upload requests", async () => {
+    render(
+      <FileUpload
+        open={true}
+        authToken="token"
+        sessionId="session-1"
+        naming={{ userDisplayName: "Abdul Hanan", sessionTitle: "Roadmap review" }}
+        onClose={vi.fn()}
+      />
+    );
+
+    const fileInput = screen.getByLabelText("Browse files") as HTMLInputElement;
+    const file = new File(["hello"], "doc.txt", { type: "text/plain" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(uploadFileWithProgressMock).toHaveBeenCalledWith(
+        "token",
+        "session-1",
+        expect.any(File),
+        expect.any(Function),
+        { userDisplayName: "Abdul Hanan", sessionTitle: "Roadmap review" }
+      );
+    });
   });
 
   it("test_file_list_renders_uploaded_files", async () => {

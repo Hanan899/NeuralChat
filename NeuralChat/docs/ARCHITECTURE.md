@@ -40,13 +40,29 @@
 8. Persist assistant message + metadata (`search_used`, `file_context_used`, timing metrics, sources).
 9. Trigger async memory extraction/update in background.
 
+### Chat deletion path
+
+When a user deletes a chat from the frontend, the UI calls:
+
+- `DELETE /api/conversations/{session_id}`
+
+That endpoint performs real backend cleanup for that authenticated user and session:
+
+- removes the conversation blob
+- removes raw uploaded files for that session
+- removes parsed file chunks for that session
+- removes agent plans for that session
+- removes agent execution logs for that session
+
+It does not remove user-level profile memory, because profile memory is account-scoped rather than session-scoped.
+
 ## 4) File Upload Pipeline (`POST /api/upload`)
 
 1. Frontend sends multipart form with:
    - `session_id`
    - `file`
 2. Backend validates extension and size (max 25MB).
-3. Backend uploads raw file to `neurarchat-uploads/{user_id}/{session_id}/{filename}`.
+3. Backend uploads raw file to a session-scoped uploads path for that authenticated user and chat.
 4. Backend checks if parsed blob already exists:
    - if yes: reuse parsed chunks (no re-parse)
    - if no: parse text -> chunk text -> save to parsed blob
@@ -62,6 +78,7 @@
   - `PATCH /api/me/memory`
   - `DELETE /api/me/memory`
   - `POST /api/chat`
+  - `DELETE /api/conversations/{session_id}`
   - `POST /api/upload`
   - `GET /api/files?session_id=...`
   - `DELETE /api/files/{filename}?session_id=...`
@@ -114,9 +131,7 @@ Flow:
    - `warning`
    - `summary`
    - `done`
-8. Backend stores:
-   - `neurarchat-agents/{user_id}/plans/{plan_id}.json`
-   - `neurarchat-agents/{user_id}/logs/{plan_id}.json`
+8. Backend stores plan and execution log artifacts in session-scoped paths inside `neurarchat-agents`.
 
 Safety constraints:
 

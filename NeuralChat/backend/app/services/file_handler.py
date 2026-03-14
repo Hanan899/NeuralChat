@@ -12,6 +12,15 @@ from typing import Any
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContainerClient
+from app.services.blob_paths import (
+    blob_parts,
+    read_blob_text,
+    safe_identifier,
+    segment_matches_id,
+    session_segment,
+    user_segment,
+    write_json_with_migration,
+)
 
 try:  # pragma: no cover - optional dependency in some dev environments
     import fitz  # type: ignore
@@ -65,26 +74,79 @@ def _get_parsed_container() -> ContainerClient:
     return _get_container(container_name)
 
 
-# This helper keeps user, session, and filename keys safe for blob paths.
-def _safe_path_segment(raw_value: str) -> str:
-    normalized_value = re.sub(r"[^a-zA-Z0-9._-]", "_", str(raw_value))
-    return normalized_value or "unknown"
-
-
 # This helper normalizes incoming filenames so path traversal cannot happen.
 def _safe_filename(filename: str) -> str:
     leaf_name = Path(filename or "").name.strip()
-    return _safe_path_segment(leaf_name)
+    return safe_identifier(leaf_name)
 
 
 # This helper builds raw upload blob path for a specific user/session/filename tuple.
-def _uploads_blob_name(user_id: str, session_id: str, filename: str) -> str:
-    return f"{_safe_path_segment(user_id)}/{_safe_path_segment(session_id)}/{_safe_filename(filename)}"
+def _uploads_blob_name(
+    user_id: str,
+    session_id: str,
+    filename: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> str:
+    return f"{user_segment(user_id, display_name)}/{session_segment(session_id, session_title)}/{_safe_filename(filename)}"
 
 
 # This helper builds parsed blob path for a specific user/session/filename tuple.
-def _parsed_blob_name(user_id: str, session_id: str, filename: str) -> str:
-    return f"{_safe_path_segment(user_id)}/{_safe_path_segment(session_id)}/{_safe_filename(filename)}.json"
+def _parsed_blob_name(
+    user_id: str,
+    session_id: str,
+    filename: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> str:
+    return f"{user_segment(user_id, display_name)}/{session_segment(session_id, session_title)}/{_safe_filename(filename)}.json"
+
+
+# This helper builds the legacy user/session prefix used before readable naming.
+def _legacy_session_prefix(user_id: str, session_id: str) -> str:
+    return f"{safe_identifier(user_id)}/{safe_identifier(session_id)}/"
+
+
+# This helper checks whether one blob belongs to a given user/session tuple.
+def _matches_user_session_blob(blob_name: str, user_id: str, session_id: str) -> bool:
+    parts = blob_parts(blob_name)
+    if len(parts) < 3:
+        return False
+    return segment_matches_id(parts[0], user_id) and segment_matches_id(parts[1], session_id)
+
+
+# This helper lists all blob names belonging to one user/session tuple.
+def _list_matching_session_blobs(container: ContainerClient, user_id: str, session_id: str) -> list[str]:
+    matching_names: list[str] = []
+    for blob_item in container.list_blobs():
+        blob_name = str(getattr(blob_item, "name", "")).strip()
+        if blob_name and _matches_user_session_blob(blob_name, user_id, session_id):
+            matching_names.append(blob_name)
+    return matching_names
+
+
+# This helper finds an existing raw upload blob for one file in either old or new naming formats.
+def _find_existing_upload_blob(container: ContainerClient, user_id: str, session_id: str, filename: str) -> str | None:
+    safe_name = _safe_filename(filename)
+    for blob_name in _list_matching_session_blobs(container, user_id, session_id):
+        parts = blob_parts(blob_name)
+        if len(parts) >= 3 and parts[2] == safe_name:
+            return blob_name
+    return None
+
+
+# This helper finds an existing parsed blob for one file in either old or new naming formats.
+def _find_existing_parsed_blob(container: ContainerClient, user_id: str, session_id: str, filename: str) -> str | None:
+    safe_name = f"{_safe_filename(filename)}.json"
+    legacy_blob_name = f"{_legacy_session_prefix(user_id, session_id)}{safe_name}"
+    if read_blob_text(container, legacy_blob_name) is not None:
+        return legacy_blob_name
+
+    for blob_name in _list_matching_session_blobs(container, user_id, session_id):
+        parts = blob_parts(blob_name)
+        if len(parts) >= 3 and parts[2] == safe_name:
+            return blob_name
+    return None
 
 
 # This helper extracts lowercase keyword tokens for simple relevance matching.
@@ -104,13 +166,25 @@ def validate_file(filename: str, file_size_bytes: int) -> None:
 
 
 # This function uploads raw file bytes into the uploads container and returns the blob path.
-def upload_raw_file(user_id: str, session_id: str, filename: str, file_bytes: bytes) -> str:
+def upload_raw_file(
+    user_id: str,
+    session_id: str,
+    filename: str,
+    file_bytes: bytes,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> str:
     uploads_container = _get_uploads_container()
-    blob_name = _uploads_blob_name(user_id, session_id, filename)
-    blob_client = uploads_container.get_blob_client(blob=blob_name)
+    blob_name = _uploads_blob_name(user_id, session_id, filename, display_name, session_title)
+    old_blob_name = _find_existing_upload_blob(uploads_container, user_id, session_id, filename)
 
     # COST NOTE: Cool-tier blob upload writes are typically fractions of a cent per file.
-    blob_client.upload_blob(file_bytes, overwrite=True)
+    uploads_container.get_blob_client(blob=blob_name).upload_blob(file_bytes, overwrite=True)
+    if old_blob_name and old_blob_name != blob_name:
+        try:
+            uploads_container.get_blob_client(blob=old_blob_name).delete_blob(delete_snapshots="include")
+        except ResourceNotFoundError:
+            pass
     return blob_name
 
 
@@ -179,35 +253,48 @@ def chunk_text(full_text: str, chunk_size: int = 500, overlap: int = 50) -> list
 
 
 # This function stores parsed chunk payload JSON for re-use so duplicate parsing is avoided.
-def save_parsed_chunks(user_id: str, session_id: str, filename: str, chunks: list[str]) -> None:
+def save_parsed_chunks(
+    user_id: str,
+    session_id: str,
+    filename: str,
+    chunks: list[str],
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> None:
     parsed_container = _get_parsed_container()
-    blob_name = _parsed_blob_name(user_id, session_id, filename)
-    blob_client = parsed_container.get_blob_client(blob=blob_name)
+    blob_name = _parsed_blob_name(user_id, session_id, filename, display_name, session_title)
+    old_blob_name = _find_existing_parsed_blob(parsed_container, user_id, session_id, filename)
 
     payload = {
         "filename": _safe_filename(filename),
         "chunk_count": len(chunks),
         "chunks": chunks,
+        "user_id": user_id,
+        "display_name": display_name or user_id,
+        "session_id": session_id,
+        "session_title": session_title or session_id,
         "parsed_at": datetime.now(UTC).isoformat(),
     }
 
     # COST NOTE: Parsed JSON is saved once and reused to avoid repeated parse costs.
-    blob_client.upload_blob(
-        json.dumps(payload, ensure_ascii=True, indent=2),
-        overwrite=True,
-        content_type="application/json",
-    )
+    write_json_with_migration(parsed_container, blob_name, payload, old_blob_name=old_blob_name)
 
 
 # This function loads previously parsed chunks and returns None when no parsed blob exists.
-def load_parsed_chunks(user_id: str, session_id: str, filename: str) -> list[str] | None:
+def load_parsed_chunks(
+    user_id: str,
+    session_id: str,
+    filename: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> list[str] | None:
     parsed_container = _get_parsed_container()
-    blob_name = _parsed_blob_name(user_id, session_id, filename)
-    blob_client = parsed_container.get_blob_client(blob=blob_name)
-
-    try:
-        raw_payload = blob_client.download_blob().readall().decode("utf-8")
-    except ResourceNotFoundError:
+    canonical_blob_name = _parsed_blob_name(user_id, session_id, filename, display_name, session_title)
+    existing_blob_name = _find_existing_parsed_blob(parsed_container, user_id, session_id, filename)
+    if existing_blob_name is None:
+        return None
+    raw_payload = read_blob_text(parsed_container, existing_blob_name)
+    if raw_payload is None:
         return None
 
     try:
@@ -223,6 +310,12 @@ def load_parsed_chunks(user_id: str, session_id: str, filename: str) -> list[str
         return None
 
     normalized_chunks = [str(chunk).strip() for chunk in chunks if str(chunk).strip()]
+    if existing_blob_name != canonical_blob_name:
+        parsed_payload["user_id"] = user_id
+        parsed_payload["display_name"] = display_name or parsed_payload.get("display_name") or user_id
+        parsed_payload["session_id"] = session_id
+        parsed_payload["session_title"] = session_title or parsed_payload.get("session_title") or session_id
+        write_json_with_migration(parsed_container, canonical_blob_name, parsed_payload, old_blob_name=existing_blob_name)
     return normalized_chunks
 
 
@@ -257,20 +350,37 @@ def get_relevant_chunks(chunks: list[str], user_question: str, max_chunks: int =
 
 
 # This function lists all files uploaded by user for one session.
-def list_user_files(user_id: str, session_id: str) -> list[dict[str, str]]:
+def list_user_files(
+    user_id: str,
+    session_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> list[dict[str, str]]:
     uploads_container = _get_uploads_container()
-    prefix = f"{_safe_path_segment(user_id)}/{_safe_path_segment(session_id)}/"
+    canonical_prefix = f"{user_segment(user_id, display_name)}/{session_segment(session_id, session_title)}/"
 
     listed_files: list[dict[str, str]] = []
-    for blob_item in uploads_container.list_blobs(name_starts_with=prefix):
+    for blob_item in uploads_container.list_blobs():
         blob_name = str(getattr(blob_item, "name", ""))
-        if not blob_name:
+        if not blob_name or not _matches_user_session_blob(blob_name, user_id, session_id):
             continue
-        filename = blob_name.removeprefix(prefix)
+        parts = blob_parts(blob_name)
+        if len(parts) < 3:
+            continue
+        filename = parts[2]
         if not filename:
             continue
         uploaded_at_value = getattr(blob_item, "last_modified", None)
         uploaded_at = uploaded_at_value.isoformat() if uploaded_at_value else ""
+        canonical_blob_name = f"{canonical_prefix}{filename}"
+        if blob_name != canonical_blob_name:
+            payload_bytes = uploads_container.get_blob_client(blob=blob_name).download_blob().readall()
+            uploads_container.get_blob_client(blob=canonical_blob_name).upload_blob(payload_bytes, overwrite=True)
+            try:
+                uploads_container.get_blob_client(blob=blob_name).delete_blob(delete_snapshots="include")
+            except ResourceNotFoundError:
+                pass
+            blob_name = canonical_blob_name
         listed_files.append(
             {
                 "filename": filename,
@@ -284,12 +394,30 @@ def list_user_files(user_id: str, session_id: str) -> list[dict[str, str]]:
 
 
 # This function deletes both raw and parsed blobs for one user/session filename.
-def delete_user_file(user_id: str, session_id: str, filename: str) -> None:
+def delete_user_file(
+    user_id: str,
+    session_id: str,
+    filename: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> None:
     uploads_container = _get_uploads_container()
     parsed_container = _get_parsed_container()
 
-    uploads_blob_name = _uploads_blob_name(user_id, session_id, filename)
-    parsed_blob_name = _parsed_blob_name(user_id, session_id, filename)
+    uploads_blob_name = _find_existing_upload_blob(uploads_container, user_id, session_id, filename) or _uploads_blob_name(
+        user_id,
+        session_id,
+        filename,
+        display_name,
+        session_title,
+    )
+    parsed_blob_name = _find_existing_parsed_blob(parsed_container, user_id, session_id, filename) or _parsed_blob_name(
+        user_id,
+        session_id,
+        filename,
+        display_name,
+        session_title,
+    )
 
     uploads_blob_client = uploads_container.get_blob_client(blob=uploads_blob_name)
     parsed_blob_client = parsed_container.get_blob_client(blob=parsed_blob_name)
@@ -308,3 +436,66 @@ def delete_user_file(user_id: str, session_id: str, filename: str) -> None:
 
     if not raw_deleted:
         raise ValueError(f"File '{filename}' was not found.")
+
+
+# This function deletes every raw and parsed file blob for one user/session pair.
+def delete_session_files(
+    user_id: str,
+    session_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> dict[str, int]:
+    uploads_container = _get_uploads_container()
+    parsed_container = _get_parsed_container()
+    deleted_uploads = 0
+    deleted_parsed = 0
+    deleted_blob_names: set[tuple[str, str]] = set()
+
+    upload_blob_names = _list_matching_session_blobs(uploads_container, user_id, session_id)
+    parsed_blob_names = _list_matching_session_blobs(parsed_container, user_id, session_id)
+
+    canonical_prefix = f"{user_segment(user_id, display_name)}/{session_segment(session_id, session_title)}/"
+    legacy_prefix = _legacy_session_prefix(user_id, session_id)
+
+    for blob_name in upload_blob_names:
+        if ("uploads", blob_name) in deleted_blob_names:
+            continue
+        try:
+            uploads_container.get_blob_client(blob=blob_name).delete_blob(delete_snapshots="include")
+            deleted_uploads += 1
+            deleted_blob_names.add(("uploads", blob_name))
+        except ResourceNotFoundError:
+            continue
+
+    for blob_name in parsed_blob_names:
+        if ("parsed", blob_name) in deleted_blob_names:
+            continue
+        try:
+            parsed_container.get_blob_client(blob=blob_name).delete_blob(delete_snapshots="include")
+            deleted_parsed += 1
+            deleted_blob_names.add(("parsed", blob_name))
+        except ResourceNotFoundError:
+            continue
+
+    # Clean up any direct-prefix leftovers that may not have been enumerated via id-matching.
+    for prefix, container, counter_name in (
+        (canonical_prefix, uploads_container, "uploads"),
+        (legacy_prefix, uploads_container, "uploads"),
+        (canonical_prefix, parsed_container, "parsed"),
+        (legacy_prefix, parsed_container, "parsed"),
+    ):
+        for blob_item in container.list_blobs(name_starts_with=prefix):
+            blob_name = str(getattr(blob_item, "name", "")).strip()
+            if not blob_name or (counter_name, blob_name) in deleted_blob_names:
+                continue
+            try:
+                container.get_blob_client(blob=blob_name).delete_blob(delete_snapshots="include")
+                if counter_name == "uploads":
+                    deleted_uploads += 1
+                else:
+                    deleted_parsed += 1
+                deleted_blob_names.add((counter_name, blob_name))
+            except ResourceNotFoundError:
+                continue
+
+    return {"uploads_deleted": deleted_uploads, "parsed_deleted": deleted_parsed}

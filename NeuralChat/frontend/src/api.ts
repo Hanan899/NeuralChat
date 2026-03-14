@@ -20,8 +20,42 @@ export interface FilesResponse {
   files: UploadedFileItem[];
 }
 
+export interface ConversationTitleResponse {
+  title: string;
+}
+
+export interface DeleteConversationResponse {
+  message: string;
+  conversation_deleted: boolean;
+  uploads_deleted: number;
+  parsed_deleted: number;
+  plans_deleted: number;
+  logs_deleted: number;
+}
+
+export interface RequestNamingContext {
+  userDisplayName?: string;
+  sessionTitle?: string;
+}
+
 export function getApiBaseUrl(): string {
   return API_BASE_URL;
+}
+
+function buildProtectedHeaders(authToken: string, naming?: RequestNamingContext, includeJson = false): HeadersInit {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${authToken}`
+  };
+  if (includeJson) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (naming?.userDisplayName?.trim()) {
+    headers["X-User-Display-Name"] = naming.userDisplayName.trim();
+  }
+  if (naming?.sessionTitle?.trim()) {
+    headers["X-Session-Title"] = naming.sessionTitle.trim();
+  }
+  return headers;
 }
 
 export async function checkHealth(): Promise<boolean> {
@@ -33,7 +67,8 @@ export async function streamChat(
   payload: ChatRequest,
   authToken: string,
   onChunk: (chunk: StreamChunk) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  naming?: RequestNamingContext
 ): Promise<{
   requestId: string;
   responseMs: number;
@@ -49,10 +84,7 @@ export async function streamChat(
   try {
     response = await fetch(`${API_BASE_URL}/api/chat`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`
-      },
+      headers: buildProtectedHeaders(authToken, naming, true),
       body: JSON.stringify(payload),
       signal
     });
@@ -161,11 +193,9 @@ export async function checkSearchStatus(): Promise<boolean> {
   return payload.search_enabled === true;
 }
 
-export async function getMe(authToken: string): Promise<MeResponse> {
+export async function getMe(authToken: string, naming?: RequestNamingContext): Promise<MeResponse> {
   const response = await fetch(`${API_BASE_URL}/api/me`, {
-    headers: {
-      Authorization: `Bearer ${authToken}`
-    }
+    headers: buildProtectedHeaders(authToken, naming)
   });
   if (!response.ok) {
     const errorText = await response.text();
@@ -174,13 +204,28 @@ export async function getMe(authToken: string): Promise<MeResponse> {
   return (await response.json()) as MeResponse;
 }
 
-export async function patchMemory(authToken: string, key: string, value: string): Promise<MeResponse> {
+export async function generateConversationTitle(
+  authToken: string,
+  prompt: string,
+  reply: string,
+  naming?: RequestNamingContext
+): Promise<ConversationTitleResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/title`, {
+    method: "POST",
+    headers: buildProtectedHeaders(authToken, naming, true),
+    body: JSON.stringify({ prompt, reply })
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to generate conversation title.");
+  }
+  return (await response.json()) as ConversationTitleResponse;
+}
+
+export async function patchMemory(authToken: string, key: string, value: string, naming?: RequestNamingContext): Promise<MeResponse> {
   const response = await fetch(`${API_BASE_URL}/api/me/memory`, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`
-    },
+    headers: buildProtectedHeaders(authToken, naming, true),
     body: JSON.stringify({ key, value })
   });
   if (!response.ok) {
@@ -190,12 +235,10 @@ export async function patchMemory(authToken: string, key: string, value: string)
   return (await response.json()) as MeResponse;
 }
 
-export async function deleteMemory(authToken: string): Promise<{ message: string }> {
+export async function deleteMemory(authToken: string, naming?: RequestNamingContext): Promise<{ message: string }> {
   const response = await fetch(`${API_BASE_URL}/api/me/memory`, {
     method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${authToken}`
-    }
+    headers: buildProtectedHeaders(authToken, naming)
   });
   if (!response.ok) {
     const errorText = await response.text();
@@ -204,11 +247,9 @@ export async function deleteMemory(authToken: string): Promise<{ message: string
   return (await response.json()) as { message: string };
 }
 
-export async function getFiles(authToken: string, sessionId: string): Promise<FilesResponse> {
+export async function getFiles(authToken: string, sessionId: string, naming?: RequestNamingContext): Promise<FilesResponse> {
   const response = await fetch(`${API_BASE_URL}/api/files?session_id=${encodeURIComponent(sessionId)}`, {
-    headers: {
-      Authorization: `Bearer ${authToken}`
-    }
+    headers: buildProtectedHeaders(authToken, naming)
   });
   if (!response.ok) {
     const errorText = await response.text();
@@ -217,13 +258,16 @@ export async function getFiles(authToken: string, sessionId: string): Promise<Fi
   return (await response.json()) as FilesResponse;
 }
 
-export async function deleteFile(authToken: string, sessionId: string, filename: string): Promise<{ message: string }> {
+export async function deleteFile(
+  authToken: string,
+  sessionId: string,
+  filename: string,
+  naming?: RequestNamingContext
+): Promise<{ message: string }> {
   const encodedFilename = encodeURIComponent(filename);
   const response = await fetch(`${API_BASE_URL}/api/files/${encodedFilename}?session_id=${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${authToken}`
-    }
+    headers: buildProtectedHeaders(authToken, naming)
   });
   if (!response.ok) {
     const errorText = await response.text();
@@ -232,11 +276,28 @@ export async function deleteFile(authToken: string, sessionId: string, filename:
   return (await response.json()) as { message: string };
 }
 
+export async function deleteConversationSession(
+  authToken: string,
+  sessionId: string,
+  naming?: RequestNamingContext
+): Promise<DeleteConversationResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    headers: buildProtectedHeaders(authToken, naming),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to delete conversation.");
+  }
+  return (await response.json()) as DeleteConversationResponse;
+}
+
 export function uploadFileWithProgress(
   authToken: string,
   sessionId: string,
   file: File,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number) => void,
+  naming?: RequestNamingContext
 ): Promise<UploadResponse> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
@@ -246,6 +307,12 @@ export function uploadFileWithProgress(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE_URL}/api/upload`);
     xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
+    if (naming?.userDisplayName?.trim()) {
+      xhr.setRequestHeader("X-User-Display-Name", naming.userDisplayName.trim());
+    }
+    if (naming?.sessionTitle?.trim()) {
+      xhr.setRequestHeader("X-Session-Title", naming.sessionTitle.trim());
+    }
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) {
         return;

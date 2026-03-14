@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 
+import type { RequestNamingContext } from "../api";
 import { getAgentHistory, getAgentTask } from "../api/agent";
 import type { AgentStepResult, AgentTaskSummary } from "../types";
 
 interface AgentHistoryProps {
   authToken: string;
   open: boolean;
+  naming?: RequestNamingContext;
   onClose: () => void;
 }
 
@@ -15,7 +17,7 @@ interface ExpandedTaskState {
   error: string;
 }
 
-export function AgentHistory({ authToken, open, onClose }: AgentHistoryProps) {
+export function AgentHistory({ authToken, open, naming, onClose }: AgentHistoryProps) {
   const [tasks, setTasks] = useState<AgentTaskSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -31,7 +33,7 @@ export function AgentHistory({ authToken, open, onClose }: AgentHistoryProps) {
     setLoading(true);
     setLoadError("");
 
-    getAgentHistory(authToken)
+    getAgentHistory(authToken, naming)
       .then((historyItems) => {
         if (!cancelled) {
           setTasks(historyItems);
@@ -51,7 +53,7 @@ export function AgentHistory({ authToken, open, onClose }: AgentHistoryProps) {
     return () => {
       cancelled = true;
     };
-  }, [authToken, open]);
+  }, [authToken, naming, open]);
 
   async function toggleTask(planId: string) {
     if (expandedPlanId === planId) {
@@ -70,7 +72,7 @@ export function AgentHistory({ authToken, open, onClose }: AgentHistoryProps) {
     }));
 
     try {
-      const payload = await getAgentTask(authToken, planId);
+      const payload = await getAgentTask(authToken, planId, naming);
       setTaskDetails((previous) => ({
         ...previous,
         [planId]: { loading: false, log: payload.log, error: "" },

@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from "../api";
+import type { RequestNamingContext } from "../api";
 import type { AgentPlan, AgentStepResult, AgentTaskSummary } from "../types";
 
 export interface AgentRunCallbacks {
@@ -24,13 +25,38 @@ interface AgentTaskDetailResponse {
   log: AgentStepResult[];
 }
 
-export async function createAgentPlan(authToken: string, goal: string, sessionId: string): Promise<AgentPlan> {
+export async function createAgentPlan(
+  authToken: string,
+  goal: string,
+  sessionId: string,
+  naming?: RequestNamingContext
+): Promise<AgentPlan> {
+  return createAgentPlanWithNaming(authToken, goal, sessionId, naming);
+}
+
+function buildAgentHeaders(authToken: string, naming?: RequestNamingContext): HeadersInit {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${authToken}`,
+    "Content-Type": "application/json",
+  };
+  if (naming?.userDisplayName?.trim()) {
+    headers["X-User-Display-Name"] = naming.userDisplayName.trim();
+  }
+  if (naming?.sessionTitle?.trim()) {
+    headers["X-Session-Title"] = naming.sessionTitle.trim();
+  }
+  return headers;
+}
+
+export async function createAgentPlanWithNaming(
+  authToken: string,
+  goal: string,
+  sessionId: string,
+  naming?: RequestNamingContext
+): Promise<AgentPlan> {
   const response = await fetch(`${getApiBaseUrl()}/api/agent/plan`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
+    headers: buildAgentHeaders(authToken, naming),
     body: JSON.stringify({ goal, session_id: sessionId }),
   });
 
@@ -48,16 +74,14 @@ export async function runAgent(
   planId: string,
   sessionId: string,
   callbacks: AgentRunCallbacks,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  naming?: RequestNamingContext
 ): Promise<void> {
   let response: Response;
   try {
     response = await fetch(`${getApiBaseUrl()}/api/agent/run/${encodeURIComponent(planId)}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`,
-      },
+      headers: buildAgentHeaders(authToken, naming),
       body: JSON.stringify({ session_id: sessionId }),
       signal,
     });
@@ -162,11 +186,9 @@ export async function runAgent(
   }
 }
 
-export async function getAgentHistory(authToken: string): Promise<AgentTaskSummary[]> {
+export async function getAgentHistory(authToken: string, naming?: RequestNamingContext): Promise<AgentTaskSummary[]> {
   const response = await fetch(`${getApiBaseUrl()}/api/agent/history`, {
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-    },
+    headers: buildAgentHeaders(authToken, naming),
   });
 
   if (!response.ok) {
@@ -178,11 +200,9 @@ export async function getAgentHistory(authToken: string): Promise<AgentTaskSumma
   return payload.tasks;
 }
 
-export async function getAgentTask(authToken: string, planId: string): Promise<AgentTaskDetailResponse> {
+export async function getAgentTask(authToken: string, planId: string, naming?: RequestNamingContext): Promise<AgentTaskDetailResponse> {
   const response = await fetch(`${getApiBaseUrl()}/api/agent/history/${encodeURIComponent(planId)}`, {
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-    },
+    headers: buildAgentHeaders(authToken, naming),
   });
 
   if (!response.ok) {

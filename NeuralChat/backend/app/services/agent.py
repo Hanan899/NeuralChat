@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 import uuid
 import asyncio
@@ -19,6 +18,15 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
+from app.services.blob_paths import (
+    blob_parts,
+    read_blob_text,
+    safe_identifier,
+    segment_matches_id,
+    session_segment,
+    user_segment,
+    write_json_with_migration,
+)
 from app.services.file_handler import get_relevant_chunks, list_user_files, load_parsed_chunks
 from app.services.memory import load_profile
 from app.services.search import search_web
@@ -66,20 +74,76 @@ def _get_agents_container() -> ContainerClient:
     return container_client
 
 
-# This helper converts arbitrary ids into safe path segments for blob storage.
-def _safe_segment(raw_value: str) -> str:
-    normalized_value = re.sub(r"[^a-zA-Z0-9._-]", "_", str(raw_value))
-    return normalized_value or "unknown"
-
-
 # This helper builds the blob path for one saved agent plan.
-def _plan_blob_name(user_id: str, plan_id: str) -> str:
-    return f"{_safe_segment(user_id)}/plans/{_safe_segment(plan_id)}.json"
+def _plan_blob_name(
+    user_id: str,
+    plan_id: str,
+    display_name: str | None = None,
+    session_id: str | None = None,
+    session_title: str | None = None,
+) -> str:
+    if session_id:
+        return f"{user_segment(user_id, display_name)}/{session_segment(session_id, session_title)}/plans/{safe_identifier(plan_id)}.json"
+    return f"{user_segment(user_id, display_name)}/plans/{safe_identifier(plan_id)}.json"
 
 
 # This helper builds the blob path for one saved execution log.
-def _log_blob_name(user_id: str, plan_id: str) -> str:
-    return f"{_safe_segment(user_id)}/logs/{_safe_segment(plan_id)}.json"
+def _log_blob_name(
+    user_id: str,
+    plan_id: str,
+    display_name: str | None = None,
+    session_id: str | None = None,
+    session_title: str | None = None,
+) -> str:
+    if session_id:
+        return f"{user_segment(user_id, display_name)}/{session_segment(session_id, session_title)}/logs/{safe_identifier(plan_id)}.json"
+    return f"{user_segment(user_id, display_name)}/logs/{safe_identifier(plan_id)}.json"
+
+
+# This helper checks whether an agent blob belongs to the target user and optionally session.
+def _matches_agent_blob(blob_name: str, user_id: str, plan_id: str | None = None) -> bool:
+    parts = blob_parts(blob_name)
+    if len(parts) < 3:
+        return False
+    if not segment_matches_id(parts[0], user_id):
+        return False
+    if plan_id is None:
+        return True
+    return Path(parts[-1]).stem == safe_identifier(plan_id)
+
+
+# This helper finds an existing plan blob in either old or new naming formats.
+def _find_existing_plan_blob(agents_container: ContainerClient, user_id: str, plan_id: str) -> str | None:
+    legacy_blob_name = f"{safe_identifier(user_id)}/plans/{safe_identifier(plan_id)}.json"
+    if read_blob_text(agents_container, legacy_blob_name) is not None:
+        return legacy_blob_name
+
+    for blob_item in agents_container.list_blobs():
+        blob_name = str(getattr(blob_item, "name", "")).strip()
+        parts = blob_parts(blob_name)
+        if not blob_name or not _matches_agent_blob(blob_name, user_id, plan_id):
+            continue
+        if "plans" not in parts:
+            continue
+        return blob_name
+    return None
+
+
+# This helper finds an existing execution log blob in either old or new naming formats.
+def _find_existing_log_blob(agents_container: ContainerClient, user_id: str, plan_id: str) -> str | None:
+    legacy_blob_name = f"{safe_identifier(user_id)}/logs/{safe_identifier(plan_id)}.json"
+    if read_blob_text(agents_container, legacy_blob_name) is not None:
+        return legacy_blob_name
+
+    for blob_item in agents_container.list_blobs():
+        blob_name = str(getattr(blob_item, "name", "")).strip()
+        parts = blob_parts(blob_name)
+        if not blob_name or not _matches_agent_blob(blob_name, user_id, plan_id):
+            continue
+        if "logs" not in parts:
+            continue
+        return blob_name
+    return None
 
 
 # This helper extracts plain text from LangChain message content values.
@@ -192,18 +256,24 @@ def _format_search_step_result(results: list[dict[str, str]]) -> str:
 
 
 # This helper loads parsed session files and returns the most relevant text for the current agent step.
-def _read_session_file_context(user_id: str, session_id: str, step: dict[str, Any]) -> str:
+def _read_session_file_context(
+    user_id: str,
+    session_id: str,
+    step: dict[str, Any],
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> str:
     requested_filename = str(step.get("tool_input") or "").strip()
     search_text = requested_filename or str(step.get("description") or "").strip()
 
     if requested_filename:
-        parsed_chunks = load_parsed_chunks(user_id, session_id, requested_filename)
+        parsed_chunks = load_parsed_chunks(user_id, session_id, requested_filename, display_name, session_title)
         if not parsed_chunks:
             raise ValueError(f"No parsed content found for file '{requested_filename}'.")
         relevant_chunks = get_relevant_chunks(parsed_chunks, search_text, max_chunks=3)
         return f"File: {requested_filename}\n" + "\n\n".join(relevant_chunks)
 
-    session_files = list_user_files(user_id, session_id)
+    session_files = list_user_files(user_id, session_id, display_name, session_title)
     if not session_files:
         raise ValueError("No uploaded files are available in this chat session.")
 
@@ -212,7 +282,7 @@ def _read_session_file_context(user_id: str, session_id: str, step: dict[str, An
         filename = str(session_file.get("filename", "")).strip()
         if not filename:
             continue
-        parsed_chunks = load_parsed_chunks(user_id, session_id, filename)
+        parsed_chunks = load_parsed_chunks(user_id, session_id, filename, display_name, session_title)
         if parsed_chunks:
             all_chunks.extend(parsed_chunks)
 
@@ -271,27 +341,46 @@ async def create_task_plan(user_goal: str, available_tools: list[str]) -> dict[s
 
 
 # This function saves one agent plan JSON document into blob storage.
-def save_task_plan(user_id: str, plan: dict[str, Any]) -> None:
+def save_task_plan(
+    user_id: str,
+    plan: dict[str, Any],
+    display_name: str | None = None,
+    session_id: str | None = None,
+    session_title: str | None = None,
+) -> None:
     agents_container = _get_agents_container()
     plan_id = str(plan.get("plan_id", "")).strip()
     if not plan_id:
         raise ValueError("plan_id is required to save an agent plan.")
-    blob_client = agents_container.get_blob_client(blob=_plan_blob_name(user_id, plan_id))
-    blob_client.upload_blob(
-        json.dumps(plan, ensure_ascii=True, indent=2),
-        overwrite=True,
-        content_type="application/json",
+    payload = dict(plan)
+    payload["user_id"] = user_id
+    payload["display_name"] = display_name or payload.get("display_name") or user_id
+    if session_id:
+        payload["session_id"] = session_id
+        payload["session_title"] = session_title or payload.get("session_title") or session_id
+    write_json_with_migration(
+        agents_container,
+        _plan_blob_name(user_id, plan_id, display_name, session_id, session_title),
+        payload,
+        old_blob_name=_find_existing_plan_blob(agents_container, user_id, plan_id),
     )
 
 
 # This function loads one saved plan and safely returns None when the blob does not exist.
-def load_task_plan(user_id: str, plan_id: str) -> dict[str, Any] | None:
+def load_task_plan(
+    user_id: str,
+    plan_id: str,
+    display_name: str | None = None,
+    session_id: str | None = None,
+    session_title: str | None = None,
+) -> dict[str, Any] | None:
     agents_container = _get_agents_container()
-    blob_client = agents_container.get_blob_client(blob=_plan_blob_name(user_id, plan_id))
-
-    try:
-        raw_plan = blob_client.download_blob().readall().decode("utf-8")
-    except ResourceNotFoundError:
+    canonical_blob_name = _plan_blob_name(user_id, plan_id, display_name, session_id, session_title) if session_id else None
+    existing_blob_name = _find_existing_plan_blob(agents_container, user_id, plan_id)
+    if existing_blob_name is None:
+        return None
+    raw_plan = read_blob_text(agents_container, existing_blob_name)
+    if raw_plan is None:
         return None
 
     try:
@@ -300,12 +389,36 @@ def load_task_plan(user_id: str, plan_id: str) -> dict[str, Any] | None:
         return None
 
     if isinstance(parsed_plan, dict):
+        parsed_plan.setdefault("user_id", user_id)
+        parsed_plan.setdefault("display_name", display_name or user_id)
+        resolved_session_id = str(parsed_plan.get("session_id", "")).strip() or session_id
+        resolved_session_title = str(parsed_plan.get("session_title", "")).strip() or session_title
+        if resolved_session_id:
+            parsed_plan["session_id"] = resolved_session_id
+            parsed_plan["session_title"] = resolved_session_title or resolved_session_id
+            target_blob_name = _plan_blob_name(
+                user_id,
+                plan_id,
+                display_name or parsed_plan.get("display_name"),
+                resolved_session_id,
+                resolved_session_title,
+            )
+            if existing_blob_name != target_blob_name:
+                write_json_with_migration(agents_container, target_blob_name, parsed_plan, old_blob_name=existing_blob_name)
         return parsed_plan
     return None
 
 
 # This function executes one planned step and always returns a structured result instead of raising.
-async def execute_step(step: dict[str, Any], user_id: str, session_id: str, goal: str = "", execution_log: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+async def execute_step(
+    step: dict[str, Any],
+    user_id: str,
+    session_id: str,
+    goal: str = "",
+    execution_log: list[dict[str, Any]] | None = None,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> dict[str, Any]:
     execution_log = execution_log or []
     step_number = int(step.get("step_number", 0) or 0)
     description = str(step.get("description", "")).strip()
@@ -327,7 +440,7 @@ async def execute_step(step: dict[str, Any], user_id: str, session_id: str, goal
             }
 
         if tool == "read_file":
-            file_result = await asyncio.to_thread(_read_session_file_context, user_id, session_id, step)
+            file_result = await asyncio.to_thread(_read_session_file_context, user_id, session_id, step, display_name, session_title)
             return {
                 "step_number": step_number,
                 "description": description,
@@ -339,7 +452,7 @@ async def execute_step(step: dict[str, Any], user_id: str, session_id: str, goal
             }
 
         if tool == "memory_recall":
-            profile = await asyncio.to_thread(load_profile, user_id)
+            profile = await asyncio.to_thread(load_profile, user_id, display_name)
             memory_text = json.dumps(profile, ensure_ascii=True) if profile else "No stored memory found for this user."
             return {
                 "step_number": step_number,
@@ -374,29 +487,48 @@ async def execute_step(step: dict[str, Any], user_id: str, session_id: str, goal
 
 
 # This function saves the full execution log for one completed or partial agent run.
-def save_execution_log(user_id: str, plan_id: str, log: list[dict[str, Any]]) -> None:
+def save_execution_log(
+    user_id: str,
+    plan_id: str,
+    log: list[dict[str, Any]],
+    display_name: str | None = None,
+    session_id: str | None = None,
+    session_title: str | None = None,
+) -> None:
     agents_container = _get_agents_container()
-    blob_client = agents_container.get_blob_client(blob=_log_blob_name(user_id, plan_id))
     payload = {
         "plan_id": plan_id,
+        "user_id": user_id,
+        "display_name": display_name or user_id,
         "updated_at": datetime.now(UTC).isoformat(),
         "log": log,
     }
-    blob_client.upload_blob(
-        json.dumps(payload, ensure_ascii=True, indent=2),
-        overwrite=True,
-        content_type="application/json",
+    if session_id:
+        payload["session_id"] = session_id
+        payload["session_title"] = session_title or session_id
+    write_json_with_migration(
+        agents_container,
+        _log_blob_name(user_id, plan_id, display_name, session_id, session_title),
+        payload,
+        old_blob_name=_find_existing_log_blob(agents_container, user_id, plan_id),
     )
 
 
 # This function loads one saved execution log and returns an empty list when no log is found.
-def load_execution_log(user_id: str, plan_id: str) -> list[dict[str, Any]]:
+def load_execution_log(
+    user_id: str,
+    plan_id: str,
+    display_name: str | None = None,
+    session_id: str | None = None,
+    session_title: str | None = None,
+) -> list[dict[str, Any]]:
     agents_container = _get_agents_container()
-    blob_client = agents_container.get_blob_client(blob=_log_blob_name(user_id, plan_id))
-
-    try:
-        raw_log = blob_client.download_blob().readall().decode("utf-8")
-    except ResourceNotFoundError:
+    canonical_blob_name = _log_blob_name(user_id, plan_id, display_name, session_id, session_title) if session_id else None
+    existing_blob_name = _find_existing_log_blob(agents_container, user_id, plan_id)
+    if existing_blob_name is None:
+        return []
+    raw_log = read_blob_text(agents_container, existing_blob_name)
+    if raw_log is None:
         return []
 
     try:
@@ -405,6 +537,20 @@ def load_execution_log(user_id: str, plan_id: str) -> list[dict[str, Any]]:
         return []
 
     if isinstance(parsed_log, dict) and isinstance(parsed_log.get("log"), list):
+        resolved_session_id = str(parsed_log.get("session_id", "")).strip() or session_id
+        resolved_session_title = str(parsed_log.get("session_title", "")).strip() or session_title
+        if resolved_session_id:
+            parsed_log["session_id"] = resolved_session_id
+            parsed_log["session_title"] = resolved_session_title or resolved_session_id
+            target_blob_name = _log_blob_name(
+                user_id,
+                plan_id,
+                display_name or parsed_log.get("display_name"),
+                resolved_session_id,
+                resolved_session_title,
+            )
+            if existing_blob_name != target_blob_name:
+                write_json_with_migration(agents_container, target_blob_name, parsed_log, old_blob_name=existing_blob_name)
         return [entry for entry in parsed_log["log"] if isinstance(entry, dict)]
     return []
 
@@ -412,12 +558,14 @@ def load_execution_log(user_id: str, plan_id: str) -> list[dict[str, Any]]:
 # This function lists saved plans for one user so the frontend can render task history.
 def list_task_plans(user_id: str) -> list[dict[str, Any]]:
     agents_container = _get_agents_container()
-    prefix = f"{_safe_segment(user_id)}/plans/"
     tasks: list[dict[str, Any]] = []
 
-    for blob_item in agents_container.list_blobs(name_starts_with=prefix):
+    for blob_item in agents_container.list_blobs():
         blob_name = str(getattr(blob_item, "name", "")).strip()
-        if not blob_name:
+        parts = blob_parts(blob_name)
+        if not blob_name or not _matches_agent_blob(blob_name, user_id):
+            continue
+        if "plans" not in parts:
             continue
         plan_id = Path(blob_name).stem
         plan = load_task_plan(user_id, plan_id)
@@ -434,6 +582,52 @@ def list_task_plans(user_id: str) -> list[dict[str, Any]]:
 
     tasks.sort(key=lambda task: task.get("created_at", ""), reverse=True)
     return tasks
+
+
+# This function deletes all plan and execution-log blobs linked to one user/session pair.
+def delete_session_agent_artifacts(user_id: str, session_id: str) -> dict[str, int]:
+    agents_container = _get_agents_container()
+    deleted_plans = 0
+    deleted_logs = 0
+    deleted_blob_names: set[str] = set()
+
+    for blob_item in agents_container.list_blobs():
+        blob_name = str(getattr(blob_item, "name", "")).strip()
+        if not blob_name or blob_name in deleted_blob_names or not _matches_agent_blob(blob_name, user_id):
+            continue
+
+        raw_payload = read_blob_text(agents_container, blob_name)
+        if raw_payload is None:
+            continue
+
+        try:
+            parsed_payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            continue
+
+        if not isinstance(parsed_payload, dict):
+            continue
+
+        payload_session_id = str(parsed_payload.get("session_id", "")).strip()
+        if payload_session_id != session_id:
+            continue
+
+        try:
+            agents_container.get_blob_client(blob=blob_name).delete_blob(delete_snapshots="include")
+            deleted_blob_names.add(blob_name)
+        except ResourceNotFoundError:
+            continue
+
+        parts = blob_parts(blob_name)
+        if "plans" in parts:
+            deleted_plans += 1
+        elif "logs" in parts:
+            deleted_logs += 1
+
+    return {
+        "plans_deleted": deleted_plans,
+        "logs_deleted": deleted_logs,
+    }
 
 
 # This function detects repeated same-tool same-input patterns so the agent can stop infinite loops.
@@ -496,6 +690,8 @@ def _build_agent_graph() -> Any:
             session_id=state["session_id"],
             goal=state["plan"]["goal"],
             execution_log=state["execution_log"],
+            display_name=state.get("display_name"),
+            session_title=state.get("session_title"),
         )
         updated_log = state["execution_log"] + [result]
         return {
@@ -553,12 +749,20 @@ def _build_agent_graph() -> Any:
 
 
 # This function runs the compiled LangGraph and yields streamed progress events for the API layer.
-async def stream_agent_execution(plan: dict[str, Any], user_id: str, session_id: str) -> AsyncIterator[dict[str, Any]]:
+async def stream_agent_execution(
+    plan: dict[str, Any],
+    user_id: str,
+    session_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> AsyncIterator[dict[str, Any]]:
     compiled_graph = _build_agent_graph()
     graph_state = {
         "plan": plan,
         "user_id": user_id,
+        "display_name": display_name,
         "session_id": session_id,
+        "session_title": session_title,
         "current_step_index": 0,
         "execution_log": [],
         "stop_execution": False,

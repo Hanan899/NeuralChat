@@ -12,6 +12,7 @@ const {
   getFilesMock,
   deleteFileMock,
   uploadFileWithProgressMock,
+  generateConversationTitleMock,
   authState,
   getTokenMock,
 } = vi.hoisted(() => ({
@@ -29,6 +30,7 @@ const {
       chunk_count: 1,
       message: "File uploaded successfully",
     }),
+    generateConversationTitleMock: vi.fn().mockResolvedValue({ title: "Profile Memory" }),
     authState: { signedIn: true },
     getTokenMock: vi.fn().mockResolvedValue("token"),
   }));
@@ -42,7 +44,16 @@ vi.mock("../api", () => ({
   streamChat: streamChatMock,
   getFiles: getFilesMock,
   deleteFile: deleteFileMock,
+  deleteConversationSession: vi.fn().mockResolvedValue({
+    message: "Conversation deleted successfully",
+    conversation_deleted: true,
+    uploads_deleted: 0,
+    parsed_deleted: 0,
+    plans_deleted: 0,
+    logs_deleted: 0,
+  }),
   uploadFileWithProgress: uploadFileWithProgressMock,
+  generateConversationTitle: generateConversationTitleMock,
 }));
 
 vi.mock("@clerk/clerk-react", () => ({
@@ -88,7 +99,14 @@ describe("MemoryPanel", () => {
       profile: { name: "Ali", job: "Engineer" },
     });
 
-    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
 
     expect(await screen.findByText("name")).toBeInTheDocument();
     expect(screen.getByText("Ali")).toBeInTheDocument();
@@ -98,7 +116,14 @@ describe("MemoryPanel", () => {
 
   it("test_memory_panel_shows_empty_state_when_no_facts", async () => {
     getMeMock.mockResolvedValue({ user_id: "user_1", profile: {} });
-    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
     expect(await screen.findByText("No memory yet — start chatting!")).toBeInTheDocument();
   });
 
@@ -110,7 +135,14 @@ describe("MemoryPanel", () => {
         )
     );
 
-    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
     expect(screen.getAllByTestId("memory-skeleton").length).toBeGreaterThan(0);
     expect(await screen.findByText("Ali")).toBeInTheDocument();
   });
@@ -121,7 +153,14 @@ describe("MemoryPanel", () => {
       profile: { preferences: { style: "concise", language: "en" } }
     });
 
-    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
 
     expect(await screen.findByText("preferences")).toBeInTheDocument();
     expect(screen.getByText("style: concise | language: en")).toBeInTheDocument();
@@ -137,7 +176,14 @@ describe("MemoryPanel", () => {
       }
     });
 
-    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
 
     expect(await screen.findByText("city")).toBeInTheDocument();
     expect(screen.queryByText("user_id")).not.toBeInTheDocument();
@@ -148,7 +194,14 @@ describe("MemoryPanel", () => {
     getMeMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Ali" } });
     patchMemoryMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Bob" } });
 
-    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
 
     await screen.findByText("Ali");
     await userEvent.click(screen.getByText("Edit"));
@@ -159,22 +212,46 @@ describe("MemoryPanel", () => {
     fireEvent.keyDown(editInput, { key: "Enter", code: "Enter" });
 
     await waitFor(() => {
-      expect(patchMemoryMock).toHaveBeenCalledWith("token", "name", "Bob");
+      expect(patchMemoryMock).toHaveBeenCalledWith("token", "name", "Bob", { userDisplayName: "Abdul Hanan" });
     });
   });
 
   it("test_clear_all_memory_calls_delete_endpoint_and_clears_ui", async () => {
     getMeMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Ali" } });
 
-    render(<MemoryPanel isOpen={true} onClose={() => undefined} getAuthToken={getTokenMock} />);
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
     await screen.findByText("Ali");
 
     await userEvent.click(screen.getByText("Clear All Memory"));
 
     await waitFor(() => {
-      expect(deleteMemoryMock).toHaveBeenCalledWith("token");
+      expect(deleteMemoryMock).toHaveBeenCalledWith("token", { userDisplayName: "Abdul Hanan" });
     });
     expect(await screen.findByText("No memory yet — start chatting!")).toBeInTheDocument();
+  });
+
+  it("sends naming context with memory requests", async () => {
+    getMeMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Ali" } });
+    patchMemoryMock.mockResolvedValue({ user_id: "user_1", profile: { name: "Bob" } });
+
+    render(
+      <MemoryPanel
+        isOpen={true}
+        onClose={() => undefined}
+        getAuthToken={getTokenMock}
+        naming={{ userDisplayName: "Abdul Hanan" }}
+      />
+    );
+
+    await screen.findByText("Ali");
+    expect(getMeMock).toHaveBeenCalledWith("token", { userDisplayName: "Abdul Hanan" });
   });
 
 });

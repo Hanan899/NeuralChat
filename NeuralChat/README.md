@@ -29,6 +29,7 @@ Beginner-first AI workspace with secure login, streaming responses, deep memory,
 
 - Authenticated streaming chat (`token`, `done`, `error` chunks)
 - User-scoped conversation persistence
+- Real backend chat deletion through `DELETE /api/conversations/{session_id}`
 - Deep Memory profile extraction and injection into prompts
 - Memory controls:
   - `GET /api/me`
@@ -59,7 +60,7 @@ Beginner-first AI workspace with secure login, streaming responses, deep memory,
 
 1. Frontend sends multipart data to `POST /api/upload` with `session_id` + `file`.
 2. Backend validates extension and max size (25MB).
-3. Raw file is saved to Blob: `neurarchat-uploads/{user_id}/{session_id}/{filename}`.
+3. Raw file is saved to a session-scoped Blob path for that authenticated user and chat.
 4. Backend checks parsed cache in `neurarchat-parsed`:
    - if found, parsed chunks are reused
    - if missing, file text is extracted and chunked, then saved
@@ -98,8 +99,32 @@ Supported tools in v1:
 
 Storage:
 
-- `neurarchat-agents/{user_id}/plans/{plan_id}.json`
-- `neurarchat-agents/{user_id}/logs/{plan_id}.json`
+- agent plans and logs are stored in session-scoped paths inside `neurarchat-agents`
+
+## What Happens When You Delete a Chat
+
+Deleting a chat is a backend cleanup operation, not only a frontend removal.
+
+The frontend calls:
+
+- `DELETE /api/conversations/{session_id}`
+
+The backend deletes the authenticated user's session-scoped artifacts:
+
+- conversation history for that session
+- raw uploaded files for that session
+- parsed file chunks for that session
+- agent plans for that session
+- agent execution logs for that session
+
+It intentionally does not delete:
+
+- user profile memory in `neurarchat-profiles`
+
+Reason:
+
+- profile memory belongs to the user account
+- chat data belongs to an individual session
 
 ## How Login Works
 
@@ -122,6 +147,7 @@ Where data is stored:
 - `PATCH /api/me/memory` (auth required)
 - `DELETE /api/me/memory` (auth required)
 - `POST /api/chat` (auth required)
+- `DELETE /api/conversations/{session_id}` (auth required)
 - `POST /api/upload` (auth required, multipart)
 - `GET /api/files` (auth required)
 - `DELETE /api/files/{filename}` (auth required)
