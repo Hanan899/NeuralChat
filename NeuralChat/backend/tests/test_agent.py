@@ -83,9 +83,9 @@ async def test_create_task_plan_returns_valid_plan_structure():
     assert plan["steps"][0]["tool"] == "web_search"
 
 
-# This test checks malformed planner output because the backend must fail safely instead of crashing.
+# This test checks malformed planner output because the backend must fail safely and still produce a usable fallback step.
 @pytest.mark.asyncio
-async def test_create_task_plan_returns_empty_steps_on_malformed_gpt_response():
+async def test_create_task_plan_returns_fallback_step_on_malformed_gpt_response():
     response = MagicMock()
     response.content = "Sure here is your plan"
     model = MagicMock()
@@ -95,7 +95,9 @@ async def test_create_task_plan_returns_empty_steps_on_malformed_gpt_response():
         plan = await agent.create_task_plan("Research AI", agent.AVAILABLE_AGENT_TOOLS)
 
     assert plan["goal"] == "Research AI"
-    assert plan["steps"] == []
+    assert len(plan["steps"]) == 1
+    assert plan["steps"][0]["tool"] is None
+    assert "Reason through the goal" in plan["steps"][0]["description"]
 
 
 # This test checks the hard 6-step safety cap because plan size must stay bounded.
