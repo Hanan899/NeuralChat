@@ -7,16 +7,22 @@ __pycache__/
 *.py[cod]
 .venv/
 .vscode/
+data/
+__queuestorage__/
+__blobstorage__/
+*.pyc
+local.settings.json
+.python_packages/
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/src/__tests__/
 
 # Local settings and runtime files
 backend/local.settings.json
 backend/data/conversations/*.json
 frontend/.env
-backend/pytest.ini
 
 # Keep templates/examples in repo
 !backend/local.settings.example.json
