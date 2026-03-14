@@ -20,10 +20,10 @@ As of **March 12, 2026**, the following are implemented and working:
 - Clerk login/logout frontend shell (signed-in and signed-out views)
 - Backend JWT verification for Clerk bearer tokens via JWKS
 - Public `GET /api/health` and `GET /api/search/status`
-- Auth-required `POST /api/chat`, `GET /api/me`, `PATCH /api/me/memory`, `DELETE /api/me/memory`
+- Auth-required `POST /api/chat`, `GET /api/me`, `PATCH /api/me/memory`, `DELETE /api/me/memory`, `DELETE /api/conversations/{session_id}`
 - Auth-required file APIs: `POST /api/upload`, `GET /api/files`, `DELETE /api/files/{filename}`
 - NDJSON streaming (`token`, `done`, `error`) with metrics (`response_ms`, `first_token_ms`, `tokens_emitted`, `status`)
-- Azure Blob conversation persistence scoped by `user_id/session_id`
+- Azure Blob conversation persistence scoped by stable `user_id/session_id` and cleaned up by backend when a chat is deleted
 - Deep Memory profile facts extraction + prompt injection for chat
 - Tavily web search integration with 24-hour Blob cache (`search-cache/{sha256(query)}.json`)
 - Frontend web-search UX: sidebar control, per-message search badge, expandable source citations
@@ -107,7 +107,7 @@ When a user uploads a document:
 
 1. Frontend calls `POST /api/upload` with multipart data (`session_id`, `file`).
 2. Backend validates file type and 25MB size limit.
-3. Raw file is stored in `neurarchat-uploads/{user_id}/{session_id}/{filename}`.
+3. Raw file is stored in the session-scoped uploads container for that authenticated user and chat.
 4. Parsed chunks are reused from `neurarchat-parsed` if already available; otherwise backend parses and chunks the file, then saves parsed JSON.
 5. On `POST /api/chat`, backend loads session file chunks and injects top relevant chunks into the GPT system prompt.
 6. Response metadata includes `file_context_used`; frontend shows `📄` badge on that assistant message.
@@ -117,6 +117,28 @@ Important session rule:
 - uploaded files are scoped to `user_id + session_id`
 - files added in one chat stay in that chat only
 - starting a new chat creates a separate file set
+
+## Chat Deletion Cleanup
+
+Deleting a chat is a real backend cleanup operation, not just a frontend/sidebar removal.
+
+The frontend calls:
+
+- `DELETE /api/conversations/{session_id}`
+
+The backend then deletes all session-scoped artifacts for that authenticated user:
+
+- conversation history for that session
+- raw uploaded files for that session
+- parsed file chunks for that session
+- agent plans for that session
+- agent execution logs for that session
+
+What is intentionally not deleted:
+
+- user-level profile memory in `neurarchat-profiles`
+
+That profile memory belongs to the user account, not to an individual chat session.
 
 ## Agent Mode
 
@@ -133,9 +155,7 @@ Agent Mode is a separate workflow from normal chat:
    - warning
    - final summary
    - done
-6. Plans and execution logs are stored in:
-   - `neurarchat-agents/{user_id}/plans/{plan_id}.json`
-   - `neurarchat-agents/{user_id}/logs/{plan_id}.json`
+6. Plans and execution logs are stored in the session-scoped agents container for that user and chat.
 
 Safety rules:
 

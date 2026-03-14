@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { deleteMemory, getMe, patchMemory } from "../api";
+import type { RequestNamingContext } from "../api";
 
 interface MemoryPanelProps {
   isOpen: boolean;
   onClose: () => void;
   getAuthToken: () => Promise<string | null>;
+  naming?: RequestNamingContext;
 }
 
-const HIDDEN_PROFILE_KEYS = new Set(["user_id", "updated_at"]);
+const HIDDEN_PROFILE_KEYS = new Set(["user_id", "display_name", "updated_at"]);
 
 function normalizeFactValue(value: unknown): string {
   if (typeof value === "string") {
@@ -65,7 +67,7 @@ function formatFactForDisplay(value: string): string {
   }
 }
 
-export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps) {
+export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPanelProps) {
   const [facts, setFacts] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [errorText, setErrorText] = useState("");
@@ -88,7 +90,7 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
         if (!authToken) {
           throw new Error("Authentication token unavailable. Please sign in again.");
         }
-        const response = await getMe(authToken);
+        const response = await getMe(authToken, naming);
         if (isMounted) {
           setFacts(normalizeFacts(response.profile));
         }
@@ -107,14 +109,14 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
     return () => {
       isMounted = false;
     };
-  }, [getAuthToken, isOpen]);
+  }, [getAuthToken, isOpen, naming]);
 
   async function saveFact(key: string, value: string) {
     const authToken = await getAuthToken();
     if (!authToken) {
       throw new Error("Authentication token unavailable. Please sign in again.");
     }
-    const response = await patchMemory(authToken, key, value);
+    const response = await patchMemory(authToken, key, value, naming);
     setFacts(normalizeFacts(response.profile));
   }
 
@@ -125,7 +127,7 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken }: MemoryPanelProps)
       if (!authToken) {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
-      await deleteMemory(authToken);
+      await deleteMemory(authToken, naming);
       setFacts({});
       setEditingKey(null);
       setEditingValue("");

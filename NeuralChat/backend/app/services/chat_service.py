@@ -24,11 +24,13 @@ async def generate_reply(
     request: dict[str, Any],
     store: dict[str, Any],
     user_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
     memory_prompt: str = "",
     search_prompt: str = "",
     file_prompt: str = "",
 ) -> str:
-    history = load_messages(store, user_id, request["session_id"])
+    history = load_messages(store, user_id, request["session_id"], display_name, session_title)
     model_kwargs: dict[str, Any] = {
         "model": request["model"],
         "message": request["message"],
@@ -47,11 +49,13 @@ async def generate_reply_stream(
     request: dict[str, Any],
     store: dict[str, Any],
     user_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
     memory_prompt: str = "",
     search_prompt: str = "",
     file_prompt: str = "",
 ) -> AsyncIterator[str]:
-    history = load_messages(store, user_id, request["session_id"])
+    history = load_messages(store, user_id, request["session_id"], display_name, session_title)
     model_kwargs: dict[str, Any] = {
         "model": request["model"],
         "message": request["message"],
@@ -65,7 +69,14 @@ async def generate_reply_stream(
         yield token
 
 
-def save_user_message(request: dict[str, Any], request_id: str, store: dict[str, Any], user_id: str) -> None:
+def save_user_message(
+    request: dict[str, Any],
+    request_id: str,
+    store: dict[str, Any],
+    user_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> None:
     append_message(
         store,
         user_id,
@@ -75,8 +86,14 @@ def save_user_message(request: dict[str, Any], request_id: str, store: dict[str,
             "content": request["message"],
             "model": request["model"],
             "request_id": request_id,
+            "user_id": user_id,
+            "display_name": display_name or user_id,
+            "session_id": request["session_id"],
+            "session_title": session_title or request["session_id"],
             "created_at": datetime.now(UTC).isoformat(),
         },
+        display_name=display_name,
+        session_title=session_title,
     )
 
 
@@ -87,6 +104,8 @@ def save_assistant_message(
     reply: str,
     store: dict[str, Any],
     user_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
     status: str = "completed",
     response_ms: int | None = None,
     first_token_ms: int | None = None,
@@ -101,6 +120,10 @@ def save_assistant_message(
         "model": model,
         "request_id": request_id,
         "status": status,
+        "user_id": user_id,
+        "display_name": display_name or user_id,
+        "session_id": session_id,
+        "session_title": session_title or session_id,
         "created_at": datetime.now(UTC).isoformat(),
     }
     if response_ms is not None:
@@ -121,6 +144,8 @@ def save_assistant_message(
         user_id,
         session_id,
         payload,
+        display_name=display_name,
+        session_title=session_title,
     )
 
 

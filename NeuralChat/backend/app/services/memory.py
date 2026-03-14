@@ -5,12 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 from typing import Any
 
 import httpx
 from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContainerClient
+from app.services.blob_paths import (
+    blob_parts,
+    read_blob_text,
+    safe_identifier,
+    segment_matches_id,
+    user_segment,
+    write_json_with_migration,
+)
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 PROFILE_FIELDS = {"name", "job", "city", "preferences", "goals"}
@@ -33,15 +40,31 @@ def _get_profiles_container() -> ContainerClient:
     return blob_service_client.get_container_client(container_name)
 
 
-# This helper converts user_id into a safe blob path segment.
-def _safe_user_key(user_id: str) -> str:
-    normalized_user_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(user_id))
-    return normalized_user_id or "unknown"
-
-
 # This helper builds the profile blob path for a user.
-def _profile_blob_name(user_id: str) -> str:
-    return f"profiles/{_safe_user_key(user_id)}.json"
+def _profile_blob_name(user_id: str, display_name: str | None = None) -> str:
+    return f"profiles/{user_segment(user_id, display_name)}.json"
+
+
+# This helper builds the legacy profile blob path used before readable naming.
+def _legacy_profile_blob_name(user_id: str) -> str:
+    return f"profiles/{safe_identifier(user_id)}.json"
+
+
+# This helper finds an existing profile blob for a user in either old or new naming formats.
+def _find_existing_profile_blob(profiles_container: ContainerClient, user_id: str) -> str | None:
+    legacy_blob_name = _legacy_profile_blob_name(user_id)
+    if read_blob_text(profiles_container, legacy_blob_name) is not None:
+        return legacy_blob_name
+
+    for blob_item in profiles_container.list_blobs(name_starts_with="profiles/"):
+        blob_name = str(getattr(blob_item, "name", "")).strip()
+        parts = blob_parts(blob_name)
+        if len(parts) != 2 or parts[0] != "profiles":
+            continue
+        blob_stem = parts[1].removesuffix(".json")
+        if segment_matches_id(blob_stem, user_id):
+            return blob_name
+    return None
 
 
 # This helper extracts plain text from Azure OpenAI message formats.
@@ -60,24 +83,28 @@ def _extract_message_text(message_object: dict[str, Any]) -> str:
     return ""
 
 
-# This helper writes a full profile object into blob storage.
-def _write_profile(user_id: str, profile_data: dict[str, Any]) -> None:
+# This helper writes a full profile object into blob storage and migrates old blob names lazily.
+def _write_profile(user_id: str, profile_data: dict[str, Any], display_name: str | None = None) -> None:
     profiles_container = _get_profiles_container()
-    profile_blob_client = profiles_container.get_blob_client(blob=_profile_blob_name(user_id))
-    profile_blob_client.upload_blob(
-        json.dumps(profile_data, ensure_ascii=True, indent=2),
-        overwrite=True,
-        content_type="application/json",
+    canonical_blob_name = _profile_blob_name(user_id, display_name)
+    existing_blob_name = _find_existing_profile_blob(profiles_container, user_id)
+    write_json_with_migration(
+        profiles_container,
+        canonical_blob_name,
+        profile_data,
+        old_blob_name=existing_blob_name,
     )
 
 
 # This function loads one user profile from blob and safely returns {} when missing/corrupt.
-def load_profile(user_id: str) -> dict[str, Any]:
+def load_profile(user_id: str, display_name: str | None = None) -> dict[str, Any]:
     profiles_container = _get_profiles_container()
-    profile_blob_client = profiles_container.get_blob_client(blob=_profile_blob_name(user_id))
-    try:
-        raw_profile = profile_blob_client.download_blob().readall().decode("utf-8")
-    except ResourceNotFoundError:
+    canonical_blob_name = _profile_blob_name(user_id, display_name)
+    existing_blob_name = _find_existing_profile_blob(profiles_container, user_id)
+    if existing_blob_name is None:
+        return {}
+    raw_profile = read_blob_text(profiles_container, existing_blob_name)
+    if raw_profile is None:
         return {}
 
     try:
@@ -86,16 +113,22 @@ def load_profile(user_id: str) -> dict[str, Any]:
         return {}
 
     if isinstance(parsed_profile, dict):
+        parsed_profile.setdefault("user_id", user_id)
+        parsed_profile.setdefault("display_name", display_name or user_id)
+        if existing_blob_name != canonical_blob_name:
+            _write_profile(user_id, parsed_profile, display_name)
         return parsed_profile
     return {}
 
 
 # This function merges existing facts with incoming facts and saves the merged profile back.
-def save_profile(user_id: str, facts: dict) -> None:
-    existing_profile = load_profile(user_id)
+def save_profile(user_id: str, facts: dict, display_name: str | None = None) -> None:
+    existing_profile = load_profile(user_id, display_name)
     merged_profile = dict(existing_profile)
     merged_profile.update(facts)
-    _write_profile(user_id, merged_profile)
+    merged_profile["user_id"] = user_id
+    merged_profile["display_name"] = display_name or merged_profile.get("display_name") or user_id
+    _write_profile(user_id, merged_profile, display_name)
 
 
 # This function asks GPT-5 to extract profile facts from one user/assistant exchange.
@@ -165,14 +198,14 @@ def extract_facts(message: str, reply: str) -> dict[str, Any]:
 
 
 # This function builds a compact memory sentence for prompt injection and returns "" when profile is empty.
-def build_memory_prompt(user_id: str) -> str:
-    profile_data = load_profile(user_id)
+def build_memory_prompt(user_id: str, display_name: str | None = None) -> str:
+    profile_data = load_profile(user_id, display_name)
     if not profile_data:
         return ""
 
     formatted_items: list[str] = []
     for field_name in sorted(profile_data.keys()):
-        if field_name in {"user_id", "updated_at"}:
+        if field_name in {"user_id", "display_name", "updated_at"}:
             continue
         field_value = profile_data.get(field_name)
         if field_value in (None, ""):
@@ -185,8 +218,8 @@ def build_memory_prompt(user_id: str) -> str:
 
 
 # This function updates one profile key and supports single-key deletion when value is empty.
-def upsert_profile_key(user_id: str, key: str, value: str) -> dict[str, Any]:
-    existing_profile = load_profile(user_id)
+def upsert_profile_key(user_id: str, key: str, value: str, display_name: str | None = None) -> dict[str, Any]:
+    existing_profile = load_profile(user_id, display_name)
     updated_profile = dict(existing_profile)
 
     if value.strip():
@@ -194,14 +227,19 @@ def upsert_profile_key(user_id: str, key: str, value: str) -> dict[str, Any]:
     else:
         updated_profile.pop(key, None)
 
-    _write_profile(user_id, updated_profile)
+    updated_profile["user_id"] = user_id
+    updated_profile["display_name"] = display_name or updated_profile.get("display_name") or user_id
+    _write_profile(user_id, updated_profile, display_name)
     return updated_profile
 
 
 # This function deletes the entire profile blob for one user.
-def clear_profile(user_id: str) -> None:
+def clear_profile(user_id: str, display_name: str | None = None) -> None:
     profiles_container = _get_profiles_container()
-    profile_blob_client = profiles_container.get_blob_client(blob=_profile_blob_name(user_id))
+    existing_blob_name = _find_existing_profile_blob(profiles_container, user_id)
+    if not existing_blob_name:
+        return
+    profile_blob_client = profiles_container.get_blob_client(blob=existing_blob_name)
     try:
         profile_blob_client.delete_blob(delete_snapshots="include")
     except ResourceNotFoundError:
@@ -209,8 +247,8 @@ def clear_profile(user_id: str) -> None:
 
 
 # This async wrapper offloads extraction and save operations so chat streaming remains fast.
-async def process_memory_update(user_id: str, message: str, reply: str) -> None:
+async def process_memory_update(user_id: str, message: str, reply: str, display_name: str | None = None) -> None:
     extracted_facts = await asyncio.to_thread(extract_facts, message, reply)
     if not extracted_facts:
         return
-    await asyncio.to_thread(save_profile, user_id, extracted_facts)
+    await asyncio.to_thread(save_profile, user_id, extracted_facts, display_name)

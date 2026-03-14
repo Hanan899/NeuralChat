@@ -1,7 +1,8 @@
 import { SignIn, SignedIn, SignedOut, useAuth, useClerk, useUser } from "@clerk/clerk-react";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { checkHealth, checkSearchStatus, getFiles, streamChat } from "./api";
+import { checkHealth, checkSearchStatus, deleteConversationSession, generateConversationTitle, getFiles, streamChat } from "./api";
+import type { RequestNamingContext } from "./api";
 import { createAgentPlan, runAgent } from "./api/agent";
 import { AgentHistory } from "./components/AgentHistory";
 import { ChatWindow } from "./components/ChatWindow";
@@ -155,12 +156,98 @@ function buildId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function toTitleFromPrompt(prompt: string): string {
-  const clean = prompt.trim();
-  if (!clean) {
+const TITLE_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "can",
+  "could",
+  "do",
+  "for",
+  "help",
+  "how",
+  "i",
+  "in",
+  "is",
+  "it",
+  "me",
+  "my",
+  "of",
+  "on",
+  "please",
+  "tell",
+  "that",
+  "the",
+  "this",
+  "to",
+  "what",
+  "with",
+  "would",
+  "you",
+]);
+
+function formatTitleWords(words: string[]): string {
+  return words
+    .map((word) => {
+      if (["ai", "api", "gpt", "pdf", "ui", "ux"].includes(word.toLowerCase())) {
+        return word.toUpperCase();
+      }
+      if (word.length <= 3 && word === word.toUpperCase()) {
+        return word;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ")
+    .trim();
+}
+
+function buildLocalConversationTitle(prompt: string): string {
+  const cleanedPrompt = prompt.trim().replace(/\s+/g, " ");
+  if (!cleanedPrompt) {
     return "New chat";
   }
-  return clean.length > 56 ? `${clean.slice(0, 56)}...` : clean;
+
+  const loweredPrompt = cleanedPrompt.toLowerCase();
+  if (loweredPrompt.includes("attached") || loweredPrompt.includes("document") || loweredPrompt.includes("file")) {
+    if (loweredPrompt.includes("prd")) {
+      return "PRD Document Review";
+    }
+    return "Document Review";
+  }
+  if (loweredPrompt.includes("api latency")) {
+    return "API Latency Debugging";
+  }
+  if (loweredPrompt.includes("readme")) {
+    return "README Writing";
+  }
+
+  const meaningfulWords = cleanedPrompt
+    .replace(/^(can you|could you|would you|please|help me|tell me|explain|i want|i need)\s+/i, "")
+    .match(/[A-Za-z0-9][A-Za-z0-9.+-]*/g);
+
+  if (!meaningfulWords || meaningfulWords.length === 0) {
+    return "New chat";
+  }
+
+  const filteredWords = meaningfulWords.filter((word) => !TITLE_STOP_WORDS.has(word.toLowerCase()));
+  const selectedWords = (filteredWords.length >= 3 ? filteredWords : meaningfulWords).slice(0, 5);
+  return formatTitleWords(selectedWords) || "New chat";
+}
+
+function shouldRefineConversationTitle(prompt: string, localTitle: string): boolean {
+  const normalizedPrompt = prompt.trim();
+  const normalizedTitle = localTitle.trim();
+  if (!normalizedPrompt || !normalizedTitle || normalizedTitle === "New chat") {
+    return false;
+  }
+  const titleWordCount = normalizedTitle.split(/\s+/).length;
+  return (
+    normalizedPrompt.length > 42 ||
+    titleWordCount >= 4 ||
+    /[?]/.test(normalizedPrompt) ||
+    /\b(attached|document|file|summarize|summary|analyze|explain|review|research|debug)\b/i.test(normalizedPrompt)
+  );
 }
 
 function getUserStorageKey(userId: string) {
@@ -295,10 +382,12 @@ function ChatShell() {
   const submitLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const toastTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({});
+  const conversationsRef = useRef<ConversationSummary[]>([]);
   const typingQueueRef = useRef<string[]>([]);
   const typingTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const typingTargetRef = useRef<{ conversationId: string; assistantId: string } | null>(null);
   const typingFinishWhenEmptyRef = useRef(false);
+  const refiningConversationIdsRef = useRef<Set<string>>(new Set());
 
   const searchReady = searchEnabled === true;
   const resolvedThemeMode: "dark" | "light" = themeMode === "system" ? systemTheme : themeMode;
@@ -320,6 +409,13 @@ function ChatShell() {
   const currentMessages = activeConversationId ? messagesByConversation[activeConversationId] ?? [] : [];
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const activeFiles = activeConversationId ? filesByConversation[activeConversationId] ?? [] : [];
+  const activeRequestNaming = useMemo<RequestNamingContext>(
+    () => ({
+      userDisplayName,
+      sessionTitle: activeConversation?.title?.trim() || "New chat",
+    }),
+    [activeConversation?.title, userDisplayName]
+  );
 
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
@@ -459,7 +555,7 @@ function ChatShell() {
           return;
         }
 
-        const payload = await getFiles(authToken, activeConversationId);
+        const payload = await getFiles(authToken, activeConversationId, activeRequestNaming);
         if (isCancelled) {
           return;
         }
@@ -492,9 +588,14 @@ function ChatShell() {
     return () => {
       isCancelled = true;
     };
-  }, [activeConversationId, userId, getToken, filesByConversation]);
+  }, [activeConversationId, userId, getToken, filesByConversation, activeRequestNaming]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   function updateConversationSummary(conversationId: string, prompt: string, replyPreview: string) {
+    const localTitle = buildLocalConversationTitle(prompt);
     setConversations((previous) =>
       previous.map((conversation) => {
         if (conversation.id !== conversationId) {
@@ -503,13 +604,58 @@ function ChatShell() {
 
         return {
           ...conversation,
-          title: conversation.title === "New chat" ? toTitleFromPrompt(prompt) : conversation.title,
+          title: conversation.title === "New chat" ? localTitle : conversation.title,
           preview: replyPreview || prompt,
           updatedAt: new Date().toISOString()
         };
       })
     );
   }
+
+  const refineConversationTitle = useCallback(
+    async (conversationId: string, prompt: string, reply: string) => {
+      const localTitle = buildLocalConversationTitle(prompt);
+      if (!shouldRefineConversationTitle(prompt, localTitle)) {
+        return;
+      }
+      if (refiningConversationIdsRef.current.has(conversationId)) {
+        return;
+      }
+
+      const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+      if (!conversation || conversation.title !== localTitle) {
+        return;
+      }
+
+      refiningConversationIdsRef.current.add(conversationId);
+      try {
+        const authToken = await getToken();
+        if (!authToken) {
+          return;
+        }
+        const response = await generateConversationTitle(authToken, prompt, reply, {
+          userDisplayName,
+          sessionTitle: localTitle,
+        });
+        const refinedTitle = response.title.trim();
+        if (!refinedTitle || refinedTitle === localTitle) {
+          return;
+        }
+        setConversations((previous) =>
+          previous.map((item) =>
+            item.id === conversationId && item.title === localTitle
+              ? { ...item, title: refinedTitle, updatedAt: item.updatedAt }
+              : item
+          )
+        );
+      } catch {
+        // Keep the local title when refinement fails. The UI should stay responsive.
+      } finally {
+        refiningConversationIdsRef.current.delete(conversationId);
+      }
+    },
+    [getToken, userDisplayName]
+  );
 
   const updateAgentMessageState = useCallback(
     (conversationId: string, messageId: string, updater: (currentTask: AgentTaskState) => AgentTaskState) => {
@@ -688,11 +834,7 @@ function ChatShell() {
     setErrorText("");
   }
 
-  function handleDeleteConversation(conversationId: string) {
-    if (isSending) {
-      return;
-    }
-
+  function removeConversationLocally(conversationId: string) {
     setMessagesByConversation((previous) => {
       const next = { ...previous };
       delete next[conversationId];
@@ -711,6 +853,18 @@ function ChatShell() {
           ),
           [createdConversation.id]: []
         }));
+        setFilesByConversation((previousFiles) => ({
+          ...Object.fromEntries(
+            Object.entries(previousFiles).filter(([existingConversationId]) => existingConversationId !== conversationId)
+          ),
+          [createdConversation.id]: []
+        }));
+        setFileCountsByConversation((previousCounts) => ({
+          ...Object.fromEntries(
+            Object.entries(previousCounts).filter(([existingConversationId]) => existingConversationId !== conversationId)
+          ),
+          [createdConversation.id]: 0
+        }));
         setActiveConversationId(createdConversation.id);
         return next;
       }
@@ -724,14 +878,45 @@ function ChatShell() {
 
       return next;
     });
+
+    setFilesByConversation((previous) => {
+      const next = { ...previous };
+      delete next[conversationId];
+      return next;
+    });
     setFileCountsByConversation((previous) => {
       const next = { ...previous };
       delete next[conversationId];
       return next;
     });
+  }
 
-    showToast("Chat deleted.", "success");
-    setErrorText("");
+  async function handleDeleteConversation(conversationId: string) {
+    if (isSending) {
+      return;
+    }
+
+    const conversation = conversations.find((item) => item.id === conversationId);
+    const naming = {
+      userDisplayName,
+      sessionTitle: conversation?.title?.trim() || "New chat",
+    };
+
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+
+      await deleteConversationSession(authToken, conversationId, naming);
+      removeConversationLocally(conversationId);
+      showToast("Chat deleted everywhere.", "success");
+      setErrorText("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete chat.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
   }
 
   async function handleShareConversation(conversationId: string) {
@@ -785,6 +970,9 @@ function ChatShell() {
     setFirstTokenMs(null);
 
     const conversationId = activeConversationId;
+    const requestSessionTitle = activeConversation?.title === "New chat" || !activeConversation?.title
+      ? buildLocalConversationTitle(trimmed)
+      : activeConversation.title;
     setConversations((previous) =>
       previous.map((conversation) =>
         conversation.id === conversationId && conversation.archived === true
@@ -894,7 +1082,11 @@ function ChatShell() {
           }));
           finishStreamingDisplay();
         },
-        controller.signal
+        controller.signal,
+        {
+          userDisplayName,
+          sessionTitle: requestSessionTitle,
+        }
       );
 
       setRequestId(result.requestId);
@@ -918,6 +1110,9 @@ function ChatShell() {
       }));
 
       updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
+      if (streamedText.trim()) {
+        void refineConversationTitle(conversationId, trimmed, streamedText);
+      }
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown error";
       setStreamStatus("interrupted");
@@ -963,6 +1158,9 @@ function ChatShell() {
     setStreamStatus("planning");
 
     const conversationId = activeConversationId;
+    const requestSessionTitle = activeConversation?.title === "New chat" || !activeConversation?.title
+      ? buildLocalConversationTitle(trimmed)
+      : activeConversation.title;
     const attachedFilesForMessage = activeFiles.map((fileItem) => ({ ...fileItem }));
     const userMessage: ChatMessage = {
       id: buildId(),
@@ -1000,9 +1198,13 @@ function ChatShell() {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
 
-      const plan = await createAgentPlan(authToken, trimmed, conversationId);
+      const plan = await createAgentPlan(authToken, trimmed, conversationId, {
+        userDisplayName,
+        sessionTitle: requestSessionTitle,
+      });
       updateAgentMessageState(conversationId, assistantId, () => buildAgentTaskState(plan));
       updateConversationSummary(conversationId, trimmed, `Agent plan ready: ${plan.steps.length} steps`);
+      void refineConversationTitle(conversationId, trimmed, plan.steps.map((step) => step.description).join("; "));
       setStreamStatus("ready");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create agent plan.";
@@ -1024,6 +1226,7 @@ function ChatShell() {
     }
 
     const conversationId = activeConversationId;
+    const requestSessionTitle = activeConversation?.title?.trim() || "New chat";
     const targetMessage = (messagesByConversation[conversationId] ?? []).find((message) => message.id === messageId);
     const agentTask = targetMessage?.agentTask;
     if (!agentTask) {
@@ -1125,7 +1328,11 @@ function ChatShell() {
             setErrorText(message);
           },
         },
-        controller.signal
+        controller.signal,
+        {
+          userDisplayName,
+          sessionTitle: requestSessionTitle,
+        }
       );
 
       setStreamStatus("completed");
@@ -1453,13 +1660,19 @@ function ChatShell() {
           open={isFileModalOpen}
           authToken={fileModalAuthToken}
           sessionId={activeConversationId}
+          naming={activeRequestNaming}
           onFilesChange={handleUploadedFilesChange}
           onClose={() => setIsFileModalOpen(false)}
         />
       ) : null}
 
       {isAgentHistoryOpen && agentHistoryAuthToken ? (
-        <AgentHistory authToken={agentHistoryAuthToken} open={isAgentHistoryOpen} onClose={() => setIsAgentHistoryOpen(false)} />
+        <AgentHistory
+          authToken={agentHistoryAuthToken}
+          open={isAgentHistoryOpen}
+          naming={activeRequestNaming}
+          onClose={() => setIsAgentHistoryOpen(false)}
+        />
       ) : null}
     </main>
   );

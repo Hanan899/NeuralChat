@@ -8,13 +8,21 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContainerClient
+from app.services.blob_paths import (
+    blob_parts,
+    read_blob_text,
+    safe_identifier,
+    segment_matches_id,
+    session_segment,
+    user_segment,
+    write_json_with_migration,
+)
 
 _STORE_LOCK = Lock()
 _MEMORY_STORE: dict[str, list[dict[str, Any]]] = {}
@@ -56,29 +64,63 @@ def _ensure_container(blob_service_client: BlobServiceClient, container_name: st
     return container
 
 
-def conversation_blob_name(user_id: str, session_id: str) -> str:
-    safe_user = _safe_key(user_id)
-    safe_session = _safe_key(session_id)
-    return f"conversations/{safe_user}/{safe_session}.json"
+def conversation_blob_name(
+    user_id: str,
+    session_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> str:
+    return f"conversations/{user_segment(user_id, display_name)}/{session_segment(session_id, session_title)}.json"
 
 
-def _safe_key(value: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9_-]", "_", str(value))
-    return normalized or "unknown"
+def _legacy_conversation_blob_name(user_id: str, session_id: str) -> str:
+    return f"conversations/{safe_identifier(user_id)}/{safe_identifier(session_id)}.json"
 
 
-def load_messages(store: dict[str, Any], user_id: str, session_id: str) -> list[dict[str, Any]]:
+def _find_existing_conversation_blob(container: ContainerClient, user_id: str, session_id: str) -> str | None:
+    legacy_blob_name = _legacy_conversation_blob_name(user_id, session_id)
+    if read_blob_text(container, legacy_blob_name) is not None:
+        return legacy_blob_name
+
+    for blob_item in container.list_blobs(name_starts_with="conversations/"):
+        blob_name = str(getattr(blob_item, "name", "")).strip()
+        parts = blob_parts(blob_name)
+        if len(parts) != 3 or parts[0] != "conversations":
+            continue
+        if not segment_matches_id(parts[1], user_id):
+            continue
+        session_stem = parts[2].removesuffix(".json")
+        if segment_matches_id(session_stem, session_id):
+            return blob_name
+    return None
+
+
+def load_messages(
+    store: dict[str, Any],
+    user_id: str,
+    session_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> list[dict[str, Any]]:
+    canonical_blob_name = conversation_blob_name(user_id, session_id, display_name, session_title)
     if store["mode"] == "memory":
-        key = conversation_blob_name(user_id, session_id)
-        return list(_MEMORY_STORE.get(key, []))
+        memory_messages = _MEMORY_STORE.get(canonical_blob_name)
+        if memory_messages is not None:
+            return list(memory_messages)
+        legacy_messages = _MEMORY_STORE.get(_legacy_conversation_blob_name(user_id, session_id))
+        if legacy_messages is None:
+            return []
+        _MEMORY_STORE[canonical_blob_name] = list(legacy_messages)
+        del _MEMORY_STORE[_legacy_conversation_blob_name(user_id, session_id)]
+        return list(legacy_messages)
 
-    blob_name = conversation_blob_name(user_id, session_id)
     container: ContainerClient = store["memory_container"]
-    blob_client = container.get_blob_client(blob=blob_name)
+    existing_blob_name = _find_existing_conversation_blob(container, user_id, session_id)
+    if existing_blob_name is None:
+        return []
 
-    try:
-        payload = blob_client.download_blob().readall().decode("utf-8")
-    except ResourceNotFoundError:
+    payload = read_blob_text(container, existing_blob_name)
+    if payload is None:
         return []
 
     try:
@@ -87,76 +129,146 @@ def load_messages(store: dict[str, Any], user_id: str, session_id: str) -> list[
         return []
 
     if isinstance(data, list):
+        if existing_blob_name != canonical_blob_name:
+            write_json_with_migration(
+                container,
+                canonical_blob_name,
+                data,
+                old_blob_name=existing_blob_name,
+            )
         return data
     return []
 
 
-def append_message(store: dict[str, Any], user_id: str, session_id: str, message: dict[str, Any]) -> None:
+def append_message(
+    store: dict[str, Any],
+    user_id: str,
+    session_id: str,
+    message: dict[str, Any],
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> None:
     with _STORE_LOCK:
-        messages = load_messages(store, user_id, session_id)
+        messages = load_messages(store, user_id, session_id, display_name, session_title)
         messages.append(message)
+        canonical_blob_name = conversation_blob_name(user_id, session_id, display_name, session_title)
 
         if store["mode"] == "memory":
-            key = conversation_blob_name(user_id, session_id)
-            _MEMORY_STORE[key] = messages
+            _MEMORY_STORE[canonical_blob_name] = messages
+            legacy_blob_name = _legacy_conversation_blob_name(user_id, session_id)
+            if legacy_blob_name in _MEMORY_STORE and legacy_blob_name != canonical_blob_name:
+                del _MEMORY_STORE[legacy_blob_name]
             return
 
-        blob_name = conversation_blob_name(user_id, session_id)
         container: ContainerClient = store["memory_container"]
-        blob_client = container.get_blob_client(blob=blob_name)
-        blob_client.upload_blob(
-            json.dumps(messages, ensure_ascii=True, indent=2),
-            overwrite=True,
-            content_type="application/json",
+        existing_blob_name = _find_existing_conversation_blob(container, user_id, session_id)
+        write_json_with_migration(
+            container,
+            canonical_blob_name,
+            messages,
+            old_blob_name=existing_blob_name,
         )
 
 
-def touch_profile(store: dict[str, Any], user_id: str) -> None:
+def delete_conversation_session(
+    store: dict[str, Any],
+    user_id: str,
+    session_id: str,
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> bool:
+    with _STORE_LOCK:
+        canonical_blob_name = conversation_blob_name(user_id, session_id, display_name, session_title)
+
+        if store["mode"] == "memory":
+            deleted = False
+            if canonical_blob_name in _MEMORY_STORE:
+                del _MEMORY_STORE[canonical_blob_name]
+                deleted = True
+            legacy_blob_name = _legacy_conversation_blob_name(user_id, session_id)
+            if legacy_blob_name in _MEMORY_STORE:
+                del _MEMORY_STORE[legacy_blob_name]
+                deleted = True
+            return deleted
+
+        container: ContainerClient = store["memory_container"]
+        existing_blob_name = _find_existing_conversation_blob(container, user_id, session_id)
+        if not existing_blob_name:
+            return False
+
+        try:
+            container.get_blob_client(blob=existing_blob_name).delete_blob(delete_snapshots="include")
+        except ResourceNotFoundError:
+            return False
+        return True
+
+
+def touch_profile(store: dict[str, Any], user_id: str, display_name: str | None = None) -> None:
+    canonical_blob_name = f"profiles/{user_segment(user_id, display_name)}.json"
     payload = {
         "user_id": user_id,
+        "display_name": display_name or user_id,
         "updated_at": datetime.now(UTC).isoformat(),
     }
 
     if store["mode"] == "memory":
-        _MEMORY_PROFILES[_safe_key(user_id)] = payload
+        _MEMORY_PROFILES[canonical_blob_name] = payload
+        legacy_blob_name = _legacy_profile_blob_name(user_id)
+        if legacy_blob_name in _MEMORY_PROFILES and legacy_blob_name != canonical_blob_name:
+            del _MEMORY_PROFILES[legacy_blob_name]
         return
 
     container: ContainerClient = store["profiles_container"]
-    blob_name = f"profiles/{_safe_key(user_id)}.json"
-    blob_client = container.get_blob_client(blob=blob_name)
-
-    existing: dict[str, Any] = {}
-    try:
-        raw = blob_client.download_blob().readall().decode("utf-8")
-        loaded = json.loads(raw)
-        if isinstance(loaded, dict):
-            existing = loaded
-    except ResourceNotFoundError:
-        pass
-    except json.JSONDecodeError:
-        existing = {}
-
+    existing = load_profile(store, user_id, display_name)
     existing.update(payload)
-    blob_client.upload_blob(
-        json.dumps(existing, ensure_ascii=True, indent=2),
-        overwrite=True,
-        content_type="application/json",
+    write_json_with_migration(
+        container,
+        canonical_blob_name,
+        existing,
+        old_blob_name=_find_existing_profile_blob(container, user_id),
     )
 
 
-def load_profile(store: dict[str, Any], user_id: str) -> dict[str, Any]:
-    safe_user = _safe_key(user_id)
+def _legacy_profile_blob_name(user_id: str) -> str:
+    return f"profiles/{safe_identifier(user_id)}.json"
+
+
+def _find_existing_profile_blob(container: ContainerClient, user_id: str) -> str | None:
+    legacy_blob_name = _legacy_profile_blob_name(user_id)
+    if read_blob_text(container, legacy_blob_name) is not None:
+        return legacy_blob_name
+
+    for blob_item in container.list_blobs(name_starts_with="profiles/"):
+        blob_name = str(getattr(blob_item, "name", "")).strip()
+        parts = blob_parts(blob_name)
+        if len(parts) != 2 or parts[0] != "profiles":
+            continue
+        blob_stem = parts[1].removesuffix(".json")
+        if segment_matches_id(blob_stem, user_id):
+            return blob_name
+    return None
+
+
+def load_profile(store: dict[str, Any], user_id: str, display_name: str | None = None) -> dict[str, Any]:
+    canonical_blob_name = f"profiles/{user_segment(user_id, display_name)}.json"
 
     if store["mode"] == "memory":
-        return dict(_MEMORY_PROFILES.get(safe_user, {}))
+        profile = _MEMORY_PROFILES.get(canonical_blob_name)
+        if profile is not None:
+            return dict(profile)
+        legacy_profile = _MEMORY_PROFILES.get(_legacy_profile_blob_name(user_id))
+        if legacy_profile is None:
+            return {}
+        _MEMORY_PROFILES[canonical_blob_name] = dict(legacy_profile)
+        del _MEMORY_PROFILES[_legacy_profile_blob_name(user_id)]
+        return dict(legacy_profile)
 
     container: ContainerClient = store["profiles_container"]
-    blob_name = f"profiles/{safe_user}.json"
-    blob_client = container.get_blob_client(blob=blob_name)
-
-    try:
-        raw = blob_client.download_blob().readall().decode("utf-8")
-    except ResourceNotFoundError:
+    existing_blob_name = _find_existing_profile_blob(container, user_id)
+    if existing_blob_name is None:
+        return {}
+    raw = read_blob_text(container, existing_blob_name)
+    if raw is None:
         return {}
 
     try:
@@ -165,6 +277,10 @@ def load_profile(store: dict[str, Any], user_id: str) -> dict[str, Any]:
         return {}
 
     if isinstance(loaded, dict):
+        if existing_blob_name != canonical_blob_name:
+            loaded.setdefault("user_id", user_id)
+            loaded.setdefault("display_name", display_name or user_id)
+            write_json_with_migration(container, canonical_blob_name, loaded, old_blob_name=existing_blob_name)
         return loaded
     return {}
 

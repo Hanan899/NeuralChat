@@ -80,6 +80,7 @@ Authenticated endpoints:
 
 - `GET /api/me`
 - `POST /api/chat`
+- `DELETE /api/conversations/{session_id}`
 - `POST /api/chat` with `force_search: true`
 - `POST /api/upload`
 - `GET /api/files?session_id=...`
@@ -96,6 +97,7 @@ The deployed backend passed:
 
 - auth verification through Clerk template token
 - GPT-5 standard chat
+- real chat deletion with backend cleanup
 - Tavily-backed forced search with returned `sources`
 - file upload and parsed chunk persistence
 - file listing

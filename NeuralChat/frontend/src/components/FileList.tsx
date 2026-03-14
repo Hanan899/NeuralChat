@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { deleteFile, getFiles } from "../api";
+import type { RequestNamingContext } from "../api";
 import type { UploadedFileItem } from "../types";
 
 interface FileListProps {
   authToken: string;
   sessionId: string;
+  naming?: RequestNamingContext;
   refreshKey: number;
   onFilesChange?: (files: UploadedFileItem[]) => void;
 }
@@ -46,7 +48,7 @@ function formatUploadedAt(timestamp: string): string {
   return dateValue.toLocaleString();
 }
 
-export function FileList({ authToken, sessionId, refreshKey, onFilesChange }: FileListProps) {
+export function FileList({ authToken, sessionId, naming, refreshKey, onFilesChange }: FileListProps) {
   const [files, setFiles] = useState<UploadedFileItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorText, setErrorText] = useState("");
@@ -56,7 +58,7 @@ export function FileList({ authToken, sessionId, refreshKey, onFilesChange }: Fi
     setErrorText("");
 
     try {
-      const payload = await getFiles(authToken, sessionId);
+      const payload = await getFiles(authToken, sessionId, naming);
       setFiles(payload.files);
       onFilesChange?.(payload.files);
     } catch (error) {
@@ -67,7 +69,7 @@ export function FileList({ authToken, sessionId, refreshKey, onFilesChange }: Fi
     } finally {
       setIsLoading(false);
     }
-  }, [authToken, sessionId, onFilesChange]);
+  }, [authToken, sessionId, naming, onFilesChange]);
 
   useEffect(() => {
     void loadFiles();
@@ -76,7 +78,7 @@ export function FileList({ authToken, sessionId, refreshKey, onFilesChange }: Fi
   async function handleDelete(filename: string) {
     setErrorText("");
     try {
-      await deleteFile(authToken, sessionId, filename);
+      await deleteFile(authToken, sessionId, filename, naming);
       const remainingFiles = files.filter((fileItem) => fileItem.filename !== filename);
       setFiles(remainingFiles);
       onFilesChange?.(remainingFiles);

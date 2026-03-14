@@ -1,6 +1,7 @@
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
 
 import { uploadFileWithProgress } from "../api";
+import type { RequestNamingContext } from "../api";
 import type { UploadedFileItem } from "../types";
 import { FileList } from "./FileList";
 
@@ -8,6 +9,7 @@ interface FileUploadProps {
   open: boolean;
   authToken: string;
   sessionId: string;
+  naming?: RequestNamingContext;
   onClose: () => void;
   onFilesChange?: (files: UploadedFileItem[]) => void;
 }
@@ -22,7 +24,7 @@ function CloseIcon() {
   );
 }
 
-export function FileUpload({ open, authToken, sessionId, onClose, onFilesChange }: FileUploadProps) {
+export function FileUpload({ open, authToken, sessionId, naming, onClose, onFilesChange }: FileUploadProps) {
   const inputReference = useRef<HTMLInputElement | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
@@ -42,7 +44,7 @@ export function FileUpload({ open, authToken, sessionId, onClose, onFilesChange 
     setSuccessText("");
 
     try {
-      const response = await uploadFileWithProgress(authToken, sessionId, file, setUploadProgress);
+      const response = await uploadFileWithProgress(authToken, sessionId, file, setUploadProgress, naming);
       setSuccessText(response.message);
       setRefreshKey((value) => value + 1);
     } catch (error) {
@@ -121,7 +123,13 @@ export function FileUpload({ open, authToken, sessionId, onClose, onFilesChange 
         {errorText ? <p className="nc-file-upload-error">{errorText}</p> : null}
         {successText ? <p className="nc-file-upload-success">{successText}</p> : null}
 
-        <FileList authToken={authToken} sessionId={sessionId} refreshKey={refreshKey} onFilesChange={onFilesChange} />
+        <FileList
+          authToken={authToken}
+          sessionId={sessionId}
+          naming={naming}
+          refreshKey={refreshKey}
+          onFilesChange={onFilesChange}
+        />
       </section>
     </div>
   );

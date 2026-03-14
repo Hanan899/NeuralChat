@@ -61,6 +61,22 @@ def validate_agent_run_request(payload: dict[str, Any]) -> dict[str, str]:
     return {"session_id": session_id}
 
 
+def validate_title_request(payload: dict[str, Any]) -> dict[str, str]:
+    """Validate and normalize POST /api/conversations/title payload."""
+    prompt = payload.get("prompt", "")
+    if not isinstance(prompt, str) or not (1 <= len(prompt) <= 12000):
+        raise HTTPException(status_code=422, detail="prompt must be a non-empty string (max 12000).")
+
+    reply = payload.get("reply", "")
+    if not isinstance(reply, str):
+        raise HTTPException(status_code=422, detail="reply must be a string.")
+
+    return {
+        "prompt": prompt,
+        "reply": reply,
+    }
+
+
 def build_health_response(timestamp: str, version: str) -> dict[str, str]:
     return {"status": "ok", "timestamp": timestamp, "version": version}
 

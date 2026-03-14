@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   authState,
   getTokenMock,
+  generateConversationTitleMock,
   createAgentPlanMock,
   runAgentMock,
   getAgentHistoryMock,
@@ -12,6 +13,7 @@ const {
 } = vi.hoisted(() => ({
   authState: { signedIn: true },
   getTokenMock: vi.fn().mockResolvedValue("token"),
+  generateConversationTitleMock: vi.fn().mockResolvedValue({ title: "Python AI Research" }),
   createAgentPlanMock: vi.fn().mockResolvedValue({
     plan_id: "plan-1",
     goal: "Research top Python AI libraries",
@@ -58,9 +60,18 @@ vi.mock("@clerk/clerk-react", () => ({
 vi.mock("../api", () => ({
   checkHealth: vi.fn().mockResolvedValue(true),
   checkSearchStatus: vi.fn().mockResolvedValue(true),
+  generateConversationTitle: generateConversationTitleMock,
   streamChat: vi.fn().mockResolvedValue({ requestId: "req-1", responseMs: 10, firstTokenMs: 5, tokensEmitted: 1, searchUsed: false, fileContextUsed: false, sources: [] }),
   getFiles: vi.fn().mockResolvedValue({ files: [] }),
   deleteFile: vi.fn().mockResolvedValue({ message: "deleted" }),
+  deleteConversationSession: vi.fn().mockResolvedValue({
+    message: "Conversation deleted successfully",
+    conversation_deleted: true,
+    uploads_deleted: 0,
+    parsed_deleted: 0,
+    plans_deleted: 0,
+    logs_deleted: 0,
+  }),
   uploadFileWithProgress: vi.fn().mockResolvedValue({ filename: "doc.txt", blob_path: "path", chunk_count: 1, message: "ok" }),
 }));
 

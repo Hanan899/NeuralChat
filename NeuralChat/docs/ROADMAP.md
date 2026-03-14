@@ -11,6 +11,7 @@
 - Clerk login/logout
 - JWT verification on backend
 - User-scoped conversation storage in Blob
+- Real chat deletion that removes session artifacts from backend storage
 
 ### Phase 3: Deep Memory
 - Profile extraction from chat exchanges

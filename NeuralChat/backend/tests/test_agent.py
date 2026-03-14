@@ -205,7 +205,7 @@ def test_save_task_plan_saves_to_correct_blob_path():
     with patch("app.services.agent._get_agents_container", return_value=container):
         agent.save_task_plan("user1", plan)
 
-    assert "user1/plans/abc123.json" in container.storage
+    assert "user__user1/plans/abc123.json" in container.storage
 
 
 # This test checks plan loading because the history detail endpoint depends on blob retrieval.
@@ -214,7 +214,12 @@ def test_load_task_plan_returns_plan_when_exists():
     with patch("app.services.agent._get_agents_container", return_value=container):
         result = agent.load_task_plan("user1", "abc123")
 
-    assert result == {"plan_id": "abc123", "goal": "Research AI", "steps": []}
+    assert result is not None
+    assert result["plan_id"] == "abc123"
+    assert result["goal"] == "Research AI"
+    assert result["steps"] == []
+    assert result["user_id"] == "user1"
+    assert result["display_name"] == "user1"
 
 
 # This test checks missing plans because the backend must return None rather than crash on absent blobs.
@@ -234,7 +239,7 @@ def test_save_execution_log_saves_all_steps():
     with patch("app.services.agent._get_agents_container", return_value=container):
         agent.save_execution_log("user1", "abc123", log)
 
-    assert "user1/logs/abc123.json" in container.storage
+    assert "user__user1/logs/abc123.json" in container.storage
 
 
 # This test checks summary generation because the user-facing final answer is required output.
@@ -279,7 +284,7 @@ def client():
 def test_agent_run_streams_plan_chunk_first(client):
     plan = {"plan_id": "plan-1", "goal": "Research AI", "steps": [{"step_number": 1, "description": "Search", "tool": "web_search", "tool_input": "AI"}]}
 
-    async def fake_stream(_plan, _user_id, _session_id):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
         yield {"type": "step_start", "step_number": 1, "description": "Search"}
         yield {"type": "step_done", "step_number": 1, "result": "done", "status": "done", "error": None}
         yield {"type": "final_state", "plan": plan, "execution_log": [{"step_number": 1, "result": "done", "status": "done"}], "warning_message": None, "summary": "Finished"}
@@ -302,7 +307,7 @@ def test_agent_run_streams_step_start_and_done_for_each_step(client):
         ],
     }
 
-    async def fake_stream(_plan, _user_id, _session_id):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
         yield {"type": "step_start", "step_number": 1, "description": "Search"}
         yield {"type": "step_done", "step_number": 1, "result": "done 1", "status": "done", "error": None}
         yield {"type": "step_start", "step_number": 2, "description": "Summarize"}
@@ -321,7 +326,7 @@ def test_agent_run_streams_step_start_and_done_for_each_step(client):
 def test_agent_run_stops_on_loop_detection(client):
     plan = {"plan_id": "plan-1", "goal": "Research AI", "steps": [{"step_number": 1, "description": "Search", "tool": "web_search", "tool_input": "AI"}]}
 
-    async def fake_stream(_plan, _user_id, _session_id):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
         yield {"type": "warning", "message": "Agent stopped: repeated tool calls detected."}
         yield {"type": "final_state", "plan": plan, "execution_log": [], "warning_message": "Agent stopped: repeated tool calls detected.", "summary": "Stopped"}
 
@@ -342,7 +347,7 @@ def test_agent_run_continues_after_failed_step(client):
         ],
     }
 
-    async def fake_stream(_plan, _user_id, _session_id):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
         yield {"type": "step_start", "step_number": 1, "description": "Search"}
         yield {"type": "step_done", "step_number": 1, "result": "", "status": "failed", "error": "Tavily down"}
         yield {"type": "step_start", "step_number": 2, "description": "Summarize"}

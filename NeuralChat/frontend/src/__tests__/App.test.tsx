@@ -9,7 +9,9 @@ const {
   checkSearchStatusMock,
   getFilesMock,
   deleteFileMock,
+  deleteConversationSessionMock,
   uploadFileWithProgressMock,
+  generateConversationTitleMock,
   createAgentPlanMock,
   runAgentMock,
   getAgentHistoryMock,
@@ -28,12 +30,21 @@ const {
   }),
   getFilesMock: vi.fn().mockResolvedValue({ files: [] }),
   deleteFileMock: vi.fn().mockResolvedValue({ message: "deleted" }),
+  deleteConversationSessionMock: vi.fn().mockResolvedValue({
+    message: "Conversation deleted successfully",
+    conversation_deleted: true,
+    uploads_deleted: 0,
+    parsed_deleted: 0,
+    plans_deleted: 0,
+    logs_deleted: 0,
+  }),
   uploadFileWithProgressMock: vi.fn().mockResolvedValue({
     filename: "doc.txt",
     blob_path: "user/sess/doc.txt",
     chunk_count: 1,
     message: "File uploaded successfully"
   }),
+  generateConversationTitleMock: vi.fn().mockResolvedValue({ title: "Greeting Chat" }),
   checkSearchStatusMock: vi.fn().mockResolvedValue(false),
   createAgentPlanMock: vi.fn(),
   runAgentMock: vi.fn(),
@@ -72,7 +83,9 @@ vi.mock("../api", () => ({
   streamChat: streamChatMock,
   getFiles: getFilesMock,
   deleteFile: deleteFileMock,
-  uploadFileWithProgress: uploadFileWithProgressMock
+  deleteConversationSession: deleteConversationSessionMock,
+  uploadFileWithProgress: uploadFileWithProgressMock,
+  generateConversationTitle: generateConversationTitleMock
 }));
 
 vi.mock("../api/agent", () => ({
@@ -98,6 +111,14 @@ describe("App", () => {
       sources: []
     });
     checkSearchStatusMock.mockResolvedValue(false);
+    deleteConversationSessionMock.mockResolvedValue({
+      message: "Conversation deleted successfully",
+      conversation_deleted: true,
+      uploads_deleted: 0,
+      parsed_deleted: 0,
+      plans_deleted: 0,
+      logs_deleted: 0,
+    });
     window.localStorage.clear();
   });
 
@@ -130,8 +151,12 @@ describe("App", () => {
 
     expect(getTokenMock).toHaveBeenCalled();
     expect(streamChatMock).toHaveBeenCalledTimes(1);
-    const [, tokenArg] = streamChatMock.mock.calls[0];
+    const [, tokenArg, , , namingArg] = streamChatMock.mock.calls[0];
     expect(tokenArg).toBe("token");
+    expect(namingArg).toEqual({
+      userDisplayName: "Abdul Hanan",
+      sessionTitle: "Hello",
+    });
   });
 
   it("opens sidebar from mobile menu button", async () => {
@@ -198,6 +223,23 @@ describe("App", () => {
     await waitFor(() => {
       expect(container.querySelectorAll(".nc-message--user")).toHaveLength(1);
       expect(container.querySelectorAll(".nc-message--assistant")).toHaveLength(0);
+    });
+  });
+
+  it("deletes the conversation in backend before removing it locally", async () => {
+    render(<App />);
+
+    await userEvent.type(screen.getByPlaceholderText("Message NeuralChat..."), "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /Open actions for Hello/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete chat" }));
+
+    await waitFor(() => {
+      expect(deleteConversationSessionMock).toHaveBeenCalledWith("token", expect.any(String), {
+        userDisplayName: "Abdul Hanan",
+        sessionTitle: "Hello",
+      });
     });
   });
 });

@@ -14,6 +14,7 @@ const {
   getFilesMock,
   deleteFileMock,
   uploadFileWithProgressMock,
+  generateConversationTitleMock,
   createAgentPlanMock,
   runAgentMock,
   getAgentHistoryMock,
@@ -39,6 +40,7 @@ const {
     chunk_count: 1,
     message: "File uploaded successfully"
   }),
+  generateConversationTitleMock: vi.fn().mockResolvedValue({ title: "Search Results Review" }),
   createAgentPlanMock: vi.fn(),
   runAgentMock: vi.fn(),
   getAgentHistoryMock: vi.fn().mockResolvedValue([]),
@@ -51,7 +53,16 @@ vi.mock("../api", () => ({
   streamChat: streamChatMock,
   getFiles: getFilesMock,
   deleteFile: deleteFileMock,
-  uploadFileWithProgress: uploadFileWithProgressMock
+  deleteConversationSession: vi.fn().mockResolvedValue({
+    message: "Conversation deleted successfully",
+    conversation_deleted: true,
+    uploads_deleted: 0,
+    parsed_deleted: 0,
+    plans_deleted: 0,
+    logs_deleted: 0,
+  }),
+  uploadFileWithProgress: uploadFileWithProgressMock,
+  generateConversationTitle: generateConversationTitleMock
 }));
 
 vi.mock("../api/agent", () => ({
