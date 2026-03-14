@@ -58,6 +58,27 @@ function buildProtectedHeaders(authToken: string, naming?: RequestNamingContext,
   return headers;
 }
 
+async function readErrorMessage(response: Response, fallbackMessage: string): Promise<string> {
+  const responseText = await response.text();
+  if (!responseText) {
+    return fallbackMessage;
+  }
+
+  try {
+    const parsedPayload = JSON.parse(responseText) as { detail?: unknown; message?: unknown };
+    if (typeof parsedPayload.detail === "string" && parsedPayload.detail.trim()) {
+      return parsedPayload.detail.trim();
+    }
+    if (typeof parsedPayload.message === "string" && parsedPayload.message.trim()) {
+      return parsedPayload.message.trim();
+    }
+  } catch {
+    // Fall back to the raw text when the backend did not return JSON.
+  }
+
+  return responseText;
+}
+
 export async function checkHealth(): Promise<boolean> {
   const response = await fetch(`${API_BASE_URL}/api/health`);
   return response.ok;
@@ -286,8 +307,8 @@ export async function deleteConversationSession(
     headers: buildProtectedHeaders(authToken, naming),
   });
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Failed to delete conversation.");
+    const errorText = await readErrorMessage(response, "Failed to delete conversation.");
+    throw new Error(errorText);
   }
   return (await response.json()) as DeleteConversationResponse;
 }
