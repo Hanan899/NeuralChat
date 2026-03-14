@@ -228,6 +228,16 @@ def _normalize_plan(user_goal: str, raw_plan: Any) -> dict[str, Any]:
     else:
         normalized_goal = user_goal
 
+    if not steps_payload:
+        steps_payload = [
+            {
+                "step_number": 1,
+                "description": "Reason through the goal and produce a complete answer.",
+                "tool": None,
+                "tool_input": user_goal.strip() or None,
+            }
+        ]
+
     return {
         "plan_id": normalized_plan_id,
         "goal": normalized_goal,
@@ -757,6 +767,51 @@ async def stream_agent_execution(
     session_title: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     compiled_graph = _build_agent_graph()
+    plan_steps = plan.get("steps", [])
+    if not isinstance(plan_steps, list) or len(plan_steps) == 0:
+        fallback_summary = await build_final_summary(
+            plan.get("goal", ""),
+            [
+                {
+                    "step_number": 1,
+                    "description": "Reason through the goal and produce a complete answer.",
+                    "tool": None,
+                    "tool_input": plan.get("goal", ""),
+                    "result": "The planner returned no executable steps. NeuralChat used a fallback reasoning step instead.",
+                    "status": "done",
+                    "error": None,
+                }
+            ],
+        )
+        yield {
+            "type": "final_state",
+            "plan": {
+                **plan,
+                "steps": [
+                    {
+                        "step_number": 1,
+                        "description": "Reason through the goal and produce a complete answer.",
+                        "tool": None,
+                        "tool_input": plan.get("goal", ""),
+                    }
+                ],
+            },
+            "execution_log": [
+                {
+                    "step_number": 1,
+                    "description": "Reason through the goal and produce a complete answer.",
+                    "tool": None,
+                    "tool_input": plan.get("goal", ""),
+                    "result": "The planner returned no executable steps. NeuralChat used a fallback reasoning step instead.",
+                    "status": "done",
+                    "error": None,
+                }
+            ],
+            "warning_message": "The planner returned no valid steps, so NeuralChat used a fallback reasoning step.",
+            "summary": fallback_summary,
+        }
+        return
+
     graph_state = {
         "plan": plan,
         "user_id": user_id,
