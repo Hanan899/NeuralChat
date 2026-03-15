@@ -45,7 +45,7 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
 
     try {
       const response = await uploadFileWithProgress(authToken, sessionId, file, setUploadProgress, naming);
-      setSuccessText(response.message);
+      setSuccessText(`✓ ${response.message || `${file.name} uploaded successfully`}`);
       setRefreshKey((value) => value + 1);
     } catch (error) {
       const message = error instanceof Error ? error.message : "File upload failed.";
@@ -57,9 +57,7 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
 
   function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0];
-    if (!selectedFile) {
-      return;
-    }
+    if (!selectedFile) return;
     void handleFileUpload(selectedFile);
     event.target.value = "";
   }
@@ -68,9 +66,7 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
     event.preventDefault();
     setIsDragOver(false);
     const droppedFile = event.dataTransfer.files?.[0];
-    if (!droppedFile) {
-      return;
-    }
+    if (!droppedFile) return;
     void handleFileUpload(droppedFile);
   }
 
@@ -78,6 +74,8 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
     <div className="nc-file-upload-modal" role="dialog" aria-modal="true" aria-label="Upload files">
       <div className="nc-file-upload-modal__backdrop" onClick={onClose} />
       <section className="nc-file-upload-modal__panel">
+
+        {/* Header */}
         <header className="nc-file-upload-modal__header">
           <h2>Upload files</h2>
           <button type="button" aria-label="Close file upload" onClick={onClose}>
@@ -85,22 +83,17 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
           </button>
         </header>
 
+        {/* Dropzone */}
         <button
           type="button"
           className={`nc-file-upload-dropzone ${isDragOver ? "nc-file-upload-dropzone--active" : ""}`}
           onClick={() => inputReference.current?.click()}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setIsDragOver(true);
-          }}
-          onDragLeave={(event) => {
-            event.preventDefault();
-            setIsDragOver(false);
-          }}
+          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+          onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
           onDrop={handleDrop}
           disabled={isUploading}
         >
-          <strong>Drag and drop files here, or click to browse</strong>
+          <strong>{isDragOver ? "Drop to upload" : "Drag & drop or click to browse"}</strong>
           <span>{ACCEPTED_EXTENSIONS_TEXT}</span>
         </button>
 
@@ -113,16 +106,21 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
           aria-label="Browse files"
         />
 
+        {/* Progress */}
         {isUploading ? (
           <div className="nc-upload-progress" aria-label="Upload progress">
-            <div className="nc-upload-progress__bar" style={{ width: `${uploadProgress}%` }} />
+            <div className="nc-upload-progress__bar">
+              <div style={{ width: `${uploadProgress}%` }} />
+            </div>
             <span>{uploadProgress}%</span>
           </div>
         ) : null}
 
+        {/* Status messages */}
         {errorText ? <p className="nc-file-upload-error">{errorText}</p> : null}
         {successText ? <p className="nc-file-upload-success">{successText}</p> : null}
 
+        {/* File list */}
         <FileList
           authToken={authToken}
           sessionId={sessionId}
@@ -130,6 +128,7 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
           refreshKey={refreshKey}
           onFilesChange={onFilesChange}
         />
+
       </section>
     </div>
   );

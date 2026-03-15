@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { deleteFile, getFiles } from "../api";
 import type { RequestNamingContext } from "../api";
@@ -8,124 +8,139 @@ interface FileListProps {
   authToken: string;
   sessionId: string;
   naming?: RequestNamingContext;
-  refreshKey: number;
+  refreshKey?: number;
   onFilesChange?: (files: UploadedFileItem[]) => void;
 }
 
-function FileIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
-      <path
-        d="M7.5 5.5H13L17.5 10V18.5C17.5 19.3 16.8 20 16 20H7.5C6.7 20 6 19.3 6 18.5V7C6 6.2 6.7 5.5 7.5 5.5Z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinejoin="round"
-      />
-      <path d="M13 5.5V10H17.5" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-    </svg>
-  );
+function getFileIcon(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") return "📄";
+  if (["doc", "docx"].includes(ext)) return "📝";
+  if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) return "🖼️";
+  if (ext === "csv") return "📊";
+  if (ext === "txt") return "📃";
+  return "📁";
 }
 
-function DeleteIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
-      <path d="M5 7H19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M9 7V5.8C9 5.4 9.3 5 9.8 5H14.2C14.7 5 15 5.4 15 5.8V7" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M8 7L8.6 18.1C8.7 19.2 9.6 20 10.7 20H13.3C14.4 20 15.3 19.2 15.4 18.1L16 7" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M10.5 11V16M13.5 11V16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function formatUploadedAt(timestamp: string): string {
-  if (!timestamp) {
-    return "";
-  }
-  const dateValue = new Date(timestamp);
-  if (Number.isNaN(dateValue.getTime())) {
-    return "";
-  }
-  return dateValue.toLocaleString();
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function FileList({ authToken, sessionId, naming, refreshKey, onFilesChange }: FileListProps) {
   const [files, setFiles] = useState<UploadedFileItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
   const [errorText, setErrorText] = useState("");
 
-  const loadFiles = useCallback(async () => {
+  useEffect(() => {
+    if (!authToken || !sessionId) return;
+
     setIsLoading(true);
     setErrorText("");
 
-    try {
-      const payload = await getFiles(authToken, sessionId, naming);
-      setFiles(payload.files);
-      onFilesChange?.(payload.files);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load uploaded files.";
-      setErrorText(message);
-      setFiles([]);
-      onFilesChange?.([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [authToken, sessionId, naming, onFilesChange]);
-
-  useEffect(() => {
-    void loadFiles();
-  }, [loadFiles, refreshKey]);
+    getFiles(authToken, sessionId, naming)
+      .then((response) => {
+        setFiles(response.files);
+        onFilesChange?.(response.files);
+      })
+      .catch(() => setErrorText("Could not load files."))
+      .finally(() => setIsLoading(false));
+  }, [authToken, sessionId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDelete(filename: string) {
+    if (deletingFilename) return;
+    setDeletingFilename(filename);
     setErrorText("");
+
     try {
       await deleteFile(authToken, sessionId, filename, naming);
-      const remainingFiles = files.filter((fileItem) => fileItem.filename !== filename);
-      setFiles(remainingFiles);
-      onFilesChange?.(remainingFiles);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to delete file.";
-      setErrorText(message);
+      const updated = files.filter((f) => f.filename !== filename);
+      setFiles(updated);
+      onFilesChange?.(updated);
+    } catch {
+      setErrorText(`Failed to delete "${filename}".`);
+    } finally {
+      setDeletingFilename(null);
     }
   }
 
   return (
-    <section className="nc-file-list" aria-label="Uploaded files">
-      <header className="nc-file-list__header">
-        <h3>Uploaded files</h3>
-      </header>
+    <div className="nc-file-list">
+      <div className="nc-file-list__header">
+        <span>Uploaded files</span>
+        {files.length > 0 ? (
+          <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-secondary)" }}>
+            {files.length} file{files.length !== 1 ? "s" : ""}
+          </span>
+        ) : null}
+      </div>
+
+      {errorText ? (
+        <p style={{ margin: "0 20px 12px", fontSize: "13px", color: "#dc2626" }}>{errorText}</p>
+      ) : null}
 
       {isLoading ? (
-        <div className="nc-file-list__skeleton" aria-label="Loading files">
-          <div className="nc-file-list__skeleton-row" />
-          <div className="nc-file-list__skeleton-row" />
-          <div className="nc-file-list__skeleton-row" />
+        <div className="nc-file-list__empty">
+          <svg viewBox="0 0 24 24" fill="none" width="28" height="28">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 4" />
+          </svg>
+          <span>Loading files…</span>
         </div>
-      ) : null}
-
-      {!isLoading && files.length === 0 ? (
-        <p className="nc-file-list__empty">No files uploaded yet — upload a PDF, DOCX, or TXT to ask questions about it</p>
-      ) : null}
-
-      {!isLoading && files.length > 0 ? (
-        <ul className="nc-file-list__rows">
-          {files.map((fileItem) => (
-            <li key={fileItem.blob_path} className="nc-file-list__row">
-              <span className="nc-file-list__icon" aria-hidden="true">
-                <FileIcon />
+      ) : files.length === 0 ? (
+        <div className="nc-file-list__empty">
+          <svg viewBox="0 0 24 24" fill="none" width="32" height="32">
+            <path d="M7.5 5.5H13L17.5 10V18.5C17.5 19.3 16.8 20 16 20H7.5C6.7 20 6 19.3 6 18.5V7C6 6.2 6.7 5.5 7.5 5.5Z"
+              stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+            <path d="M13 5.5V10H17.5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+          </svg>
+          <span>No files uploaded yet</span>
+          <span style={{ fontSize: "12px", opacity: 0.7 }}>Upload a PDF, DOCX, or TXT to ask questions about it</span>
+        </div>
+      ) : (
+        <ul className="nc-file-list__items" role="list">
+          {files.map((file) => (
+            <li key={file.blob_path} className="nc-file-row" role="listitem">
+              <span className="nc-file-row__icon" aria-hidden="true">
+                {getFileIcon(file.filename)}
               </span>
-              <span className="nc-file-list__meta">
-                <span className="nc-file-list__name">{fileItem.filename}</span>
-                {fileItem.uploaded_at ? <span className="nc-file-list__time">{formatUploadedAt(fileItem.uploaded_at)}</span> : null}
+              <span className="nc-file-row__meta">
+                <span className="nc-file-row__name" title={file.filename}>
+                  {file.filename}
+                </span>
+                <span className="nc-file-row__info">
+                  {(file as unknown as Record<string, unknown>)["chunk_count"] != null
+                    ? `${String((file as unknown as Record<string, unknown>)["chunk_count"])} chunks`
+                    : "Ready"}
+                  {(file as unknown as Record<string, unknown>)["size"] != null
+                    ? ` · ${formatBytes(Number((file as unknown as Record<string, unknown>)["size"]))}`
+                    : ""}
+                </span>
               </span>
-              <button type="button" aria-label={`Delete ${fileItem.filename}`} onClick={() => void handleDelete(fileItem.filename)}>
-                <DeleteIcon />
+              <button
+                type="button"
+                className="nc-file-row__delete"
+                aria-label={`Delete ${file.filename}`}
+                disabled={deletingFilename === file.filename}
+                onClick={() => void handleDelete(file.filename)}
+              >
+                {deletingFilename === file.filename ? (
+                  <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
+                    <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="2"
+                      strokeDasharray="25" strokeDashoffset="25" style={{ animation: "nc-spin 0.8s linear infinite" }}/>
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M6 7H18M10 11V17M14 11V17M9 7V5H15V7M19 7L18 19C18 19.6 17.4 20 17 20H7C6.6 20 6 19.6 6 19L5 7"
+                      stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
               </button>
             </li>
           ))}
         </ul>
-      ) : null}
-
-      {errorText ? <p className="nc-file-list__error">{errorText}</p> : null}
-    </section>
+      )}
+    </div>
   );
 }

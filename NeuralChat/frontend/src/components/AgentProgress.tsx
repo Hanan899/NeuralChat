@@ -276,8 +276,9 @@ export function AgentProgress({ task, onRun }: AgentProgressProps) {
     () =>
       task.plan.steps.map((step) => {
         const result = task.stepResults.find((item) => item.step_number === step.step_number);
-        const status =
-          result?.status ?? (task.runningStepNumber === step.step_number ? "running" : "pending");
+        const status = (
+          result?.status ?? (task.runningStepNumber === step.step_number ? "running" : "pending")
+        ) as "done" | "running" | "failed" | "pending";
         return {
           ...step,
           status,
