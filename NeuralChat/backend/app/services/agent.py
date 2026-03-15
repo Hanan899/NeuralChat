@@ -40,6 +40,12 @@ AVAILABLE_AGENT_TOOLS = ["web_search", "read_file", "memory_recall"]
 PLANNER_SYSTEM_PROMPT = (
     "You are a task planner. Break this goal into clear steps. "
     "Available tools: {available_tools}. "
+    "IMPORTANT TOOL RULES: "
+    "- Only use 'read_file' if the user explicitly mentions an uploaded file or attachment. "
+    "  Never invent or assume a filename — if no file was uploaded, do NOT use read_file. "
+    "- Only use 'web_search' for questions requiring current or external information. "
+    "- Use 'memory_recall' only if the step needs the user's stored preferences. "
+    "- Use null for pure reasoning steps that need no external data. "
     "Return JSON only: "
     '{{"plan_id": "uuid", "goal": "str", "steps": ['
     '{{"step_number": 1, "description": "str", "tool": "str or null", "tool_input": "str or null"}}'
@@ -466,16 +472,34 @@ async def execute_step(
             }
 
         if tool == "read_file":
-            file_result = await asyncio.to_thread(_read_session_file_context, user_id, session_id, step, display_name, session_title)
-            return {
-                "step_number": step_number,
-                "description": description,
-                "tool": tool,
-                "tool_input": tool_input,
-                "result": file_result,
-                "status": "done",
-                "error": None,
-            }
+            try:
+                file_result = await asyncio.to_thread(
+                    _read_session_file_context, user_id, session_id, step, display_name, session_title
+                )
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": tool,
+                    "tool_input": tool_input,
+                    "result": file_result,
+                    "status": "done",
+                    "error": None,
+                }
+            except ValueError:
+                # No uploaded file found — fall back to reasoning so the step still completes.
+                LOGGER.warning(
+                    "read_file tool found no file for step %s — falling back to reasoning.", step_number
+                )
+                reasoning_result = await _run_reasoning_step(goal=goal, step=step, execution_log=execution_log)
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": None,
+                    "tool_input": tool_input,
+                    "result": reasoning_result or "No file was available; reasoned through the step instead.",
+                    "status": "done",
+                    "error": None,
+                }
 
         if tool == "memory_recall":
             profile = await asyncio.to_thread(load_profile, user_id, display_name)
