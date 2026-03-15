@@ -78,7 +78,7 @@ STORE = init_store()
 
 app = FastAPI(title="NeuralChat Backend", version=APP_VERSION)
 
-raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,neuralchat-adgueyh0gucffsbp.eastus-01.azurewebsites.net")
 allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
 
 app.add_middleware(

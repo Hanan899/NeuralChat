@@ -54,6 +54,50 @@ function buildInitials(userName: string): string {
   return userName.slice(0, 2).toUpperCase();
 }
 
+// Neural network logo — matches the preview exactly.
+// 3 layers: 2 input nodes → 3 hidden (purple) → 2 output nodes.
+function NeuralNetworkLogo() {
+  return (
+    <svg
+      viewBox="0 0 36 36"
+      width="36"
+      height="36"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      {/* Input → Hidden connections */}
+      <line x1="5"  y1="9"  x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.50" />
+      <line x1="5"  y1="9"  x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50" />
+      <line x1="5"  y1="9"  x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28" />
+      <line x1="5"  y1="27" x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.28" />
+      <line x1="5"  y1="27" x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50" />
+      <line x1="5"  y1="27" x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50" />
+
+      {/* Hidden → Output connections */}
+      <line x1="16" y1="5"  x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50" />
+      <line x1="16" y1="5"  x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28" />
+      <line x1="16" y1="18" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60" />
+      <line x1="16" y1="18" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60" />
+      <line x1="16" y1="31" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28" />
+      <line x1="16" y1="31" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50" />
+
+      {/* Input nodes — muted */}
+      <circle cx="5"  cy="9"  r="2.8" fill="currentColor" fillOpacity="0.75" />
+      <circle cx="5"  cy="27" r="2.8" fill="currentColor" fillOpacity="0.75" />
+
+      {/* Hidden nodes — purple accent */}
+      <circle cx="16" cy="5"  r="2.8" fill="#7F77DD" />
+      <circle cx="16" cy="18" r="3.4" fill="#7F77DD" />
+      <circle cx="16" cy="31" r="2.8" fill="#7F77DD" />
+
+      {/* Output nodes — full color */}
+      <circle cx="31" cy="12" r="2.8" fill="currentColor" />
+      <circle cx="31" cy="24" r="2.8" fill="currentColor" />
+    </svg>
+  );
+}
+
 function ShortcutIcon({ id }: { id: ShortcutId }) {
   if (id === "new") {
     return (
@@ -277,14 +321,15 @@ export function Sidebar({
     >
       <div className="nc-sidebar__top">
         <div className="nc-brand-row">
-          <div className="nc-brand-lockup">
-            <span className="nc-brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="8.3" stroke="currentColor" strokeWidth="1.7" />
-                <path d="M8 12C8 9.8 9.8 8 12 8C14.2 8 16 9.8 16 12C16 14.2 14.2 16 12 16" stroke="currentColor" strokeWidth="1.7" />
-              </svg>
+          <div className="nc-brand-lockup" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {/* Neural network logo */}
+            <span className="nc-brand-mark" aria-hidden="true" style={{ flexShrink: 0 }}>
+              <NeuralNetworkLogo />
             </span>
-            <span className="nc-brand-name">NeuralChat</span>
+            <span style={{ display: "flex", flexDirection: "column", gap: "2px", lineHeight: 1 }}>
+              <span className="nc-brand-name" style={{ fontWeight: 600, fontSize: "15px", whiteSpace: "nowrap" }}>NeuralChat</span>
+              <span className="nc-brand-subtitle" style={{ fontSize: "11px", opacity: 0.5, whiteSpace: "nowrap" }}>AI Chat Assistant</span>
+            </span>
           </div>
           <button type="button" className="nc-sidebar-pane-btn" onClick={onCloseMobile} aria-label="Close sidebar">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
