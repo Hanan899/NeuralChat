@@ -1405,22 +1405,37 @@ function ChatShell() {
   }
 
   async function handleOpenFileUpload() {
+    // Open modal immediately — don't wait for token
     if (!activeConversationId) {
+      showToast("Start a chat first before adding files.", "info");
       return;
     }
 
+    // Open modal right away so user sees instant feedback
+    setIsFileModalOpen(true);
+    setErrorText("");
+
+    // Fetch token in background and set it
     try {
-      const authToken = await getToken();
+      let authToken = await getToken();
+
+      // Retry once if token is null (Clerk sometimes needs a second call)
       if (!authToken) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        authToken = await getToken();
+      }
+
+      if (!authToken) {
+        setIsFileModalOpen(false);
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
+
       setFileModalAuthToken(authToken);
-      setIsFileModalOpen(true);
-      setErrorText("");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to open file upload.";
       setErrorText(message);
       showToast(message, "error");
+      setIsFileModalOpen(false);
     }
   }
 
@@ -1714,14 +1729,17 @@ function ChatShell() {
         </aside>
       ) : null}
 
-      {isFileModalOpen && activeConversationId && fileModalAuthToken ? (
+      {isFileModalOpen && activeConversationId ? (
         <FileUpload
           open={isFileModalOpen}
           authToken={fileModalAuthToken}
           sessionId={activeConversationId}
           naming={activeRequestNaming}
           onFilesChange={handleUploadedFilesChange}
-          onClose={() => setIsFileModalOpen(false)}
+          onClose={() => {
+            setIsFileModalOpen(false);
+            setFileModalAuthToken("");
+          }}
         />
       ) : null}
 
@@ -1780,4 +1798,4 @@ export default function App() {
       </SignedIn>
     </>
   );
-}
+}               
