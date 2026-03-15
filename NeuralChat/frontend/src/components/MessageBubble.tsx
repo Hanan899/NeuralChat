@@ -1,25 +1,28 @@
 import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import hljs from "highlight.js";
 
+// Normalizes various LaTeX delimiters that GPT outputs into standard KaTeX format.
+// GPT often uses [ ... ] for block math and ( ... ) for inline instead of $$ and $.
+function normalizeMath(raw: string): string {
+  let text = raw;
+  // \[ ... \] block math → $$ ... $$
+  text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, eq) => `\n$$\n${eq.trim()}\n$$\n`);
+  // \( ... \) inline math → $ ... $
+  text = text.replace(/\\\(([\s\S]*?)\\\)/g, (_, eq) => `$${eq.trim()}$`);
+  // GPT-5 bare [ ... ] on its own lines → $$ ... $$
+  text = text.replace(/^\[\s*\n([\s\S]*?)\n\s*\]$/gm, (_, eq) => `$$\n${eq.trim()}\n$$`);
+  return text;
+}
+
 import type { ChatMessage } from "../types";
-import { AgentProgress } from "./AgentProgress";
-import { SearchSources } from "./SearchSources";
 
-interface MessageBubbleProps {
-  message: ChatMessage;
-  isStreaming?: boolean;
-  showAssistantLabel?: boolean;
-  onRetry?: () => void;
-  onRunAgentPlan?: () => void;
-}
-
-interface CodeBlockProps {
-  className?: string;
-  children?: React.ReactNode;
-}
-
+// Normalizes various LaTeX delimiters that GPT outputs into standard KaTeX format.
+// GPT often uses [ ... ] for block math and ( ... ) for inline instead of $$ and $.
 function UiIcon({
   kind,
   className
@@ -297,7 +300,9 @@ export function MessageBubble({
           <>
             <div className="nc-markdown">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex]}
+                children={normalizeMath(message.content)}
                 components={{
                   code({ className, children, ...props }) {
                     const isInline = !(className && className.startsWith("language-"));
@@ -311,9 +316,7 @@ export function MessageBubble({
                     return <CodeBlock className={className}>{children}</CodeBlock>;
                   }
                 }}
-              >
-                {message.content}
-              </ReactMarkdown>
+              />
 
               {isStreaming ? <span className="typing-cursor" aria-hidden="true" /> : null}
             </div>

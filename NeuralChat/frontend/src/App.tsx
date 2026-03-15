@@ -387,6 +387,9 @@ function ChatShell() {
   const [fileModalAuthToken, setFileModalAuthToken] = useState("");
   const [isAgentHistoryOpen, setIsAgentHistoryOpen] = useState(false);
   const [agentHistoryAuthToken, setAgentHistoryAuthToken] = useState("");
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const notifPanelRef = useRef<HTMLDivElement | null>(null);
+  const notifBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const submitLockRef = useRef(false);
@@ -473,6 +476,24 @@ function ChatShell() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    function handleOutsideClick(event: MouseEvent) {
+      const target = event.target as Element;
+      if (
+        notifPanelRef.current &&
+        !notifPanelRef.current.contains(target) &&
+        notifBtnRef.current &&
+        !notifBtnRef.current.contains(target)
+      ) {
+        setIsNotifOpen(false);
+      }
+    }
+    if (isNotifOpen) {
+      document.addEventListener("mousedown", handleOutsideClick);
+    }
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [isNotifOpen]);
 
   useEffect(() => {
     if (!userId) {
@@ -1450,22 +1471,7 @@ function ChatShell() {
 
   return (
     <main className={`nc-shell ${isDiagnosticsOpen ? "nc-shell--with-panel" : ""}`}>
-      {toasts.length > 0 ? (
-        <div className="nc-toast-stack" aria-live="polite" aria-label="Notifications">
-          {toasts.map((toast) => (
-            <div
-              key={toast.id}
-              className={`nc-toast nc-toast--${toast.tone}`}
-              role={toast.tone === "error" ? "alert" : "status"}
-            >
-              <span>{toast.message}</span>
-              <button type="button" aria-label="Dismiss notification" onClick={() => removeToast(toast.id)}>
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
+
 
       <Sidebar
         historyItems={historyItems}
@@ -1512,6 +1518,7 @@ function ChatShell() {
           </div>
 
           <div className="nc-topbar__right">
+            {/* Agents — icon + label, purple-tinted */}
             <button
               type="button"
               className="nc-topbar-btn nc-topbar-btn--icon-label"
@@ -1521,9 +1528,11 @@ function ChatShell() {
               <UiIcon kind="agent" className="nc-ui-icon" />
               <span>Agents</span>
             </button>
+
+            {/* Share — clean pill */}
             <button
               type="button"
-              className="nc-topbar-btn"
+              className="nc-topbar-btn nc-topbar-btn--share"
               aria-label="Share chat"
               onClick={() => {
                 if (activeConversationId) {
@@ -1533,15 +1542,85 @@ function ChatShell() {
             >
               Share
             </button>
+
+            {/* Model selector */}
             <ModelSelector value={model} onChange={setModel} variant="topbar" />
+
+            {/* Debug — muted, secondary */}
             <button
               type="button"
-              className="nc-topbar-btn"
+              className="nc-topbar-btn nc-topbar-btn--muted"
               aria-label="Toggle diagnostics"
               onClick={() => setIsDiagnosticsOpen((value) => !value)}
             >
               Debug
             </button>
+
+            {/* Notification bell */}
+            <div className="nc-notif-wrap">
+              <button
+                ref={notifBtnRef}
+                type="button"
+                className={`nc-notif-btn ${isNotifOpen ? "nc-notif-btn--open" : ""}`}
+                aria-label="Notifications"
+                aria-expanded={isNotifOpen}
+                onClick={() => setIsNotifOpen((v) => !v)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="nc-notif-icon">
+                  <path d="M18 8.5C18 5.46 15.54 3 12.5 3S7 5.46 7 8.5c0 4.63-2 6-2 6h15s-2-1.37-2-6Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/>
+                  <path d="M14.17 19a2 2 0 0 1-3.34 0" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
+                </svg>
+                {toasts.length > 0 ? (
+                  <span className="nc-notif-badge">{toasts.length > 9 ? "9+" : toasts.length}</span>
+                ) : null}
+              </button>
+
+              {isNotifOpen ? (
+                <div ref={notifPanelRef} className="nc-notif-panel" role="region" aria-label="Notifications">
+                  <div className="nc-notif-panel__header">
+                    <span className="nc-notif-panel__title">Notifications</span>
+                    {toasts.length > 0 ? (
+                      <button
+                        type="button"
+                        className="nc-notif-panel__clear"
+                        onClick={() => {
+                          toasts.forEach((t) => removeToast(t.id));
+                        }}
+                      >
+                        Clear all
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {toasts.length === 0 ? (
+                    <div className="nc-notif-empty">
+                      <svg viewBox="0 0 24 24" fill="none" className="nc-notif-empty__icon">
+                        <path d="M18 8.5C18 5.46 15.54 3 12.5 3S7 5.46 7 8.5c0 4.63-2 6-2 6h15s-2-1.37-2-6Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+                        <path d="M14.17 19a2 2 0 0 1-3.34 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                      </svg>
+                      <p>No notifications</p>
+                    </div>
+                  ) : (
+                    <ul className="nc-notif-list">
+                      {[...toasts].reverse().map((toast) => (
+                        <li key={toast.id} className={`nc-notif-item nc-notif-item--${toast.tone}`}>
+                          <span className="nc-notif-item__dot" />
+                          <span className="nc-notif-item__msg">{toast.message}</span>
+                          <button
+                            type="button"
+                            className="nc-notif-item__dismiss"
+                            aria-label="Dismiss"
+                            onClick={() => removeToast(toast.id)}
+                          >
+                            ×
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
 
