@@ -10,6 +10,19 @@ import type { ChatMessage } from "../types";
 import { AgentProgress } from "./AgentProgress";
 import { SearchSources } from "./SearchSources";
 
+interface CodeBlockProps {
+  className?: string;
+  children?: React.ReactNode;
+}
+
+interface MessageBubbleProps {
+  message: ChatMessage;
+  isStreaming?: boolean;
+  showAssistantLabel?: boolean;
+  onRetry?: () => void;
+  onRunAgentPlan?: () => void;
+}
+
 // Normalizes various LaTeX delimiters that GPT outputs into standard KaTeX format.
 // GPT often uses [ ... ] for block math and ( ... ) for inline instead of $$ and $.
 function normalizeMath(raw: string | null | undefined): string {
@@ -236,7 +249,7 @@ export function MessageBubble({
         <article className="nc-user-bubble">
           {Array.isArray(message.attachedFiles) && message.attachedFiles.length > 0 ? (
             <div className="nc-user-attachments" aria-label="Files attached to this message">
-              {message.attachedFiles.map((fileItem) => (
+              {message.attachedFiles.map((fileItem: { blob_path: string; filename: string }) => (
                 <span key={fileItem.blob_path} className="nc-user-attachment-chip" title={fileItem.filename}>
                   <UiIcon kind="file" className="nc-inline-ui-icon" />
                   <span>{fileItem.filename}</span>
