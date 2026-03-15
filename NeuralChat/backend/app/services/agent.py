@@ -10,7 +10,7 @@ import uuid
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Optional, TypedDict
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContainerClient
@@ -53,6 +53,23 @@ SUMMARY_SYSTEM_PROMPT = (
     "You are NeuralChat Agent. Write a clear final answer for the user based on the goal and step results. "
     "Be concise, factual, and structured when useful."
 )
+
+
+# AgentState TypedDict — defines all keys carried through the LangGraph state machine.
+# total=False means nodes only need to return the keys they actually changed.
+class AgentState(TypedDict, total=False):
+    plan: dict
+    total_steps: int
+    user_id: str
+    display_name: Optional[str]
+    session_id: str
+    session_title: Optional[str]
+    current_step_index: int
+    execution_log: list
+    stop_execution: bool
+    warning_message: Optional[str]
+    last_event: Optional[dict]
+    started_at: float
 
 
 # This helper builds the Azure Blob container used for storing agent plans and execution logs.
@@ -385,7 +402,6 @@ def load_task_plan(
     session_title: str | None = None,
 ) -> dict[str, Any] | None:
     agents_container = _get_agents_container()
-    canonical_blob_name = _plan_blob_name(user_id, plan_id, display_name, session_id, session_title) if session_id else None
     existing_blob_name = _find_existing_plan_blob(agents_container, user_id, plan_id)
     if existing_blob_name is None:
         return None
@@ -533,7 +549,6 @@ def load_execution_log(
     session_title: str | None = None,
 ) -> list[dict[str, Any]]:
     agents_container = _get_agents_container()
-    canonical_blob_name = _log_blob_name(user_id, plan_id, display_name, session_id, session_title) if session_id else None
     existing_blob_name = _find_existing_log_blob(agents_container, user_id, plan_id)
     if existing_blob_name is None:
         return []
@@ -679,34 +694,96 @@ async def build_final_summary(goal: str, execution_log: list[dict[str, Any]]) ->
 
 
 # This helper builds the LangGraph state machine used for sequential agent execution.
+# FIX: Every node explicitly passes through ALL fields needed by downstream nodes because
+# LangGraph with stream_mode="updates" only delivers the partial dict returned by the
+# previous node — it does NOT automatically carry the full initial graph_state forward.
 def _build_agent_graph() -> Any:
-    graph_builder = StateGraph(dict)
+    graph_builder = StateGraph(AgentState)
 
-    async def step_start_node(state: dict[str, Any]) -> dict[str, Any]:
-        current_step = state["plan"]["steps"][state["current_step_index"]]
+    async def step_start_node(state: AgentState) -> dict[str, Any]:
+        plan = state.get("plan") or {}
+        steps = plan.get("steps", [])
+        current_step_index = state.get("current_step_index", 0)
+
+        # Always pass through all identity + timing fields so downstream nodes have them.
+        passthrough = {
+            "plan": plan,
+            "user_id": state.get("user_id"),
+            "session_id": state.get("session_id"),
+            "display_name": state.get("display_name"),
+            "session_title": state.get("session_title"),
+            "started_at": state.get("started_at"),
+            "total_steps": state.get("total_steps"),
+            "execution_log": state.get("execution_log", []),
+            "current_step_index": current_step_index,
+            "stop_execution": state.get("stop_execution", False),
+            "warning_message": state.get("warning_message"),
+        }
+
+        if current_step_index >= len(steps):
+            return {
+                **passthrough,
+                "last_event": {
+                    "type": "warning",
+                    "message": "No remaining steps to start.",
+                },
+            }
+
+        current_step = steps[current_step_index]
         return {
+            **passthrough,
             "last_event": {
                 "type": "step_start",
                 "step_number": current_step["step_number"],
                 "description": current_step["description"],
-            }
+            },
         }
 
-    async def step_execute_node(state: dict[str, Any]) -> dict[str, Any]:
-        current_step = state["plan"]["steps"][state["current_step_index"]]
+    async def step_execute_node(state: AgentState) -> dict[str, Any]:
+        plan = state.get("plan") or {}
+        steps = plan.get("steps", [])
+        current_step_index = state.get("current_step_index", 0)
+        execution_log = state.get("execution_log") or []
+
+        # Always pass through all identity + timing fields so loop_guard_node has them.
+        passthrough = {
+            "plan": plan,
+            "user_id": state.get("user_id"),
+            "session_id": state.get("session_id"),
+            "display_name": state.get("display_name"),
+            "session_title": state.get("session_title"),
+            "started_at": state.get("started_at"),
+            "total_steps": state.get("total_steps"),
+            "stop_execution": state.get("stop_execution", False),
+            "warning_message": state.get("warning_message"),
+        }
+
+        if current_step_index >= len(steps):
+            return {
+                **passthrough,
+                "execution_log": execution_log,
+                "current_step_index": current_step_index,
+                "last_event": {
+                    "type": "warning",
+                    "message": "No remaining steps to execute.",
+                },
+            }
+
+        current_step = steps[current_step_index]
         result = await execute_step(
             current_step,
             user_id=state["user_id"],
             session_id=state["session_id"],
-            goal=state["plan"]["goal"],
-            execution_log=state["execution_log"],
+            goal=str(plan.get("goal", "")),
+            execution_log=execution_log,
             display_name=state.get("display_name"),
             session_title=state.get("session_title"),
         )
-        updated_log = state["execution_log"] + [result]
+
         return {
-            "execution_log": updated_log,
-            "current_step_index": state["current_step_index"] + 1,
+            **passthrough,
+            "execution_log": execution_log + [result],
+            "current_step_index": current_step_index + 1,
             "last_event": {
                 "type": "step_done",
                 "step_number": result["step_number"],
@@ -716,10 +793,29 @@ def _build_agent_graph() -> Any:
             },
         }
 
-    async def loop_guard_node(state: dict[str, Any]) -> dict[str, Any]:
-        elapsed_seconds = time.perf_counter() - state["started_at"]
+    async def loop_guard_node(state: AgentState) -> dict[str, Any]:
+        # Safe subtraction: fall back to 0 elapsed if started_at is somehow None.
+        started_at = state.get("started_at")
+        elapsed_seconds = (time.perf_counter() - started_at) if started_at is not None else 0.0
+
+        total_steps = state.get("total_steps") or len((state.get("plan") or {}).get("steps", []))
+
+        # Pass through all fields so step_start_node (next loop iteration) has them.
+        return_base: dict[str, Any] = {
+            "plan": state.get("plan"),
+            "user_id": state.get("user_id"),
+            "session_id": state.get("session_id"),
+            "display_name": state.get("display_name"),
+            "session_title": state.get("session_title"),
+            "started_at": started_at,
+            "total_steps": total_steps,
+            "current_step_index": state.get("current_step_index", 0),
+            "execution_log": state.get("execution_log", []),
+        }
+
         if elapsed_seconds >= AGENT_TIMEOUT_SECONDS:
             return {
+                **return_base,
                 "stop_execution": True,
                 "warning_message": f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds.",
                 "last_event": {
@@ -728,8 +824,9 @@ def _build_agent_graph() -> Any:
                 },
             }
 
-        if check_for_loop(state["execution_log"]):
+        if check_for_loop(state.get("execution_log") or []):
             return {
+                **return_base,
                 "stop_execution": True,
                 "warning_message": "Agent stopped: repeated tool calls detected.",
                 "last_event": {
@@ -738,7 +835,12 @@ def _build_agent_graph() -> Any:
                 },
             }
 
-        return {"last_event": None}
+        return {
+            **return_base,
+            "stop_execution": False,
+            "warning_message": state.get("warning_message"),
+            "last_event": None,
+        }
 
     graph_builder.add_node("step_start", step_start_node)
     graph_builder.add_node("step_execute", step_execute_node)
@@ -747,10 +849,10 @@ def _build_agent_graph() -> Any:
     graph_builder.add_edge("step_start", "step_execute")
     graph_builder.add_edge("step_execute", "loop_guard")
 
-    def route_after_loop_guard(state: dict[str, Any]) -> str:
+    def route_after_loop_guard(state: AgentState) -> str:
         if state.get("stop_execution"):
             return END
-        if state.get("current_step_index", 0) >= len(state["plan"].get("steps", [])):
+        if state.get("current_step_index", 0) >= state.get("total_steps", 0):
             return END
         return "step_start"
 
@@ -768,21 +870,20 @@ async def stream_agent_execution(
 ) -> AsyncIterator[dict[str, Any]]:
     compiled_graph = _build_agent_graph()
     plan_steps = plan.get("steps", [])
+
     if not isinstance(plan_steps, list) or len(plan_steps) == 0:
-        fallback_summary = await build_final_summary(
-            plan.get("goal", ""),
-            [
-                {
-                    "step_number": 1,
-                    "description": "Reason through the goal and produce a complete answer.",
-                    "tool": None,
-                    "tool_input": plan.get("goal", ""),
-                    "result": "The planner returned no executable steps. NeuralChat used a fallback reasoning step instead.",
-                    "status": "done",
-                    "error": None,
-                }
-            ],
-        )
+        fallback_log = [
+            {
+                "step_number": 1,
+                "description": "Reason through the goal and produce a complete answer.",
+                "tool": None,
+                "tool_input": plan.get("goal", ""),
+                "result": "The planner returned no executable steps. NeuralChat used a fallback reasoning step instead.",
+                "status": "done",
+                "error": None,
+            }
+        ]
+        fallback_summary = await build_final_summary(plan.get("goal", ""), fallback_log)
         yield {
             "type": "final_state",
             "plan": {
@@ -796,24 +897,15 @@ async def stream_agent_execution(
                     }
                 ],
             },
-            "execution_log": [
-                {
-                    "step_number": 1,
-                    "description": "Reason through the goal and produce a complete answer.",
-                    "tool": None,
-                    "tool_input": plan.get("goal", ""),
-                    "result": "The planner returned no executable steps. NeuralChat used a fallback reasoning step instead.",
-                    "status": "done",
-                    "error": None,
-                }
-            ],
+            "execution_log": fallback_log,
             "warning_message": "The planner returned no valid steps, so NeuralChat used a fallback reasoning step.",
             "summary": fallback_summary,
         }
         return
 
-    graph_state = {
+    graph_state: AgentState = {
         "plan": plan,
+        "total_steps": len(plan.get("steps", [])),
         "user_id": user_id,
         "display_name": display_name,
         "session_id": session_id,
@@ -839,15 +931,15 @@ async def stream_agent_execution(
     if graph_state.get("warning_message") == f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds.":
         final_summary = (
             f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds. "
-            f"Completed {len(graph_state['execution_log'])} step(s) before stopping."
+            f"Completed {len(graph_state.get('execution_log', []))} step(s) before stopping."
         )
     else:
-        final_summary = await build_final_summary(plan.get("goal", ""), graph_state["execution_log"])
+        final_summary = await build_final_summary(plan.get("goal", ""), graph_state.get("execution_log", []))
 
     yield {
         "type": "final_state",
         "plan": plan,
-        "execution_log": graph_state["execution_log"],
+        "execution_log": graph_state.get("execution_log", []),
         "warning_message": graph_state.get("warning_message"),
         "summary": final_summary,
     }

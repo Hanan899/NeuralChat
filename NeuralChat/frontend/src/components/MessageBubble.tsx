@@ -28,10 +28,42 @@ function UiIcon({
   className?: string;
 }) {
   if (kind === "brand") {
+    // Neural network logo — matches the app-wide brand mark exactly.
+    // Sized at 20×20 to fit neatly inside the assistant avatar circle.
+    // Uses currentColor so it inherits the avatar's foreground color.
     return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
-        <circle cx="12" cy="12" r="8.3" stroke="currentColor" strokeWidth="1.7" />
-        <path d="M8 12C8 9.8 9.8 8 12 8C14.2 8 16 9.8 16 12C16 14.2 14.2 16 12 16" stroke="currentColor" strokeWidth="1.7" />
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 36 36"
+        width="20"
+        height="20"
+        fill="none"
+        className={className}
+      >
+        {/* Input → Hidden connections */}
+        <line x1="5"  y1="9"  x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.55"/>
+        <line x1="5"  y1="9"  x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.55"/>
+        <line x1="5"  y1="9"  x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.30"/>
+        <line x1="5"  y1="27" x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.30"/>
+        <line x1="5"  y1="27" x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.55"/>
+        <line x1="5"  y1="27" x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.55"/>
+        {/* Hidden → Output connections */}
+        <line x1="16" y1="5"  x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.55"/>
+        <line x1="16" y1="5"  x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.30"/>
+        <line x1="16" y1="18" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.65"/>
+        <line x1="16" y1="18" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.65"/>
+        <line x1="16" y1="31" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.30"/>
+        <line x1="16" y1="31" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.55"/>
+        {/* Input nodes — muted */}
+        <circle cx="5"  cy="9"  r="2.8" fill="currentColor" fillOpacity="0.75"/>
+        <circle cx="5"  cy="27" r="2.8" fill="currentColor" fillOpacity="0.75"/>
+        {/* Hidden nodes */}
+        <circle cx="16" cy="5"  r="2.8" fill="currentColor" fillOpacity="0.9"/>
+        <circle cx="16" cy="18" r="3.4" fill="currentColor"/>
+        <circle cx="16" cy="31" r="2.8" fill="currentColor" fillOpacity="0.9"/>
+        {/* Output nodes */}
+        <circle cx="31" cy="12" r="2.8" fill="currentColor"/>
+        <circle cx="31" cy="24" r="2.8" fill="currentColor"/>
       </svg>
     );
   }

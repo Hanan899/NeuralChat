@@ -77,6 +77,46 @@ const SIGN_IN_APPEARANCE = {
   }
 };
 
+// Shared neural network SVG — used in the empty state center icon and the auth brand mark.
+// Renders a 3-layer network: 2 input nodes → 3 hidden (purple) → 2 output nodes.
+function NeuralNetworkIcon({ className, size = 36 }: { className?: string; size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 36 36"
+      width={size}
+      height={size}
+      fill="none"
+      className={className}
+    >
+      {/* Input → Hidden connections */}
+      <line x1="5"  y1="9"  x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line x1="5"  y1="9"  x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line x1="5"  y1="9"  x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line x1="5"  y1="27" x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line x1="5"  y1="27" x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line x1="5"  y1="27" x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      {/* Hidden → Output connections */}
+      <line x1="16" y1="5"  x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line x1="16" y1="5"  x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line x1="16" y1="18" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60"/>
+      <line x1="16" y1="18" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60"/>
+      <line x1="16" y1="31" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line x1="16" y1="31" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      {/* Input nodes — muted */}
+      <circle cx="5"  cy="9"  r="2.8" fill="currentColor" fillOpacity="0.75"/>
+      <circle cx="5"  cy="27" r="2.8" fill="currentColor" fillOpacity="0.75"/>
+      {/* Hidden nodes — purple accent */}
+      <circle cx="16" cy="5"  r="2.8" fill="#7F77DD"/>
+      <circle cx="16" cy="18" r="3.4" fill="#7F77DD"/>
+      <circle cx="16" cy="31" r="2.8" fill="#7F77DD"/>
+      {/* Output nodes */}
+      <circle cx="31" cy="12" r="2.8" fill="currentColor"/>
+      <circle cx="31" cy="24" r="2.8" fill="currentColor"/>
+    </svg>
+  );
+}
+
 function UiIcon({
   kind,
   className
@@ -85,12 +125,7 @@ function UiIcon({
   className?: string;
 }) {
   if (kind === "brand") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
-        <circle cx="12" cy="12" r="8.3" stroke="currentColor" strokeWidth="1.7" />
-        <path d="M8 12C8 9.8 9.8 8 12 8C14.2 8 16 9.8 16 12C16 14.2 14.2 16 12 16" stroke="currentColor" strokeWidth="1.7" />
-      </svg>
-    );
+    return <NeuralNetworkIcon className={className} size={36} />;
   }
 
   if (kind === "attach") {
@@ -157,34 +192,9 @@ function buildId() {
 }
 
 const TITLE_STOP_WORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "are",
-  "can",
-  "could",
-  "do",
-  "for",
-  "help",
-  "how",
-  "i",
-  "in",
-  "is",
-  "it",
-  "me",
-  "my",
-  "of",
-  "on",
-  "please",
-  "tell",
-  "that",
-  "the",
-  "this",
-  "to",
-  "what",
-  "with",
-  "would",
-  "you",
+  "a", "an", "and", "are", "can", "could", "do", "for", "help", "how",
+  "i", "in", "is", "it", "me", "my", "of", "on", "please", "tell",
+  "that", "the", "this", "to", "what", "with", "would", "you",
 ]);
 
 function formatTitleWords(words: string[]): string {
@@ -649,7 +659,7 @@ function ChatShell() {
           )
         );
       } catch {
-        // Keep the local title when refinement fails. The UI should stay responsive.
+        // Keep the local title when refinement fails.
       } finally {
         refiningConversationIdsRef.current.delete(conversationId);
       }
@@ -934,10 +944,7 @@ function ChatShell() {
 
     try {
       if (typeof navigator.share === "function") {
-        await navigator.share({
-          title,
-          text: shareText
-        });
+        await navigator.share({ title, text: shareText });
         showToast("Chat shared.", "success");
       } else if (navigator.clipboard) {
         await navigator.clipboard.writeText(shareText);
@@ -1054,18 +1061,10 @@ function ChatShell() {
           }
 
           setStreamStatus(chunk.status ?? "completed");
-          if (chunk.request_id) {
-            setRequestId(chunk.request_id);
-          }
-          if (typeof chunk.response_ms === "number") {
-            setResponseMs(chunk.response_ms);
-          }
-          if (typeof chunk.first_token_ms === "number") {
-            setFirstTokenMs(chunk.first_token_ms);
-          }
-          if (typeof chunk.tokens_emitted === "number") {
-            setTokensEmitted(chunk.tokens_emitted);
-          }
+          if (chunk.request_id) setRequestId(chunk.request_id);
+          if (typeof chunk.response_ms === "number") setResponseMs(chunk.response_ms);
+          if (typeof chunk.first_token_ms === "number") setFirstTokenMs(chunk.first_token_ms);
+          if (typeof chunk.tokens_emitted === "number") setTokensEmitted(chunk.tokens_emitted);
 
           setMessagesByConversation((previous) => ({
             ...previous,
@@ -1083,10 +1082,7 @@ function ChatShell() {
           finishStreamingDisplay();
         },
         controller.signal,
-        {
-          userDisplayName,
-          sessionTitle: requestSessionTitle,
-        }
+        { userDisplayName, sessionTitle: requestSessionTitle }
       );
 
       setRequestId(result.requestId);
@@ -1099,12 +1095,7 @@ function ChatShell() {
         ...previous,
         [conversationId]: (previous[conversationId] ?? []).map((message) =>
           message.id === assistantId
-            ? {
-                ...message,
-                searchUsed: result.searchUsed,
-                fileContextUsed: result.fileContextUsed,
-                sources: result.sources
-              }
+            ? { ...message, searchUsed: result.searchUsed, fileContextUsed: result.fileContextUsed, sources: result.sources }
             : message
         )
       }));
@@ -1265,10 +1256,7 @@ function ChatShell() {
         conversationId,
         {
           onPlan: (plan) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
-              ...currentTask,
-              plan,
-            }));
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({ ...currentTask, plan }));
           },
           onStepStart: ({ step_number }) => {
             updateAgentMessageState(conversationId, messageId, (currentTask) => ({
@@ -1298,10 +1286,7 @@ function ChatShell() {
             });
           },
           onWarning: (message) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
-              ...currentTask,
-              warning: message,
-            }));
+            updateAgentMessageState(conversationId, messageId, (currentTask) => ({ ...currentTask, warning: message }));
           },
           onSummaryToken: (token) => {
             updateAgentMessageState(conversationId, messageId, (currentTask) => ({
@@ -1329,10 +1314,7 @@ function ChatShell() {
           },
         },
         controller.signal,
-        {
-          userDisplayName,
-          sessionTitle: requestSessionTitle,
-        }
+        { userDisplayName, sessionTitle: requestSessionTitle }
       );
 
       setStreamStatus("completed");
@@ -1451,10 +1433,7 @@ function ChatShell() {
         if (currentCount === files.length) {
           return previous;
         }
-        return {
-          ...previous,
-          [activeConversationId]: files.length,
-        };
+        return { ...previous, [activeConversationId]: files.length };
       });
     },
     [activeConversationId]
@@ -1569,8 +1548,9 @@ function ChatShell() {
         <div className="nc-message-area">
           {currentMessages.length === 0 ? (
             <section className="nc-empty-state" data-testid="empty-state">
+              {/* Neural network logo replaces the old circle/arc brand mark */}
               <div className="nc-empty-mark">
-                <UiIcon kind="brand" className="nc-empty-mark__icon" />
+                <NeuralNetworkIcon className="nc-empty-mark__icon" size={48} />
               </div>
               <h2>How can I help you today?</h2>
               <div className="nc-empty-chips">
@@ -1686,11 +1666,9 @@ export default function App() {
           <div className="nc-auth-grid">
             <section className="nc-auth-brand">
               <div className="nc-auth-brand__top">
+                {/* Neural network logo replaces the old circle/arc mark on the auth page */}
                 <span className="nc-auth-brand__mark" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="8.3" stroke="currentColor" strokeWidth="1.7" />
-                    <path d="M8 12C8 9.8 9.8 8 12 8C14.2 8 16 9.8 16 12C16 14.2 14.2 16 12 16" stroke="currentColor" strokeWidth="1.7" />
-                  </svg>
+                  <NeuralNetworkIcon size={48} />
                 </span>
                 <span className="nc-auth-brand__wordmark">NeuralChat</span>
               </div>
