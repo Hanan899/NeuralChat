@@ -422,7 +422,7 @@ export function Sidebar({
             <button
               type="button"
               className={`nc-user-settings ${isUserMenuOpen ? "nc-user-settings--open" : ""}`}
-              aria-label="Settings"
+              aria-label="More options"
               aria-haspopup="menu"
               aria-expanded={isUserMenuOpen}
               onClick={(event) => {
@@ -431,10 +431,7 @@ export function Sidebar({
                 setIsUserMenuOpen((previous) => !previous);
               }}
             >
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 8.5C10.1 8.5 8.5 10.1 8.5 12C8.5 13.9 10.1 15.5 12 15.5C13.9 15.5 15.5 13.9 15.5 12C15.5 10.1 13.9 8.5 12 8.5Z" stroke="currentColor" strokeWidth="1.7" />
-                <path d="M19 12.9V11.1L17.3 10.6C17.1 10.1 16.9 9.6 16.6 9.2L17.5 7.7L16.3 6.5L14.8 7.4C14.4 7.1 13.9 6.9 13.4 6.7L12.9 5H11.1L10.6 6.7C10.1 6.9 9.6 7.1 9.2 7.4L7.7 6.5L6.5 7.7L7.4 9.2C7.1 9.6 6.9 10.1 6.7 10.6L5 11.1V12.9L6.7 13.4C6.9 13.9 7.1 14.4 7.4 14.8L6.5 16.3L7.7 17.5L9.2 16.6C9.6 16.9 10.1 17.1 10.6 17.3L11.1 19H12.9L13.4 17.3C13.9 17.1 14.4 16.9 14.8 16.6L16.3 17.5L17.5 16.3L16.6 14.8C16.9 14.4 17.1 13.9 17.3 13.4L19 12.9Z" stroke="currentColor" strokeWidth="1.4" />
-              </svg>
+              ⋯
             </button>
 
             {isUserMenuOpen ? (

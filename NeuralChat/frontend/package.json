@@ -13,11 +13,14 @@
     "@clerk/clerk-react": "^5.54.0",
     "framer-motion": "^11.18.2",
     "highlight.js": "^11.11.1",
+    "katex": "^0.16.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.1.0",
     "react-syntax-highlighter": "^16.1.1",
-    "remark-gfm": "^4.0.1"
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
