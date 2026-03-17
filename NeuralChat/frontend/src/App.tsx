@@ -8,7 +8,6 @@ import { getTodayUsage } from "./api/usage";
 import { AgentHistory } from "./components/AgentHistory";
 import { ChatWindow } from "./components/ChatWindow";
 import { CostWarningBanner } from "./components/CostWarningBanner";
-import { DebugPanel } from "./components/DebugPanel";
 import { FileUpload } from "./components/FileUpload";
 import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -1642,16 +1641,6 @@ function ChatShell() {
             {/* Model selector */}
             <ModelSelector value={model} onChange={setModel} variant="topbar" />
 
-            {/* Debug — muted, secondary */}
-            <button
-              type="button"
-              className="nc-topbar-btn nc-topbar-btn--muted"
-              aria-label="Toggle diagnostics"
-              onClick={() => setIsDiagnosticsOpen((value) => !value)}
-            >
-              Debug
-            </button>
-
             {/* Notification bell */}
             <div className="nc-notif-wrap">
               <button
@@ -1812,21 +1801,6 @@ function ChatShell() {
         ) : null}
       </section>
 
-      {isDiagnosticsOpen ? (
-        <aside className="nc-right-panel">
-          <DebugPanel
-            selectedModel={model}
-            requestId={requestId}
-            responseMs={responseMs}
-            firstTokenMs={firstTokenMs}
-            tokensEmitted={tokensEmitted}
-            streamStatus={streamStatus}
-            backendHealthy={backendHealthy}
-            open={isDiagnosticsOpen}
-            onClose={() => setIsDiagnosticsOpen(false)}
-          />
-        </aside>
-      ) : null}
 
       {isFileModalOpen && activeConversationId ? (
         <FileUpload
