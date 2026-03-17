@@ -1,153 +1,308 @@
-# NeuralChat Architecture (Auth + Memory + Search + File Upload + Agent Mode)
+# NeuralChat Architecture
 
-## 1) Runtime Components
+NeuralChat is split into a Vite frontend and a FastAPI backend mounted through Azure Functions. The system is organized around authenticated chat sessions, user-level memory, optional external retrieval, and session-scoped file and agent artifacts stored in Azure Blob Storage.
 
-- `frontend/`:
-  - React + TypeScript + Tailwind + Clerk
-  - Streams assistant tokens, manages conversation UI, sidebar mode controls, file upload modal, and agent progress/history
-- `backend/`:
-  - FastAPI mounted in Azure Functions ASGI
-  - Auth verification, chat orchestration, prompt assembly, agent execution, Blob persistence
-- `Azure Blob Storage` containers:
-  - `neurarchat-memory` (conversations + search cache)
-  - `neurarchat-profiles` (deep memory profile)
-  - `neurarchat-uploads` (raw uploaded files)
-  - `neurarchat-parsed` (parsed chunk JSON)
-  - `neurarchat-agents` (agent plans + execution logs)
+## Runtime Components
 
-## 2) Auth and Identity Flow
+### Frontend
 
-1. User signs in with Clerk.
-2. Frontend gets Clerk session token.
-3. Frontend calls protected APIs with `Authorization: Bearer <token>`.
-4. Backend validates JWT using Clerk JWKS.
-5. Backend derives `user_id` from token `sub` claim.
-6. All chat/file/profile storage is scoped by `user_id`.
+- React + TypeScript + Tailwind CSS
+- Clerk React for auth shell and token retrieval
+- Local conversation state in browser storage
+- Streaming NDJSON handling for chat and agent execution
+- Sidebar controls for `Web search` and `Agent mode`
+- In-thread rendering for normal assistant replies and agent progress blocks
 
-## 3) Chat Request Pipeline (`POST /api/chat`)
+### Backend
 
-1. Validate request body (`session_id`, `message`, `model`, `stream`, optional `force_search`).
-2. Persist user message to conversation blob.
-3. Build memory prompt from profile facts.
-4. If force-search is enabled from the sidebar `Web search` control, load/search/cached web sources and build search prompt.
-5. Load uploaded files for `(user_id, session_id)`, read parsed chunks, rank relevant chunks, and build file prompt.
-6. Compose model system context in this exact order:
-   - memory facts
-   - web search context
-   - relevant uploaded-file context
+- FastAPI app in `backend/app/main.py`
+- Azure Functions ASGI entry point in `backend/function_app.py`
+- Service modules for:
+  - chat orchestration
+  - memory
+  - search
+  - file handling
+  - title generation
+  - storage
+  - agent planning and execution
+
+### External services
+
+- Clerk for auth and identity
+- Azure OpenAI GPT-5 for chat, title refinement, memory extraction, and agent planning/summarization
+- Tavily for external web search
+- Azure Blob Storage for app persistence
+
+## Identity and Naming Model
+
+### Stable identity
+
+Authorization and ownership always depend on:
+
+- `user_id` from the Clerk JWT `sub` claim
+- `session_id` from the app request payload or query string
+
+### Readable naming
+
+Protected frontend requests may include:
+
+- `X-User-Display-Name`
+- `X-Session-Title`
+
+The backend uses these only to make Blob paths readable in Azure. Stable ids stay embedded in every canonical path segment.
+
+Examples:
+
+- user segment:
+  - `abdul-hanan__user_abc123`
+- session segment:
+  - `rag-based-chatbot-architecture__session_xyz789`
+
+### Lazy migration
+
+Older id-only blob names are still readable. On later reads or writes, the backend migrates them to the readable canonical path.
+
+## Storage Containers and Paths
+
+### `neurarchat-memory`
+
+- conversations:
+  - `conversations/{display_name__user_id}/{session_title__session_id}.json`
+- search cache:
+  - `search-cache/{sha256(normalized_query)}.json`
+
+### `neurarchat-profiles`
+
+- profile facts:
+  - `profiles/{display_name__user_id}.json`
+
+### `neurarchat-uploads`
+
+- raw files:
+  - `{display_name__user_id}/{session_title__session_id}/{filename}`
+
+### `neurarchat-parsed`
+
+- parsed chunks:
+  - `{display_name__user_id}/{session_title__session_id}/{filename}.json`
+
+### `neurarchat-agents`
+
+- plan JSON:
+  - `{display_name__user_id}/{session_title__session_id}/plans/{plan_id}.json`
+- execution log JSON:
+  - `{display_name__user_id}/{session_title__session_id}/logs/{plan_id}.json`
+
+## Auth Flow
+
+1. User signs in through Clerk on the frontend.
+2. Frontend obtains a session token.
+3. Protected requests send `Authorization: Bearer <token>`.
+4. Backend verifies the token using Clerk JWKS.
+5. Backend derives `user_id` and scopes all data access to that user.
+6. Optional readable naming headers are applied only to Blob path naming.
+
+## Chat Flow
+
+### Request
+
+`POST /api/chat`
+
+Validated payload:
+
+- `session_id`
+- `message`
+- `model` where the only allowed value is `gpt-5`
+- `stream`
+- optional `force_search`
+
+### Pipeline
+
+1. Save the user message into the conversation blob.
+2. Build a memory prompt from the stored profile.
+3. If search is forced or selected by backend logic, resolve cached or live Tavily results.
+4. Load uploaded files for the current user and session.
+5. Load parsed chunks and rank relevant chunks for the current message.
+6. Compose the final prompt context from:
+   - memory
+   - search context
+   - file context
    - base instructions
-7. Call Azure OpenAI GPT-5 and stream NDJSON chunks.
-8. Persist assistant message + metadata (`search_used`, `file_context_used`, timing metrics, sources).
-9. Trigger async memory extraction/update in background.
+7. Generate the assistant reply through Azure OpenAI.
+8. Stream NDJSON tokens back to the frontend.
+9. Save the assistant message and metadata.
+10. Trigger asynchronous memory extraction for the exchange.
 
-### Chat deletion path
+### Chat stream contract
 
-When a user deletes a chat from the frontend, the UI calls:
+Chunk types:
 
-- `DELETE /api/conversations/{session_id}`
+- `token`
+- `done`
+- `error`
 
-That endpoint performs real backend cleanup for that authenticated user and session:
+The final `done` payload can include:
 
-- removes the conversation blob
-- removes raw uploaded files for that session
-- removes parsed file chunks for that session
-- removes agent plans for that session
-- removes agent execution logs for that session
+- `request_id`
+- `response_ms`
+- `first_token_ms`
+- `tokens_emitted`
+- `status`
+- `search_used`
+- `file_context_used`
+- `sources`
 
-It does not remove user-level profile memory, because profile memory is account-scoped rather than session-scoped.
+## Memory Flow
 
-## 4) File Upload Pipeline (`POST /api/upload`)
+### Stored profile fields
 
-1. Frontend sends multipart form with:
-   - `session_id`
-   - `file`
-2. Backend validates extension and size (max 25MB).
-3. Backend uploads raw file to a session-scoped uploads path for that authenticated user and chat.
-4. Backend checks if parsed blob already exists:
-   - if yes: reuse parsed chunks (no re-parse)
-   - if no: parse text -> chunk text -> save to parsed blob
-5. Backend returns `filename`, `blob_path`, `chunk_count`, and success message.
+The backend extracts compact user facts into profile JSON, including fields such as:
 
-## 5) API Surface
+- `name`
+- `job`
+- `city`
+- `preferences`
+- `goals`
 
-- Public:
-  - `GET /api/health`
-  - `GET /api/search/status`
-- Auth required:
-  - `GET /api/me`
-  - `PATCH /api/me/memory`
-  - `DELETE /api/me/memory`
-  - `POST /api/chat`
-  - `DELETE /api/conversations/{session_id}`
-  - `POST /api/upload`
-  - `GET /api/files?session_id=...`
-  - `DELETE /api/files/{filename}?session_id=...`
-  - `POST /api/agent/plan`
-  - `POST /api/agent/run/{plan_id}`
-  - `GET /api/agent/history`
-  - `GET /api/agent/history/{plan_id}`
+### Memory usage
 
-## 6) Stream Contracts
+- `GET /api/me` returns the current profile
+- `PATCH /api/me/memory` updates one memory key or merges new facts
+- `DELETE /api/me/memory` clears the whole profile
+- `build_memory_prompt()` injects profile facts into later chat prompts
 
-- Token chunk:
-  - `{"type":"token","content":"..."}`
-- Done chunk:
-  - `{"type":"done", "request_id":"...", "response_ms":..., "first_token_ms":..., "tokens_emitted":..., "status":"completed|interrupted", "search_used":true|false, "file_context_used":true|false, "sources":[...]}`
-- Error chunk:
-  - `{"type":"error","content":"...","request_id":"..."}`
+Profile memory is user-level, not session-level.
 
-## 7) Frontend To Deployed Backend Path
+## Web Search Flow
 
-Current local frontend runtime points to:
+1. Frontend toggles `Web search` from the sidebar.
+2. Chat request includes `force_search: true` when the user explicitly wants web results.
+3. Backend checks cache first.
+4. If not cached, backend calls Tavily and stores normalized results in Blob.
+5. Search context is appended to the system prompt.
+6. Assistant reply metadata marks `search_used` and includes `sources`.
 
-- `VITE_API_BASE_URL=https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net`
+## File Upload and Retrieval Flow
 
-Flow:
+### Upload path
 
-1. Local Vite frontend runs on `http://localhost:5173`.
-2. Browser sends requests to deployed Azure Function backend.
-3. Azure backend must allow local frontend origin through CORS.
-4. Protected calls include Clerk bearer token.
-5. Backend verifies token, runs chat/search/file pipeline, and returns JSON or NDJSON stream.
+`POST /api/upload`
 
-## 8) Agent Mode Pipeline
+Form fields:
 
-1. User enables `Agent mode` from the left sidebar under `Codex`.
-2. Frontend sends `POST /api/agent/plan` with:
-   - `goal`
-   - `session_id`
-3. Backend creates a plan using GPT-5 and truncates to max 6 steps.
-4. Frontend shows plan preview in-thread and waits for explicit `Run plan`.
-5. Frontend calls `POST /api/agent/run/{plan_id}`.
-6. Backend executes steps sequentially with LangGraph using:
-   - `web_search`
-   - `read_file`
-   - `memory_recall`
-   - reasoning-only steps
-7. Backend streams:
-   - `plan`
-   - `step_start`
-   - `step_done`
-   - `warning`
-   - `summary`
-   - `done`
-8. Backend stores plan and execution log artifacts in session-scoped paths inside `neurarchat-agents`.
+- `session_id`
+- `file`
 
-Safety constraints:
+### Pipeline
 
-- max 6 steps
-- repeated same tool + same input -> stop early with warning
-- failed steps are logged, not fatal
-- total timeout: 60 seconds
+1. Validate extension and 25 MB size limit.
+2. Save the raw file into `neurarchat-uploads`.
+3. Check whether parsed chunks already exist.
+4. If not, parse and chunk the file.
+5. Save parsed chunk JSON into `neurarchat-parsed`.
+6. Return filename, blob path, chunk count, and success message.
 
-## 9) Deployment Verification
+### Retrieval path
 
-The deployed backend was smoke-tested on **March 12, 2026** and passed:
+- `GET /api/files?session_id=...`
+- `DELETE /api/files/{filename}?session_id=...`
 
-- profile fetch
-- authenticated GPT-5 chat
-- forced Tavily search
-- file upload
-- file list
-- file delete
-- streamed file-context response
+Parsed chunks are reused across later prompts in the same chat session.
+
+## Hybrid Conversation Title Flow
+
+NeuralChat uses a two-stage title strategy.
+
+### Stage 1: immediate local title
+
+The frontend creates a short local title from the first prompt so the sidebar updates instantly.
+
+### Stage 2: backend refinement
+
+After the first useful reply or first useful agent result, the frontend may call:
+
+- `POST /api/conversations/title`
+
+The backend returns a concise 3 to 6 word summary title. If refinement fails, the local title remains in place.
+
+This same title is then reused as the readable session label sent in `X-Session-Title`.
+
+## Agent Mode Flow
+
+### Planning
+
+`POST /api/agent/plan`
+
+Validated payload:
+
+- `goal`
+- `session_id`
+
+Pipeline:
+
+1. Backend asks GPT-5 for a step-by-step JSON plan.
+2. Plan is normalized and capped at 6 steps.
+3. If the planner returns no valid steps, a fallback reasoning step is injected.
+4. Plan is saved to Blob.
+5. Frontend renders the plan inside the chat thread.
+
+### Execution
+
+`POST /api/agent/run/{plan_id}`
+
+Validated payload:
+
+- `session_id`
+
+Execution uses LangGraph as a sequential state machine over the stored plan.
+
+Supported tools:
+
+- `web_search`
+- `read_file`
+- `memory_recall`
+- reasoning-only step with no tool
+
+Safety rules:
+
+- max 6 steps per plan
+- repeated identical tool calls trigger a loop warning and stop execution
+- failed steps are recorded and execution continues
+- total execution timeout is 60 seconds
+
+### Agent stream contract
+
+Chunk types:
+
+- `plan`
+- `step_start`
+- `step_done`
+- `warning`
+- `summary`
+- `done`
+- `error`
+
+### Agent history
+
+- `GET /api/agent/history`
+- `GET /api/agent/history/{plan_id}`
+
+History is user-scoped. It is not filtered by session at the API layer.
+
+## Delete Chat Flow
+
+`DELETE /api/conversations/{session_id}` performs real backend cleanup for the authenticated user.
+
+It deletes:
+
+- the conversation blob
+- raw uploaded files for that session
+- parsed file chunk blobs for that session
+- agent plans for that session
+- agent execution logs for that session
+
+It does not delete:
+
+- the user profile memory blob
+
+That separation is intentional because profile memory is account-scoped while chats are session-scoped.

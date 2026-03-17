@@ -1,24 +1,100 @@
-# NeuralChat Deployment Checklist
+# NeuralChat Deployment
 
-## Target
+This document describes the current local setup and Azure deployment model for NeuralChat.
 
-- Backend host: `https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net`
-- Local frontend host during development: `http://localhost:5173`
+## Runtime Shape
 
-## 1. Azure Function App Settings
+- Frontend runs as a Vite app during development.
+- Backend runs as FastAPI mounted through Azure Functions ASGI.
+- Local backend can run either with Azure Functions Core Tools or directly with Uvicorn.
+- The current hosted backend example is:
+  - `https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net`
 
-Set these in Azure Application Settings:
+## Local Setup
+
+### Backend
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+func start
+```
+
+Optional direct FastAPI run:
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## Environment Configuration
+
+### Frontend `.env`
+
+Required values:
+
+- `VITE_CLERK_PUBLISHABLE_KEY`
+- `VITE_API_BASE_URL`
+
+Current example from `.env.example`:
+
+```env
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_your_key_here
+VITE_API_BASE_URL=https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net
+```
+
+Alternate local backend examples:
+
+- `http://localhost:7071` for `func start`
+- `http://localhost:8000` for `uvicorn`
+
+### Backend `local.settings.json`
+
+Required values from `local.settings.example.json`:
+
+- `FUNCTIONS_WORKER_RUNTIME=python`
+- `AzureWebJobsStorage`
+- `AZURE_STORAGE_CONNECTION_STRING`
+- `AZURE_BLOB_MEMORY_CONTAINER`
+- `AZURE_BLOB_PROFILES_CONTAINER`
+- `AZURE_BLOB_UPLOADS_CONTAINER`
+- `AZURE_BLOB_PARSED_CONTAINER`
+- `AZURE_BLOB_AGENTS_CONTAINER`
+- `CLERK_JWKS_URL`
+- `CLERK_ISSUER`
+- `CLERK_AUDIENCE`
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_API_KEY`
+- `AZURE_OPENAI_DEPLOYMENT_NAME`
+- `AZURE_OPENAI_API_VERSION`
+- `TAVILY_API_KEY`
+- `MOCK_STREAM_DELAY_MS`
+
+## Azure Function App Settings
+
+Set the same backend settings in Azure Application Settings.
+
+At minimum:
 
 - `AzureWebJobsStorage`
 - `AZURE_STORAGE_CONNECTION_STRING`
-- `AZURE_BLOB_MEMORY_CONTAINER=neurarchat-memory`
-- `AZURE_BLOB_PROFILES_CONTAINER=neurarchat-profiles`
-- `AZURE_BLOB_UPLOADS_CONTAINER=neurarchat-uploads`
-- `AZURE_BLOB_PARSED_CONTAINER=neurarchat-parsed`
-- `AZURE_BLOB_AGENTS_CONTAINER=neurarchat-agents`
+- `AZURE_BLOB_MEMORY_CONTAINER`
+- `AZURE_BLOB_PROFILES_CONTAINER`
+- `AZURE_BLOB_UPLOADS_CONTAINER`
+- `AZURE_BLOB_PARSED_CONTAINER`
+- `AZURE_BLOB_AGENTS_CONTAINER`
 - `CLERK_JWKS_URL`
 - `CLERK_ISSUER`
-- `CLERK_AUDIENCE` (leave empty unless you enforce audience validation)
+- `CLERK_AUDIENCE`
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_API_KEY`
 - `AZURE_OPENAI_DEPLOYMENT_NAME`
@@ -26,41 +102,104 @@ Set these in Azure Application Settings:
 - `TAVILY_API_KEY`
 - `FUNCTIONS_WORKER_RUNTIME=python`
 
-## 2. Azure CORS
+## CORS
 
-Allow at least:
+When the frontend runs locally and the backend runs on Azure, the backend must allow the frontend origin.
+
+Typical local origins:
 
 - `http://localhost:5173`
 - `http://127.0.0.1:5173`
 
-If you later host the frontend, add the production frontend origin too.
+Backend CORS is configured through `CORS_ALLOW_ORIGINS` and FastAPI CORS middleware.
 
-## 3. Frontend Environment
+If the frontend is later hosted elsewhere, add that hosted origin too.
 
-Use this in `frontend/.env`:
+## Azure Deployment Flow
 
-```env
-VITE_API_BASE_URL=https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net
+NeuralChat backend is designed for Azure Functions remote build.
+
+Recommended command:
+
+```bash
+cd backend
+func azure functionapp publish Neural-Chat --build remote --verbose
 ```
 
-Current frontend control layout:
+This is the preferred deployment path because it exposes real build and sync-trigger logs, which are more reliable than relying only on the VS Code Azure pane.
 
-- sidebar: `Web search` under `New chat`
-- sidebar: `Agent mode` under `Codex`
-- top bar: `Agents`, `Share`, model selector, `Debug`
-- composer: `Add files`, textarea, send or stop
+## Flex Consumption Notes
 
-## 4. Clerk Smoke-Test Token Setup
+The project is compatible with Azure Functions Flex Consumption deployment and Python remote build.
 
-Default Clerk session tokens are too short for terminal smoke tests. Use a JWT template.
+Key runtime files:
 
-Create template:
+- `backend/function_app.py`
+- `backend/host.json`
+- `backend/requirements.txt`
 
-- name: `smoke_test`
-- lifetime: `600` seconds or more
-- claims: `{}`
+## Public and Protected Endpoints to Verify
 
-Get token in browser console:
+### Public
+
+- `GET /api/health`
+- `GET /api/search/status`
+
+### Protected
+
+- `POST /api/conversations/title`
+- `GET /api/me`
+- `PATCH /api/me/memory`
+- `DELETE /api/me/memory`
+- `POST /api/upload`
+- `GET /api/files?session_id=...`
+- `DELETE /api/files/{filename}?session_id=...`
+- `DELETE /api/conversations/{session_id}`
+- `POST /api/agent/plan`
+- `POST /api/agent/run/{plan_id}`
+- `GET /api/agent/history`
+- `GET /api/agent/history/{plan_id}`
+- `POST /api/chat`
+
+Protected requests can also include:
+
+- `X-User-Display-Name`
+- `X-Session-Title`
+
+## Smoke Test Checklist
+
+### Public checks
+
+```bash
+curl https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net/api/health
+curl https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net/api/search/status
+```
+
+### Browser checks
+
+- sign in through Clerk
+- send a normal chat message
+- toggle sidebar `Web search` and verify a search-backed answer
+- upload a file and verify file listing
+- ask a file-grounded question and verify file context is used
+- create an agent plan and run it
+- open `Agents` history panel
+- delete a chat and verify the session disappears from UI and backend cleanup succeeds
+
+### Authenticated API checks
+
+Use a valid Clerk bearer token to test:
+
+- `/api/me`
+- `/api/chat`
+- `/api/upload`
+- `/api/files`
+- `/api/conversations/{session_id}`
+- `/api/agent/*`
+
+## Clerk Testing Notes
+
+Default Clerk session tokens are short-lived. For terminal smoke testing, create a Clerk JWT template such as `smoke_test` with a longer lifetime, then request a token with:
 
 ```js
 await window.Clerk.session.getToken({
@@ -69,73 +208,43 @@ await window.Clerk.session.getToken({
 })
 ```
 
-## 5. Smoke Test Checklist
-
-Public endpoints:
-
-- `GET /api/health`
-- `GET /api/search/status`
-
-Authenticated endpoints:
-
-- `GET /api/me`
-- `POST /api/chat`
-- `DELETE /api/conversations/{session_id}`
-- `POST /api/chat` with `force_search: true`
-- `POST /api/upload`
-- `GET /api/files?session_id=...`
-- `DELETE /api/files/{filename}?session_id=...`
-- streamed `POST /api/chat` using uploaded-file context
-- `POST /api/agent/plan`
-- streamed `POST /api/agent/run/{plan_id}`
-- `GET /api/agent/history`
-- `GET /api/agent/history/{plan_id}`
-
-## 6. Verified Result On March 12, 2026
-
-The deployed backend passed:
-
-- auth verification through Clerk template token
-- GPT-5 standard chat
-- real chat deletion with backend cleanup
-- Tavily-backed forced search with returned `sources`
-- file upload and parsed chunk persistence
-- file listing
-- file deletion
-- streamed file-context chat with `file_context_used: true`
-- agent plan creation
-- streamed agent execution with `plan`, `step_start`, `step_done`, `summary`, and `done`
-- agent history retrieval from Blob-backed plan and log storage
-
-## 7. Secret and Token Handling Rules
-
-- Never paste real storage keys, OpenAI keys, Tavily keys, or Clerk bearer tokens into public channels.
-- If any secret or bearer token is pasted into chat, terminal logs, screenshots, or Git history, rotate it.
-- Use `local.settings.json`, `.env`, Azure App Settings, or a secret manager for real secrets.
-- Keep `local.settings.example.json` and `.env.example` sanitized.
-
-## 8. Common Failure Cases
+## Common Failure Cases
 
 ### `401 Invalid authentication token`
 
-Usually one of:
+Usually caused by one of:
 
-- Clerk token expired
-- `CLERK_JWKS_URL` or `CLERK_ISSUER` mismatch
-- wrong token type used
+- expired Clerk token
+- incorrect `CLERK_JWKS_URL`
+- incorrect `CLERK_ISSUER`
+- mismatched audience validation
 
-### Frontend shows `OFFLINE` or `Load failed`
+### Browser shows offline or blocked requests
 
-Usually one of:
+Usually caused by one of:
 
-- wrong `VITE_API_BASE_URL`
-- Azure CORS missing `http://localhost:5173`
-- deployed backend unavailable
+- incorrect `VITE_API_BASE_URL`
+- missing CORS origin in Azure
+- deployed backend URL mismatch
 
 ### Azure Functions unhealthy storage errors
 
-Usually one of:
+Usually caused by one of:
 
 - invalid `AzureWebJobsStorage`
-- storage account unavailable
-- Azurite not running for local emulator mode
+- invalid storage connection string
+- local emulator issues when using development storage locally
+
+### Delete chat returns `Not Found`
+
+Usually caused by one of:
+
+- frontend still pointing at an older backend deployment
+- frontend dev server using stale environment state
+- backend route not yet redeployed after local changes
+
+## Secret Handling
+
+- Keep live secrets out of docs and screenshots.
+- Do not commit real `local.settings.json` or `.env` values.
+- Rotate any real token or key that is pasted into chat, terminal output, or public logs.
