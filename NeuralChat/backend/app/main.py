@@ -31,11 +31,13 @@ from app.schemas import (
     validate_agent_run_request,
     validate_chat_request,
     validate_title_request,
+    validate_usage_limit_request,
 )
 from app.services.agent import (
     AGENT_TIMEOUT_SECONDS,
     AVAILABLE_AGENT_TOOLS,
     create_task_plan,
+    create_task_plan_with_usage,
     delete_session_agent_artifacts,
     list_task_plans,
     load_execution_log,
@@ -47,10 +49,21 @@ from app.services.agent import (
 from app.services.chat_service import (
     generate_reply,
     generate_reply_stream,
+    generate_reply_stream_with_usage,
+    generate_reply_with_usage,
     save_assistant_message,
     save_user_message,
     stream_tokens,
     tokenize_text,
+)
+from app.services.cost_tracker import (
+    DEFAULT_DAILY_LIMIT_USD,
+    check_daily_limit,
+    current_utc_date_text,
+    get_daily_usage,
+    get_usage_summary,
+    log_usage,
+    resolve_daily_limit,
 )
 from app.services.file_handler import (
     chunk_text,
@@ -67,7 +80,7 @@ from app.services.file_handler import (
 from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
 from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web
 from app.services.storage import delete_conversation_session, init_store
-from app.services.titles import generate_conversation_title
+from app.services.titles import generate_conversation_title, generate_conversation_title_with_usage
 
 APP_VERSION = "0.3.0"
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -115,10 +128,22 @@ def get_search_status() -> dict[str, bool]:
 @app.post("/api/conversations/title")
 async def post_conversation_title(
     payload: dict[str, Any] = Body(...),
-    _user_id: str = Depends(require_user_id),
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
     request = validate_title_request(payload)
-    title = await asyncio.to_thread(generate_conversation_title, request["prompt"], request["reply"])
+    title, usage = await asyncio.to_thread(generate_conversation_title_with_usage, request["prompt"], request["reply"])
+    if usage["input_tokens"] or usage["output_tokens"]:
+        asyncio.create_task(
+            asyncio.to_thread(
+                log_usage,
+                user_id,
+                "title_generation",
+                usage["input_tokens"],
+                usage["output_tokens"],
+                naming["display_name"],
+            )
+        )
     return {"title": title}
 
 
@@ -131,6 +156,78 @@ def get_me(
     return {
         "user_id": user_id,
         "profile": profile,
+    }
+
+
+@app.get("/api/usage/summary")
+async def get_usage_summary_endpoint(
+    days: int = Query(30, ge=1, le=365),
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(get_usage_summary, user_id, days, naming["display_name"])
+    except Exception as usage_error:
+        LOGGER.exception("Usage summary load failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load usage summary: {usage_error}",
+        ) from usage_error
+
+
+@app.get("/api/usage/today")
+async def get_usage_today(
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    try:
+        profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
+        daily_limit_usd = resolve_daily_limit(profile)
+        today_records = await asyncio.to_thread(get_daily_usage, user_id, current_utc_date_text(), naming["display_name"])
+        today_summary = await asyncio.to_thread(check_daily_limit, user_id, daily_limit_usd, naming["display_name"])
+    except Exception as usage_error:
+        LOGGER.exception("Today's usage load failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load today's usage: {usage_error}",
+        ) from usage_error
+
+    return {"records": today_records, "summary": today_summary}
+
+
+@app.get("/api/usage/limit")
+async def get_usage_limit(
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, float]:
+    profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
+    return {"daily_limit_usd": resolve_daily_limit(profile)}
+
+
+@app.patch("/api/usage/limit")
+async def patch_usage_limit(
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    request = validate_usage_limit_request(payload)
+    try:
+        await asyncio.to_thread(
+            save_profile,
+            user_id,
+            {"daily_limit_usd": request["daily_limit_usd"]},
+            naming["display_name"],
+        )
+    except Exception as usage_error:
+        LOGGER.exception("Usage limit update failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to update daily limit: {usage_error}",
+        ) from usage_error
+
+    return {
+        "message": f"Daily limit updated to ${request['daily_limit_usd']:.2f}",
+        "daily_limit_usd": request["daily_limit_usd"],
     }
 
 
@@ -334,7 +431,7 @@ async def post_agent_plan(
     request = validate_agent_plan_request(payload)
 
     try:
-        plan = await create_task_plan(request["goal"], AVAILABLE_AGENT_TOOLS)
+        plan, usage = await create_task_plan_with_usage(request["goal"], AVAILABLE_AGENT_TOOLS)
         save_task_plan(
             user_id,
             plan,
@@ -342,6 +439,17 @@ async def post_agent_plan(
             request["session_id"],
             naming["session_title"],
         )
+        if usage["input_tokens"] or usage["output_tokens"]:
+            asyncio.create_task(
+                asyncio.to_thread(
+                    log_usage,
+                    user_id,
+                    "agent_plan",
+                    usage["input_tokens"],
+                    usage["output_tokens"],
+                    naming["display_name"],
+                )
+            )
     except Exception as plan_error:
         LOGGER.exception("Agent plan creation failed for user=%s", user_id)
         raise HTTPException(
@@ -400,6 +508,21 @@ async def post_agent_run(
                             naming["session_title"],
                         )
                         summary_text = str(event.get("summary", "")).strip()
+                        summary_usage = event.get("summary_usage", {"input_tokens": 0, "output_tokens": 0})
+                        if isinstance(summary_usage, dict):
+                            summary_input_tokens = int(summary_usage.get("input_tokens", 0) or 0)
+                            summary_output_tokens = int(summary_usage.get("output_tokens", 0) or 0)
+                            if summary_input_tokens or summary_output_tokens:
+                                asyncio.create_task(
+                                    asyncio.to_thread(
+                                        log_usage,
+                                        user_id,
+                                        "agent_summary",
+                                        summary_input_tokens,
+                                        summary_output_tokens,
+                                        naming["display_name"],
+                                    )
+                                )
                         for token in tokenize_text(summary_text):
                             yield json.dumps({"type": "summary", "content": token}, ensure_ascii=True) + "\n"
                         yield (
@@ -417,6 +540,21 @@ async def post_agent_run(
                         return
 
                     if event_type == "step_done":
+                        step_usage = event.get("usage", {"input_tokens": 0, "output_tokens": 0})
+                        if isinstance(step_usage, dict):
+                            step_input_tokens = int(step_usage.get("input_tokens", 0) or 0)
+                            step_output_tokens = int(step_usage.get("output_tokens", 0) or 0)
+                            if step_input_tokens or step_output_tokens:
+                                asyncio.create_task(
+                                    asyncio.to_thread(
+                                        log_usage,
+                                        user_id,
+                                        "agent_step",
+                                        step_input_tokens,
+                                        step_output_tokens,
+                                        naming["display_name"],
+                                    )
+                                )
                         execution_log.append(
                             {
                                 "step_number": event.get("step_number"),
@@ -603,10 +741,11 @@ async def post_chat(
             )
 
     if not request["stream"]:
+        usage = {"input_tokens": 0, "output_tokens": 0}
         if direct_reply is not None:
             reply = direct_reply
         else:
-            reply = await generate_reply(
+            reply, usage = await generate_reply_with_usage(
                 request=request,
                 store=STORE,
                 user_id=user_id,
@@ -652,6 +791,17 @@ async def post_chat(
                 display_name=naming["display_name"],
             )
         )
+        if usage["input_tokens"] or usage["output_tokens"]:
+            asyncio.create_task(
+                asyncio.to_thread(
+                    log_usage,
+                    user_id,
+                    "chat",
+                    usage["input_tokens"],
+                    usage["output_tokens"],
+                    naming["display_name"],
+                )
+            )
         return JSONResponse(response_payload)
 
     async def stream() -> AsyncIterator[str]:
@@ -659,12 +809,18 @@ async def post_chat(
         tokens_emitted = 0
         first_token_ms: int | None = None
         stream_status = "interrupted"
+        chat_usage = {"input_tokens": 0, "output_tokens": 0}
 
         try:
             if direct_reply is not None:
-                token_stream = stream_tokens(direct_reply)
+                async for token in stream_tokens(direct_reply):
+                    if first_token_ms is None:
+                        first_token_ms = int((time.perf_counter() - start) * 1000)
+                    tokens_emitted += 1
+                    assembled.append(token)
+                    yield json.dumps({"type": "token", "content": token}, ensure_ascii=True) + "\n"
             else:
-                token_stream = generate_reply_stream(
+                token_stream = generate_reply_stream_with_usage(
                     request=request,
                     store=STORE,
                     user_id=user_id,
@@ -674,13 +830,24 @@ async def post_chat(
                     search_prompt=search_prompt,
                     file_prompt=file_prompt,
                 )
-
-            async for token in token_stream:
-                if first_token_ms is None:
-                    first_token_ms = int((time.perf_counter() - start) * 1000)
-                tokens_emitted += 1
-                assembled.append(token)
-                yield json.dumps({"type": "token", "content": token}, ensure_ascii=True) + "\n"
+                async for event in token_stream:
+                    event_type = str(event.get("type", "")).strip()
+                    if event_type == "usage":
+                        usage_payload = event.get("usage", {"input_tokens": 0, "output_tokens": 0})
+                        if isinstance(usage_payload, dict):
+                            chat_usage = {
+                                "input_tokens": int(usage_payload.get("input_tokens", 0) or 0),
+                                "output_tokens": int(usage_payload.get("output_tokens", 0) or 0),
+                            }
+                        continue
+                    token = str(event.get("content", ""))
+                    if not token:
+                        continue
+                    if first_token_ms is None:
+                        first_token_ms = int((time.perf_counter() - start) * 1000)
+                    tokens_emitted += 1
+                    assembled.append(token)
+                    yield json.dumps({"type": "token", "content": token}, ensure_ascii=True) + "\n"
 
             response_ms = int((time.perf_counter() - start) * 1000)
             stream_status = "completed"
@@ -733,6 +900,17 @@ async def post_chat(
                         message=request["message"],
                         reply=final_reply,
                         display_name=naming["display_name"],
+                    )
+                )
+            if chat_usage["input_tokens"] or chat_usage["output_tokens"]:
+                asyncio.create_task(
+                    asyncio.to_thread(
+                        log_usage,
+                        user_id,
+                        "chat",
+                        chat_usage["input_tokens"],
+                        chat_usage["output_tokens"],
+                        naming["display_name"],
                     )
                 )
 

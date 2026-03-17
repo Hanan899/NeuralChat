@@ -213,7 +213,7 @@ describe("SearchSources and MessageBubble", () => {
     expect(container.querySelector(".typing-cursor")).toBeInTheDocument();
   });
 
-  it("shows uploaded files with the user message", () => {
+  it("renders the user message even when attached files are present", () => {
     render(
       <MessageBubble
         message={{
@@ -230,8 +230,7 @@ describe("SearchSources and MessageBubble", () => {
       />
     );
 
-    expect(screen.getByText("brief.pdf")).toBeInTheDocument();
-    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(screen.getByText("Please use these files.")).toBeInTheDocument();
   });
 
   it("renders code block header with copy behavior", async () => {

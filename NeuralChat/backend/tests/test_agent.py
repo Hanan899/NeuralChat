@@ -155,7 +155,10 @@ async def test_execute_step_routes_to_memory_recall():
 @pytest.mark.asyncio
 async def test_execute_step_handles_null_tool_as_reasoning_step():
     step = {"tool": None, "tool_input": None, "description": "Summarize findings", "step_number": 4}
-    with patch("app.services.agent._run_reasoning_step", AsyncMock(return_value="Here is the summary...")):
+    with patch(
+        "app.services.agent._run_reasoning_step_with_usage",
+        AsyncMock(return_value=("Here is the summary...", {"input_tokens": 120, "output_tokens": 20})),
+    ):
         result = await agent.execute_step(step, "user1", "sess1", goal="Research AI")
 
     assert result["status"] == "done"

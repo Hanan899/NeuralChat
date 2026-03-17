@@ -13,6 +13,8 @@ import httpx
 from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContainerClient
 
+from app.services.cost_tracker import TokenUsage, normalize_usage
+
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 CACHE_MAX_AGE_HOURS = 24
 MAX_SEARCH_RESULTS = 5
@@ -71,14 +73,14 @@ def _extract_message_text(message_object: dict[str, Any]) -> str:
     return ""
 
 
-# This function asks GPT-5 if the incoming message needs real-time web search support.
-def should_search(message: str) -> bool:
+# This function asks GPT-5 if the incoming message needs real-time web search support and returns usage too.
+def should_search_with_usage(message: str) -> tuple[bool, TokenUsage]:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip().rstrip("/")
     api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
     deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "").strip()
 
     if not endpoint or not api_key or not deployment_name:
-        return False
+        return False, {"input_tokens": 0, "output_tokens": 0}
 
     api_version = os.getenv("AZURE_OPENAI_API_VERSION", AZURE_OPENAI_API_VERSION_DEFAULT)
     request_url = f"{endpoint}/openai/deployments/{deployment_name}/chat/completions"
@@ -105,22 +107,30 @@ def should_search(message: str) -> bool:
             response_data = response.json()
     except Exception as search_decision_error:  # pragma: no cover - defensive fallback
         LOGGER.warning("Search decision call failed: %s", search_decision_error)
-        return False
+        return False, {"input_tokens": 0, "output_tokens": 0}
+
+    usage = normalize_usage(response_data.get("usage"))
 
     choices = response_data.get("choices", [])
     if not choices:
-        return False
+        return False, usage
 
     response_text = _extract_message_text(choices[0].get("message", {}))
     if not response_text:
-        return False
+        return False, usage
 
     try:
         parsed_decision = json.loads(response_text)
     except json.JSONDecodeError:
-        return False
+        return False, usage
 
-    return bool(parsed_decision.get("needs_search", False))
+    return bool(parsed_decision.get("needs_search", False)), usage
+
+
+# This function keeps the older bool-only search-decision interface for call sites that do not need usage details.
+def should_search(message: str) -> bool:
+    needs_search, _usage = should_search_with_usage(message)
+    return needs_search
 
 
 # This function calls Tavily for web results and returns normalized title/url/snippet items.

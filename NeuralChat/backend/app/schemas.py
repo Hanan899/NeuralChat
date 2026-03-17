@@ -77,6 +77,19 @@ def validate_title_request(payload: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def validate_usage_limit_request(payload: dict[str, Any]) -> dict[str, float]:
+    """Validate and normalize PATCH /api/usage/limit payload."""
+    raw_limit = payload.get("daily_limit_usd")
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, (int, float)):
+        raise HTTPException(status_code=400, detail="daily_limit_usd must be a number greater than zero.")
+
+    daily_limit_usd = float(raw_limit)
+    if daily_limit_usd <= 0:
+        raise HTTPException(status_code=400, detail="daily_limit_usd must be greater than zero.")
+
+    return {"daily_limit_usd": round(daily_limit_usd, 2)}
+
+
 def build_health_response(timestamp: str, version: str) -> dict[str, str]:
     return {"status": "ok", "timestamp": timestamp, "version": version}
 

@@ -123,7 +123,7 @@ describe("File upload and file context UI", () => {
 
   it("test_file_upload_renders_drag_drop_zone", () => {
     render(<FileUpload open={true} authToken="token" sessionId="session-1" onClose={vi.fn()} />);
-    expect(screen.getByText(/Drag and drop files here, or click to browse/i)).toBeInTheDocument();
+    expect(screen.getByText(/Drag & drop or click to browse/i)).toBeInTheDocument();
   });
 
   it("test_file_upload_shows_progress_bar_during_upload", async () => {

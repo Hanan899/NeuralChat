@@ -27,6 +27,7 @@ from app.services.blob_paths import (
     user_segment,
     write_json_with_migration,
 )
+from app.services.cost_tracker import TokenUsage, normalize_usage
 from app.services.file_handler import get_relevant_chunks, list_user_files, load_parsed_chunks
 from app.services.memory import load_profile
 from app.services.search import search_web
@@ -189,6 +190,11 @@ def _extract_message_text(content_value: Any) -> str:
     return str(content_value or "").strip()
 
 
+# This helper extracts token usage from LangChain response objects into the shared app format.
+def _extract_response_usage(response_object: Any) -> TokenUsage:
+    return normalize_usage(response_object)
+
+
 # This helper returns a configured LangChain AzureChatOpenAI model for agent planning and reasoning.
 def _get_agent_model(temperature: float = 0.0, max_tokens: int | None = None) -> AzureChatOpenAI:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
@@ -327,7 +333,11 @@ def _read_session_file_context(
 
 
 # This helper runs one reasoning-only GPT call for steps that do not use an external tool.
-async def _run_reasoning_step(goal: str, step: dict[str, Any], execution_log: list[dict[str, Any]]) -> str:
+async def _run_reasoning_step_with_usage(
+    goal: str,
+    step: dict[str, Any],
+    execution_log: list[dict[str, Any]],
+) -> tuple[str, TokenUsage]:
     model = _get_agent_model(temperature=0.1, max_tokens=500)
     previous_results = execution_log[-4:]
     prompt_text = (
@@ -345,11 +355,17 @@ async def _run_reasoning_step(goal: str, step: dict[str, Any], execution_log: li
             HumanMessage(content=prompt_text),
         ]
     )
-    return _extract_message_text(response.content)
+    return _extract_message_text(response.content), _extract_response_usage(response)
 
 
-# This function creates a step-by-step task plan from a user goal using LangChain.
-async def create_task_plan(user_goal: str, available_tools: list[str]) -> dict[str, Any]:
+# This helper keeps the older reasoning-step interface for call sites that do not need usage details.
+async def _run_reasoning_step(goal: str, step: dict[str, Any], execution_log: list[dict[str, Any]]) -> str:
+    result_text, _usage = await _run_reasoning_step_with_usage(goal, step, execution_log)
+    return result_text
+
+
+# This function creates a step-by-step task plan from a user goal using LangChain and returns usage too.
+async def create_task_plan_with_usage(user_goal: str, available_tools: list[str]) -> tuple[dict[str, Any], TokenUsage]:
     model = _get_agent_model(temperature=0.0, max_tokens=500)
     prompt_text = (
         PLANNER_SYSTEM_PROMPT.format(available_tools=", ".join(available_tools))
@@ -367,10 +383,18 @@ async def create_task_plan(user_goal: str, available_tools: list[str]) -> dict[s
         )
         raw_text = _extract_message_text(response.content)
         raw_plan = json.loads(raw_text)
+        usage = _extract_response_usage(response)
     except Exception:
         raw_plan = {"goal": user_goal, "steps": []}
+        usage = {"input_tokens": 0, "output_tokens": 0}
 
-    return _normalize_plan(user_goal, raw_plan)
+    return _normalize_plan(user_goal, raw_plan), usage
+
+
+# This function keeps the older plan-only interface for call sites that do not need usage details.
+async def create_task_plan(user_goal: str, available_tools: list[str]) -> dict[str, Any]:
+    plan, _usage = await create_task_plan_with_usage(user_goal, available_tools)
+    return plan
 
 
 # This function saves one agent plan JSON document into blob storage.
@@ -490,7 +514,11 @@ async def execute_step(
                 LOGGER.warning(
                     "read_file tool found no file for step %s — falling back to reasoning.", step_number
                 )
-                reasoning_result = await _run_reasoning_step(goal=goal, step=step, execution_log=execution_log)
+                reasoning_result, reasoning_usage = await _run_reasoning_step_with_usage(
+                    goal=goal,
+                    step=step,
+                    execution_log=execution_log,
+                )
                 return {
                     "step_number": step_number,
                     "description": description,
@@ -499,6 +527,7 @@ async def execute_step(
                     "result": reasoning_result or "No file was available; reasoned through the step instead.",
                     "status": "done",
                     "error": None,
+                    "usage": reasoning_usage,
                 }
 
         if tool == "memory_recall":
@@ -514,7 +543,11 @@ async def execute_step(
                 "error": None,
             }
 
-        reasoning_result = await _run_reasoning_step(goal=goal, step=step, execution_log=execution_log)
+        reasoning_result, reasoning_usage = await _run_reasoning_step_with_usage(
+            goal=goal,
+            step=step,
+            execution_log=execution_log,
+        )
         return {
             "step_number": step_number,
             "description": description,
@@ -523,6 +556,7 @@ async def execute_step(
             "result": reasoning_result or "No reasoning output returned.",
             "status": "done",
             "error": None,
+            "usage": reasoning_usage,
         }
     except Exception as execution_error:
         return {
@@ -699,7 +733,7 @@ def check_for_loop(execution_log: list[dict[str, Any]], max_repeated_tool_calls:
 
 
 # This function builds the final user-facing summary from the goal and all step results.
-async def build_final_summary(goal: str, execution_log: list[dict[str, Any]]) -> str:
+async def build_final_summary_with_usage(goal: str, execution_log: list[dict[str, Any]]) -> tuple[str, TokenUsage]:
     model = _get_agent_model(temperature=0.1, max_tokens=1000)
     prompt_text = (
         f"Goal: {goal}\n"
@@ -714,7 +748,13 @@ async def build_final_summary(goal: str, execution_log: list[dict[str, Any]]) ->
             HumanMessage(content=prompt_text),
         ]
     )
-    return _extract_message_text(response.content)
+    return _extract_message_text(response.content), _extract_response_usage(response)
+
+
+# This function keeps the older summary-only interface for call sites that do not need usage details.
+async def build_final_summary(goal: str, execution_log: list[dict[str, Any]]) -> str:
+    summary_text, _usage = await build_final_summary_with_usage(goal, execution_log)
+    return summary_text
 
 
 # This helper builds the LangGraph state machine used for sequential agent execution.
@@ -814,6 +854,7 @@ def _build_agent_graph() -> Any:
                 "result": result["result"] or result.get("error") or "",
                 "status": result["status"],
                 "error": result.get("error"),
+                "usage": result.get("usage", {"input_tokens": 0, "output_tokens": 0}),
             },
         }
 
@@ -907,7 +948,7 @@ async def stream_agent_execution(
                 "error": None,
             }
         ]
-        fallback_summary = await build_final_summary(plan.get("goal", ""), fallback_log)
+        fallback_summary, fallback_summary_usage = await build_final_summary_with_usage(plan.get("goal", ""), fallback_log)
         yield {
             "type": "final_state",
             "plan": {
@@ -924,6 +965,7 @@ async def stream_agent_execution(
             "execution_log": fallback_log,
             "warning_message": "The planner returned no valid steps, so NeuralChat used a fallback reasoning step.",
             "summary": fallback_summary,
+            "summary_usage": fallback_summary_usage,
         }
         return
 
@@ -952,13 +994,17 @@ async def stream_agent_execution(
             graph_state.update(partial_state)
 
     final_summary = ""
+    final_summary_usage: TokenUsage = {"input_tokens": 0, "output_tokens": 0}
     if graph_state.get("warning_message") == f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds.":
         final_summary = (
             f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds. "
             f"Completed {len(graph_state.get('execution_log', []))} step(s) before stopping."
         )
     else:
-        final_summary = await build_final_summary(plan.get("goal", ""), graph_state.get("execution_log", []))
+        final_summary, final_summary_usage = await build_final_summary_with_usage(
+            plan.get("goal", ""),
+            graph_state.get("execution_log", []),
+        )
 
     yield {
         "type": "final_state",
@@ -966,4 +1012,5 @@ async def stream_agent_execution(
         "execution_log": graph_state.get("execution_log", []),
         "warning_message": graph_state.get("warning_message"),
         "summary": final_summary,
+        "summary_usage": final_summary_usage,
     }

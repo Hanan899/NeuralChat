@@ -1,26 +1,37 @@
 """LLM provider routing for Azure OpenAI GPT-5.
 
-Explain this code:
-- These functions hide provider-specific HTTP details from the rest of the app.
-- Missing provider config returns clear API errors instead of mock replies.
+These helpers hide provider-specific HTTP details from the rest of the app and
+return a consistent text + usage shape for every billed GPT call.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Any
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, TypedDict
 
 import httpx
 from fastapi import HTTPException, status
 
 from app.schemas import ChatModel
+from app.services.cost_tracker import TokenUsage, normalize_usage
 from app.services.search import BASE_INSTRUCTIONS
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 
 
+class ChatCompletionResult(TypedDict):
+    text: str
+    usage: TokenUsage
+
+
+class StreamEvent(TypedDict, total=False):
+    type: str
+    content: str
+    usage: TokenUsage
+
+
+# This function returns the chat reply text only for older call sites that do not need usage details.
 async def generate_reply(
     model: ChatModel,
     message: str,
@@ -30,6 +41,28 @@ async def generate_reply(
     file_prompt: str = "",
     timeout_seconds: float = 25.0,
 ) -> str:
+    result = await generate_reply_with_usage(
+        model=model,
+        message=message,
+        history=history,
+        memory_prompt=memory_prompt,
+        search_prompt=search_prompt,
+        file_prompt=file_prompt,
+        timeout_seconds=timeout_seconds,
+    )
+    return result["text"]
+
+
+# This function returns reply text together with input/output token usage for cost tracking.
+async def generate_reply_with_usage(
+    model: ChatModel,
+    message: str,
+    history: list[dict[str, Any]],
+    memory_prompt: str = "",
+    search_prompt: str = "",
+    file_prompt: str = "",
+    timeout_seconds: float = 25.0,
+) -> ChatCompletionResult:
     del model
     if not has_azure_openai_config():
         raise HTTPException(
@@ -49,6 +82,7 @@ async def generate_reply(
     )
 
 
+# This function yields token-only events for older call sites that do not need usage details.
 async def generate_reply_stream(
     model: ChatModel,
     message: str,
@@ -58,6 +92,29 @@ async def generate_reply_stream(
     file_prompt: str = "",
     timeout_seconds: float = 60.0,
 ) -> AsyncIterator[str]:
+    async for event in generate_reply_stream_with_usage(
+        model=model,
+        message=message,
+        history=history,
+        memory_prompt=memory_prompt,
+        search_prompt=search_prompt,
+        file_prompt=file_prompt,
+        timeout_seconds=timeout_seconds,
+    ):
+        if event["type"] == "token":
+            yield event["content"]
+
+
+# This function streams token events and ends with one usage event for cost tracking.
+async def generate_reply_stream_with_usage(
+    model: ChatModel,
+    message: str,
+    history: list[dict[str, Any]],
+    memory_prompt: str = "",
+    search_prompt: str = "",
+    file_prompt: str = "",
+    timeout_seconds: float = 60.0,
+) -> AsyncIterator[StreamEvent]:
     del model
     if not has_azure_openai_config():
         raise HTTPException(
@@ -67,7 +124,7 @@ async def generate_reply_stream(
                 "AZURE_OPENAI_API_KEY, and AZURE_OPENAI_DEPLOYMENT_NAME."
             ),
         )
-    async for token in stream_azure_openai_chat(
+    async for event in stream_azure_openai_chat(
         message=message,
         history=history,
         memory_prompt=memory_prompt,
@@ -75,9 +132,10 @@ async def generate_reply_stream(
         file_prompt=file_prompt,
         timeout_seconds=timeout_seconds,
     ):
-        yield token
+        yield event
 
 
+# This helper builds the provider message list from memory, search, file context, history, and newest input.
 def build_messages(
     history: list[dict[str, Any]],
     newest_message: str,
@@ -103,6 +161,7 @@ def build_messages(
     return filtered
 
 
+# This helper checks whether the Azure OpenAI environment is ready for a real GPT request.
 def has_azure_openai_config() -> bool:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
     api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
@@ -110,6 +169,7 @@ def has_azure_openai_config() -> bool:
     return bool(endpoint and api_key and deployment)
 
 
+# This helper extracts delta text from one Azure streaming chunk choice.
 def extract_delta_text(delta_obj: dict[str, Any]) -> str:
     content = delta_obj.get("content", "")
     if isinstance(content, str):
@@ -126,6 +186,24 @@ def extract_delta_text(delta_obj: dict[str, Any]) -> str:
     return ""
 
 
+# This helper extracts plain message text from a non-stream Azure OpenAI response message object.
+def extract_message_text(message_object: dict[str, Any]) -> str:
+    content = message_object.get("content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+        return " ".join(parts).strip()
+    return ""
+
+
+# This function performs one Azure OpenAI chat completion request and returns text plus usage.
 async def call_azure_openai_chat(
     message: str,
     history: list[dict[str, Any]],
@@ -133,7 +211,7 @@ async def call_azure_openai_chat(
     search_prompt: str = "",
     file_prompt: str = "",
     timeout_seconds: float = 25.0,
-) -> str:
+) -> ChatCompletionResult:
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
     api_key = os.environ["AZURE_OPENAI_API_KEY"]
     deployment = os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
@@ -158,7 +236,6 @@ async def call_azure_openai_chat(
 
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            # COST NOTE: This Azure OpenAI request is billed by prompt + completion tokens.
             response = await client.post(url, params=params, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -186,9 +263,10 @@ async def call_azure_openai_chat(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Azure OpenAI returned an empty message.",
         )
-    return text
+    return {"text": text, "usage": normalize_usage(data.get("usage"))}
 
 
+# This function streams Azure OpenAI tokens and yields a final usage event when available.
 async def stream_azure_openai_chat(
     message: str,
     history: list[dict[str, Any]],
@@ -196,7 +274,7 @@ async def stream_azure_openai_chat(
     search_prompt: str = "",
     file_prompt: str = "",
     timeout_seconds: float = 60.0,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[StreamEvent]:
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
     api_key = os.environ["AZURE_OPENAI_API_KEY"]
     deployment = os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
@@ -214,16 +292,17 @@ async def stream_azure_openai_chat(
         ),
         "temperature": 0.4,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     headers = {
         "api-key": api_key,
         "content-type": "application/json",
     }
+    final_usage: TokenUsage = {"input_tokens": 0, "output_tokens": 0}
 
     try:
         timeout = httpx.Timeout(timeout_seconds, connect=15.0, read=timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            # COST NOTE: This Azure OpenAI streaming request is billed by prompt + completion tokens.
             async with client.stream("POST", url, params=params, json=payload, headers=headers) as response:
                 response.raise_for_status()
                 async for raw_line in response.aiter_lines():
@@ -239,6 +318,11 @@ async def stream_azure_openai_chat(
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+
+                    chunk_usage = normalize_usage(chunk.get("usage"))
+                    if chunk_usage["input_tokens"] or chunk_usage["output_tokens"]:
+                        final_usage = chunk_usage
+
                     for choice in chunk.get("choices", []):
                         if not isinstance(choice, dict):
                             continue
@@ -247,7 +331,7 @@ async def stream_azure_openai_chat(
                             continue
                         token = extract_delta_text(delta)
                         if token:
-                            yield token
+                            yield {"type": "token", "content": token}
     except httpx.HTTPStatusError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -259,17 +343,4 @@ async def stream_azure_openai_chat(
             detail=f"Azure OpenAI streaming request failed: {error}.",
         ) from error
 
-
-def extract_message_text(message_obj: dict[str, Any]) -> str:
-    content = message_obj.get("content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    parts.append(text.strip())
-        return " ".join(parts).strip()
-    return ""
+    yield {"type": "usage", "usage": final_usage}

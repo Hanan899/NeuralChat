@@ -21,9 +21,16 @@ interface SidebarProps {
   onToggleWebSearchMode: () => void;
   onToggleAgentMode: () => void;
   onThemeModeChange: (mode: ThemeMode) => void;
+  onOpenSettings: () => void;
   onOpenUserSettings: () => void;
   onSignOut: () => void;
   onCloseMobile: () => void;
+  // Optional shortcut handlers
+  onOpenImages?: () => void;
+  onOpenApps?: () => void;
+  onOpenResearch?: () => void;
+  onOpenCodex?: () => void;
+  onOpenProjects?: () => void;
 }
 
 type ShortcutId = "new" | "images" | "apps" | "research" | "codex" | "projects";
@@ -193,9 +200,15 @@ export function Sidebar({
   onToggleWebSearchMode,
   onToggleAgentMode,
   onThemeModeChange,
+  onOpenSettings,
   onOpenUserSettings,
   onSignOut,
-  onCloseMobile
+  onCloseMobile,
+  onOpenImages,
+  onOpenApps,
+  onOpenResearch,
+  onOpenCodex,
+  onOpenProjects,
 }: SidebarProps) {
   const userInitials = buildInitials(userName);
   const [openMenuConversationId, setOpenMenuConversationId] = useState<string | null>(null);
@@ -237,6 +250,29 @@ export function Sidebar({
       document.removeEventListener("keydown", handleEscape);
     };
   }, []);
+
+  function handleShortcutClick(id: ShortcutId) {
+    switch (id) {
+      case "new":
+        onNewChat();
+        break;
+      case "images":
+        onOpenImages?.();
+        break;
+      case "apps":
+        onOpenApps?.();
+        break;
+      case "research":
+        onOpenResearch?.();
+        break;
+      case "codex":
+        onOpenCodex?.();
+        break;
+      case "projects":
+        onOpenProjects?.();
+        break;
+    }
+  }
 
   function renderConversationItem(conversation: ConversationSummary) {
     const isActive = conversation.id === activeConversationId;
@@ -345,7 +381,7 @@ export function Sidebar({
               <button
                 type="button"
                 className="nc-shortcut-item"
-                onClick={shortcut.id === "new" ? onNewChat : undefined}
+                onClick={() => handleShortcutClick(shortcut.id)}
                 aria-label={shortcut.label}
               >
                 <span className="nc-shortcut-item__icon">
@@ -396,7 +432,8 @@ export function Sidebar({
       </div>
 
       <div className="nc-history-scroll nc-history-scroll--flat">
-        <h3 className="nc-history-label">Your chats</h3>
+        {/* ✅ Renamed from "Your chats" to "Recents" */}
+        <h3 className="nc-history-label">Recents</h3>
         <div className="nc-history-list">
           {historyItems.map((conversation) => renderConversationItem(conversation))}
         </div>
@@ -468,6 +505,16 @@ export function Sidebar({
                   </div>
                 </div>
 
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onOpenSettings();
+                    setIsUserMenuOpen(false);
+                  }}
+                >
+                  Settings
+                </button>
                 <button
                   type="button"
                   role="menuitem"

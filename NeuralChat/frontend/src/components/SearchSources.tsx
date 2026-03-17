@@ -25,7 +25,7 @@ export function SearchSources({ sources }: SearchSourcesProps) {
         <ul className="nc-sources__list">
           {visibleSources.map((source, index) => (
             <li key={`${source.url}-${index}`}>
-              <a href={source.url} target="_blank" rel="noreferrer">
+              <a href={source.url} target="_blank" rel="noopener noreferrer">
                 {source.title || source.url}
               </a>
               {source.snippet ? <p>{source.snippet}</p> : null}
