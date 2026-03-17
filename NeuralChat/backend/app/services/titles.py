@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from app.services.cost_tracker import TokenUsage, normalize_usage
+
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 TITLE_PROMPT_SYSTEM = (
     "Create a concise conversation title in 3 to 6 words. "
@@ -139,7 +141,7 @@ def sanitize_conversation_title(raw_title: str, prompt: str, reply: str = "") ->
 
 
 # This helper asks Azure OpenAI for a short refined title and falls back safely on failure.
-def generate_conversation_title(prompt: str, reply: str = "") -> str:
+def generate_conversation_title_with_usage(prompt: str, reply: str = "") -> tuple[str, TokenUsage]:
     normalized_prompt = _clean_text(prompt)
     normalized_reply = _clean_text(reply)
     fallback_title = fallback_conversation_title(normalized_prompt, normalized_reply)
@@ -148,7 +150,7 @@ def generate_conversation_title(prompt: str, reply: str = "") -> str:
     api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
     deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "").strip()
     if not endpoint or not api_key or not deployment_name:
-        return fallback_title
+        return fallback_title, {"input_tokens": 0, "output_tokens": 0}
 
     api_version = os.getenv("AZURE_OPENAI_API_VERSION", AZURE_OPENAI_API_VERSION_DEFAULT)
     request_url = f"{endpoint}/openai/deployments/{deployment_name}/chat/completions"
@@ -180,11 +182,13 @@ def generate_conversation_title(prompt: str, reply: str = "") -> str:
             response.raise_for_status()
             payload = response.json()
     except Exception:
-        return fallback_title
+        return fallback_title, {"input_tokens": 0, "output_tokens": 0}
+
+    usage = normalize_usage(payload.get("usage"))
 
     choices = payload.get("choices", [])
     if not choices:
-        return fallback_title
+        return fallback_title, usage
 
     message_object = choices[0].get("message", {})
     content = message_object.get("content", "")
@@ -195,15 +199,21 @@ def generate_conversation_title(prompt: str, reply: str = "") -> str:
             if isinstance(item, dict) and isinstance(item.get("text"), str)
         ).strip()
     if not isinstance(content, str) or not content.strip():
-        return fallback_title
+        return fallback_title, usage
 
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
-        return fallback_title
+        return fallback_title, usage
 
     if not isinstance(parsed, dict):
-        return fallback_title
+        return fallback_title, usage
 
     raw_title = str(parsed.get("title", "")).strip()
-    return sanitize_conversation_title(raw_title, normalized_prompt, normalized_reply)
+    return sanitize_conversation_title(raw_title, normalized_prompt, normalized_reply), usage
+
+
+# This helper keeps the older title-only interface for call sites that do not need usage details.
+def generate_conversation_title(prompt: str, reply: str = "") -> str:
+    title, _usage = generate_conversation_title_with_usage(prompt, reply)
+    return title

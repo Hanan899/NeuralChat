@@ -36,6 +36,7 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     onToggleWebSearchMode: vi.fn(),
     onToggleAgentMode: vi.fn(),
     onThemeModeChange: vi.fn(),
+    onOpenSettings: vi.fn(),
     onOpenUserSettings: vi.fn(),
     onSignOut: vi.fn(),
     onCloseMobile: vi.fn()
@@ -75,26 +76,31 @@ describe("Sidebar", () => {
     expect(onDeleteConversation).toHaveBeenCalledWith("conversation-1");
   });
 
-  it("opens settings menu and triggers account actions", async () => {
+  it("opens the user menu and triggers settings and account actions", async () => {
+    const onOpenSettings = vi.fn();
     const onOpenUserSettings = vi.fn();
     const onSignOut = vi.fn();
 
-    renderSidebar({ onOpenUserSettings, onSignOut });
+    renderSidebar({ onOpenSettings, onOpenUserSettings, onSignOut });
 
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "More options" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "More options" }));
     await userEvent.click(screen.getByRole("menuitem", { name: /manage account/i }));
     expect(onOpenUserSettings).toHaveBeenCalledTimes(1);
 
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "More options" }));
     await userEvent.click(screen.getByRole("menuitem", { name: /sign out/i }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
-  it("changes theme from settings menu", async () => {
+  it("changes theme from the user menu", async () => {
     const onThemeModeChange = vi.fn();
     renderSidebar({ themeMode: "system", onThemeModeChange });
 
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "More options" }));
     await userEvent.click(screen.getByRole("menuitemradio", { name: /dark/i }));
 
     expect(onThemeModeChange).toHaveBeenCalledWith("dark");

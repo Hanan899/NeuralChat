@@ -157,7 +157,7 @@ describe("Agent mode UI", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Run plan" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Final summary", { selector: ".nc-agent-summary__body p" })).toBeInTheDocument();
+      expect(screen.getByText("Final summary")).toBeInTheDocument();
     });
   });
 
@@ -206,7 +206,7 @@ describe("Agent mode UI", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open agent history" }));
     await userEvent.click(await screen.findByRole("button", { name: /Goal one/i }));
 
-    expect(await screen.findByText(/Step 1/i)).toBeInTheDocument();
+    expect(await screen.findByText("Search")).toBeInTheDocument();
   });
 
   it("test_agent_history_shows_empty_state", async () => {

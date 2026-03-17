@@ -4,11 +4,13 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useS
 import { checkHealth, checkSearchStatus, deleteConversationSession, generateConversationTitle, getFiles, streamChat } from "./api";
 import type { RequestNamingContext } from "./api";
 import { createAgentPlan, runAgent } from "./api/agent";
+import { getTodayUsage } from "./api/usage";
 import { AgentHistory } from "./components/AgentHistory";
 import { ChatWindow } from "./components/ChatWindow";
-import { DebugPanel } from "./components/DebugPanel";
+import { CostWarningBanner } from "./components/CostWarningBanner";
 import { FileUpload } from "./components/FileUpload";
 import { ModelSelector } from "./components/ModelSelector";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import type {
   AgentPlan,
@@ -17,6 +19,7 @@ import type {
   ChatMessage,
   ChatModel,
   ConversationSummary,
+  DailyLimitSummary,
   StreamChunk,
   ThemeMode,
   UploadedFileItem,
@@ -30,6 +33,7 @@ const EMPTY_SUGGESTIONS = [
 ];
 
 const THEME_STORAGE_KEY = "neuralchat:theme-mode:v1";
+const COST_WARNING_STORAGE_KEY = "neuralchat:cost-warning:dismissed";
 type ToastTone = "success" | "info" | "error";
 
 interface ToastItem {
@@ -264,6 +268,10 @@ function getUserStorageKey(userId: string) {
   return `neuralchat:workspace-ui:v2:${userId}`;
 }
 
+function getCostWarningStorageKey(userId: string, usageDate: string) {
+  return `${COST_WARNING_STORAGE_KEY}:${userId}:${usageDate}`;
+}
+
 function buildConversationSummary(title = "New chat"): ConversationSummary {
   return {
     id: `c-${crypto.randomUUID()}`,
@@ -387,6 +395,10 @@ function ChatShell() {
   const [fileModalAuthToken, setFileModalAuthToken] = useState("");
   const [isAgentHistoryOpen, setIsAgentHistoryOpen] = useState(false);
   const [agentHistoryAuthToken, setAgentHistoryAuthToken] = useState("");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [todayUsageSummary, setTodayUsageSummary] = useState<DailyLimitSummary | null>(null);
+  const [isCostWarningDismissed, setIsCostWarningDismissed] = useState(false);
+  const [activeUsageDate, setActiveUsageDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const notifPanelRef = useRef<HTMLDivElement | null>(null);
   const notifBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -430,13 +442,55 @@ function ChatShell() {
     }),
     [activeConversation?.title, userDisplayName]
   );
-
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
     checkSearchStatus()
       .then((status) => setSearchEnabled(status))
       .catch(() => setSearchEnabled(false));
   }, []);
+
+  const loadTodayUsageSummary = useCallback(async () => {
+    if (!userId) {
+      setTodayUsageSummary(null);
+      return;
+    }
+
+    try {
+      setActiveUsageDate(new Date().toISOString().slice(0, 10));
+      const authToken = await getToken();
+      if (!authToken) {
+        return;
+      }
+      const payload = await getTodayUsage(authToken, {
+        userDisplayName,
+        sessionTitle: activeConversation?.title?.trim() || "New chat",
+      });
+      setTodayUsageSummary(payload.summary);
+    } catch {
+      // Leave the warning hidden when usage cannot be loaded.
+    }
+  }, [activeConversation?.title, getToken, userDisplayName, userId]);
+
+  useEffect(() => {
+    void loadTodayUsageSummary();
+    const intervalId = window.setInterval(() => {
+      void loadTodayUsageSummary();
+    }, 60_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [loadTodayUsageSummary]);
+
+  useEffect(() => {
+    if (!userId) {
+      setIsCostWarningDismissed(false);
+      return;
+    }
+
+    const storageKey = getCostWarningStorageKey(userId, activeUsageDate);
+    setIsCostWarningDismissed(window.localStorage.getItem(storageKey) === "1");
+  }, [activeUsageDate, userId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -795,6 +849,7 @@ function ChatShell() {
     setFilesByConversation((previous) => ({ ...previous, [next.id]: [] }));
     setFileCountsByConversation((previous) => ({ ...previous, [next.id]: 0 }));
     setActiveConversationId(next.id);
+    setIsSettingsOpen(false);
     setInput("");
     setErrorText("");
     setIsSidebarOpen(false);
@@ -805,6 +860,7 @@ function ChatShell() {
       return;
     }
     setActiveConversationId(conversationId);
+    setIsSettingsOpen(false);
     setErrorText("");
   }
 
@@ -1389,6 +1445,12 @@ function ChatShell() {
     setErrorText("");
   }
 
+  function handleOpenSettings() {
+    setIsSettingsOpen(true);
+    setIsSidebarOpen(false);
+    setErrorText("");
+  }
+
   function handleOpenUserSettings() {
     const openUserProfile = (clerk as unknown as { openUserProfile?: () => void }).openUserProfile;
     if (typeof openUserProfile === "function") {
@@ -1403,6 +1465,16 @@ function ChatShell() {
 
   function handleSignOut() {
     void clerk.signOut();
+  }
+
+  function handleDismissCostWarning() {
+    if (!userId) {
+      setIsCostWarningDismissed(true);
+      return;
+    }
+    const storageKey = getCostWarningStorageKey(userId, activeUsageDate);
+    window.localStorage.setItem(storageKey, "1");
+    setIsCostWarningDismissed(true);
   }
 
   async function handleOpenFileUpload() {
@@ -1507,6 +1579,7 @@ function ChatShell() {
         onToggleAgentMode={() => setIsAgentMode((value) => !value)}
         themeMode={themeMode}
         onThemeModeChange={handleThemeModeChange}
+        onOpenSettings={handleOpenSettings}
         onOpenUserSettings={handleOpenUserSettings}
         onSignOut={handleSignOut}
         onCloseMobile={() => setIsSidebarOpen(false)}
@@ -1525,10 +1598,21 @@ function ChatShell() {
             >
               <UiIcon kind="menu" className="nc-ui-icon" />
             </button>
-            <h1>{activeConversation?.title ?? "New chat"}</h1>
+            <h1>{isSettingsOpen ? "Settings" : activeConversation?.title ?? "New chat"}</h1>
           </div>
 
           <div className="nc-topbar__right">
+            {isSettingsOpen ? (
+              <button
+                type="button"
+                className="nc-topbar-btn nc-topbar-btn--share"
+                aria-label="Close settings"
+                onClick={() => setIsSettingsOpen(false)}
+              >
+                Done
+              </button>
+            ) : (
+              <>
             {/* Agents — icon + label, purple-tinted */}
             <button
               type="button"
@@ -1556,16 +1640,6 @@ function ChatShell() {
 
             {/* Model selector */}
             <ModelSelector value={model} onChange={setModel} variant="topbar" />
-
-            {/* Debug — muted, secondary */}
-            <button
-              type="button"
-              className="nc-topbar-btn nc-topbar-btn--muted"
-              aria-label="Toggle diagnostics"
-              onClick={() => setIsDiagnosticsOpen((value) => !value)}
-            >
-              Debug
-            </button>
 
             {/* Notification bell */}
             <div className="nc-notif-wrap">
@@ -1632,11 +1706,25 @@ function ChatShell() {
                 </div>
               ) : null}
             </div>
+              </>
+            )}
           </div>
         </header>
 
-        <div className="nc-message-area">
-          {currentMessages.length === 0 ? (
+        <div className={`nc-message-area ${isSettingsOpen ? "nc-message-area--settings" : ""}`}>
+          {!isSettingsOpen && todayUsageSummary && !isCostWarningDismissed ? (
+            <CostWarningBanner summary={todayUsageSummary} onDismiss={handleDismissCostWarning} />
+          ) : null}
+
+          {isSettingsOpen ? (
+            <SettingsPanel
+              getAuthToken={getToken}
+              naming={activeRequestNaming}
+              onShowToast={showToast}
+              onUsageStateChange={setTodayUsageSummary}
+              onOpenAccountSettings={handleOpenUserSettings}
+            />
+          ) : currentMessages.length === 0 ? (
             <section className="nc-empty-state" data-testid="empty-state">
               {/* Neural network logo replaces the old circle/arc brand mark */}
               <div className="nc-empty-mark">
@@ -1669,61 +1757,50 @@ function ChatShell() {
           )}
         </div>
 
-        <footer className="nc-input-wrap">
-          <form onSubmit={handleSubmit} className="nc-input-shell">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleTextareaKeyDown}
-              placeholder={isAgentMode ? "Describe a goal for the agent..." : "Message NeuralChat..."}
-              rows={1}
-            />
+        {!isSettingsOpen ? (
+          <footer className="nc-input-wrap">
+            <form onSubmit={handleSubmit} className="nc-input-shell">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleTextareaKeyDown}
+                placeholder={isAgentMode ? "Describe a goal for the agent..." : "Message NeuralChat..."}
+                rows={1}
+              />
 
-            <div className="nc-input-row">
-              <div className="nc-input-left">
-                <button
-                  type="button"
-                  className="nc-attach-btn"
-                  aria-label="Add files to this chat"
-                  onClick={() => void handleOpenFileUpload()}
-                  title="Add or manage files for this chat"
-                >
-                  <UiIcon kind="attach" className="nc-ui-icon" />
-                  <span>Add files</span>
-                </button>
+              <div className="nc-input-row">
+                <div className="nc-input-left">
+                  <button
+                    type="button"
+                    className="nc-attach-btn"
+                    aria-label="Add files to this chat"
+                    onClick={() => void handleOpenFileUpload()}
+                    title="Add or manage files for this chat"
+                  >
+                    <UiIcon kind="attach" className="nc-ui-icon" />
+                    <span>Add files</span>
+                  </button>
+                </div>
+
+                {isSending ? (
+                  <button type="button" className="nc-send-btn" aria-label="Stop generating" onClick={handleStopGenerating}>
+                    <UiIcon kind="stop" className="nc-send-btn__icon" />
+                  </button>
+                ) : (
+                  <button type="submit" className="nc-send-btn" aria-label="Send message" disabled={!input.trim()}>
+                    <UiIcon kind="send" className="nc-send-btn__icon" />
+                  </button>
+                )}
               </div>
+            </form>
 
-              {isSending ? (
-                <button type="button" className="nc-send-btn" aria-label="Stop generating" onClick={handleStopGenerating}>
-                  <UiIcon kind="stop" className="nc-send-btn__icon" />
-                </button>
-              ) : (
-                <button type="submit" className="nc-send-btn" aria-label="Send message" disabled={!input.trim()}>
-                  <UiIcon kind="send" className="nc-send-btn__icon" />
-                </button>
-              )}
-            </div>
-          </form>
-
-          {errorText ? <p className="nc-error">{errorText}</p> : null}
-          <p className="nc-input-note">NeuralChat can make mistakes. Verify important info.</p>
-        </footer>
+            {errorText ? <p className="nc-error">{errorText}</p> : null}
+            <p className="nc-input-note">NeuralChat can make mistakes. Verify important info.</p>
+          </footer>
+        ) : null}
       </section>
 
-      {isDiagnosticsOpen ? (
-        <aside className="nc-right-panel">
-          <DebugPanel
-            selectedModel={model}
-            requestId={requestId}
-            responseMs={responseMs}
-            firstTokenMs={firstTokenMs}
-            tokensEmitted={tokensEmitted}
-            streamStatus={streamStatus}
-            backendHealthy={backendHealthy}
-          />
-        </aside>
-      ) : null}
 
       {isFileModalOpen && activeConversationId ? (
         <FileUpload

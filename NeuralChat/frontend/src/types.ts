@@ -46,6 +46,59 @@ export interface AgentTaskSummary {
   steps_count: number;
 }
 
+export type UsageFeature =
+  | "chat"
+  | "memory"
+  | "search_decision"
+  | "agent_plan"
+  | "agent_step"
+  | "agent_summary"
+  | "title_generation";
+
+export interface UsageRecord {
+  timestamp: string;
+  feature: UsageFeature | string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageFeatureSummary {
+  cost_usd: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface DailyCostPoint {
+  date: string;
+  cost_usd: number;
+}
+
+export interface UsageSummary {
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  by_feature: Record<string, UsageFeatureSummary>;
+  daily_costs: DailyCostPoint[];
+}
+
+export interface DailyLimitSummary {
+  today_cost_usd: number;
+  daily_limit_usd: number;
+  limit_exceeded: boolean;
+  percentage_used: number;
+}
+
+export interface TodayUsageResponse {
+  records: UsageRecord[];
+  summary: DailyLimitSummary;
+}
+
+export interface UsageLimitResponse {
+  daily_limit_usd: number;
+}
+
 export interface AgentTaskState {
   plan: AgentPlan;
   stepResults: AgentStepResult[];

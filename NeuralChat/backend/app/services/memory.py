@@ -18,9 +18,11 @@ from app.services.blob_paths import (
     user_segment,
     write_json_with_migration,
 )
+from app.services.cost_tracker import TokenUsage, log_usage, normalize_usage
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 PROFILE_FIELDS = {"name", "job", "city", "preferences", "goals"}
+HIDDEN_PROFILE_FIELDS = {"user_id", "display_name", "updated_at", "daily_limit_usd"}
 MEMORY_PROMPT_SYSTEM = (
     "Extract facts about the user as JSON only. "
     "Keys: name, job, city, preferences, goals. Return {} if nothing found."
@@ -131,13 +133,13 @@ def save_profile(user_id: str, facts: dict, display_name: str | None = None) -> 
     _write_profile(user_id, merged_profile, display_name)
 
 
-# This function asks GPT-5 to extract profile facts from one user/assistant exchange.
-def extract_facts(message: str, reply: str) -> dict[str, Any]:
+# This function asks GPT-5 to extract profile facts from one user/assistant exchange and returns usage too.
+def extract_facts_with_usage(message: str, reply: str) -> tuple[dict[str, Any], TokenUsage]:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip().rstrip("/")
     api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
     deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "").strip()
     if not endpoint or not api_key or not deployment_name:
-        return {}
+        return {}, {"input_tokens": 0, "output_tokens": 0}
 
     api_version = os.getenv("AZURE_OPENAI_API_VERSION", AZURE_OPENAI_API_VERSION_DEFAULT)
     request_url = f"{endpoint}/openai/deployments/{deployment_name}/chat/completions"
@@ -172,29 +174,37 @@ def extract_facts(message: str, reply: str) -> dict[str, Any]:
             response.raise_for_status()
             response_data = response.json()
     except Exception:
-        return {}
+        return {}, {"input_tokens": 0, "output_tokens": 0}
+
+    usage = normalize_usage(response_data.get("usage"))
 
     choices = response_data.get("choices", [])
     if not choices:
-        return {}
+        return {}, usage
     message_object = choices[0].get("message", {})
     response_text = _extract_message_text(message_object)
     if not response_text:
-        return {}
+        return {}, usage
 
     try:
         parsed_facts = json.loads(response_text)
     except json.JSONDecodeError:
-        return {}
+        return {}, usage
 
     if not isinstance(parsed_facts, dict):
-        return {}
+        return {}, usage
 
     normalized_facts: dict[str, Any] = {}
     for field_name in PROFILE_FIELDS:
         if field_name in parsed_facts and parsed_facts[field_name] not in (None, ""):
             normalized_facts[field_name] = parsed_facts[field_name]
-    return normalized_facts
+    return normalized_facts, usage
+
+
+# This function keeps the older facts-only interface for call sites that do not need usage details.
+def extract_facts(message: str, reply: str) -> dict[str, Any]:
+    facts, _usage = extract_facts_with_usage(message, reply)
+    return facts
 
 
 # This function builds a compact memory sentence for prompt injection and returns "" when profile is empty.
@@ -205,7 +215,7 @@ def build_memory_prompt(user_id: str, display_name: str | None = None) -> str:
 
     formatted_items: list[str] = []
     for field_name in sorted(profile_data.keys()):
-        if field_name in {"user_id", "display_name", "updated_at"}:
+        if field_name in HIDDEN_PROFILE_FIELDS:
             continue
         field_value = profile_data.get(field_name)
         if field_value in (None, ""):
@@ -248,7 +258,16 @@ def clear_profile(user_id: str, display_name: str | None = None) -> None:
 
 # This async wrapper offloads extraction and save operations so chat streaming remains fast.
 async def process_memory_update(user_id: str, message: str, reply: str, display_name: str | None = None) -> None:
-    extracted_facts = await asyncio.to_thread(extract_facts, message, reply)
+    extracted_facts, usage = await asyncio.to_thread(extract_facts_with_usage, message, reply)
+    if usage["input_tokens"] or usage["output_tokens"]:
+        await asyncio.to_thread(
+            log_usage,
+            user_id,
+            "memory",
+            usage["input_tokens"],
+            usage["output_tokens"],
+            display_name,
+        )
     if not extracted_facts:
         return
     await asyncio.to_thread(save_profile, user_id, extracted_facts, display_name)
