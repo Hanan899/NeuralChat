@@ -1,80 +1,97 @@
-# NeuralChat Roadmap (Beginner-Friendly)
+# NeuralChat Roadmap
 
-## Completed Milestones
+This roadmap reflects the current shipped project state and the next sensible improvements based on the existing codebase.
 
-### Phase 1: Foundation
-- Streaming chat UI and backend
-- `GET /api/health` and `POST /api/chat`
-- GPT-5 Azure OpenAI integration
+## Completed Foundations
 
-### Phase 2: Auth + Cloud Persistence
-- Clerk login/logout
-- JWT verification on backend
-- User-scoped conversation storage in Blob
-- Real chat deletion that removes session artifacts from backend storage
+### Core chat
 
-### Phase 3: Deep Memory
-- Profile extraction from chat exchanges
-- Prompt injection from profile memory
-- `/api/me` and memory CRUD endpoints
+- GPT-5 chat through Azure OpenAI
+- NDJSON streaming responses
+- Azure Functions-hosted FastAPI backend
+- Vite + React + TypeScript frontend shell
 
-### Phase 4: Web Search
-- Tavily integration with 24h Blob cache
-- Sidebar `Web search` control under `New chat`
-- Sources returned and rendered with `🌐` badge
+### Auth and persistence
 
-### Phase 5: File & PDF Upload (Task 9)
-- Upload endpoint with 25MB/type validation
-- Raw file storage in `neurarchat-uploads`
-- Parsed chunk storage in `neurarchat-parsed`
-- Session-scoped file listing and delete
-- File context injection into chat prompt
-- `📄` badge when answer used uploaded file context
+- Clerk authentication
+- JWT verification in the backend
+- Azure Blob persistence for chats and profile data
+- Readable Blob naming with stable ids
+- Real backend chat deletion for session-scoped cleanup
 
-### Phase 6: Agent Mode (Task 10)
-- LangChain + LangGraph sequential planning and execution flow
-- Plan-first workflow: preview plan, then explicitly run it
-- Tool surface: web search, file read, memory recall, reasoning-only
-- Blob-backed plan and execution logs in `neurarchat-agents`
-- Sidebar `Agent mode` control under `Codex`
-- Agent history panel and in-thread live execution progress
-- Loop guard, 6-step cap, and 60-second task timeout safety rules
+### Deep Memory
 
-## What To Build Next
+- user profile extraction from chat exchanges
+- prompt injection from saved memory
+- memory read, update, and clear endpoints
 
-### Task 11: Retrieval Quality Upgrade
-- Replace keyword chunk scoring with embeddings + cosine similarity
-- Keep chunk fallback path for safety
-- Add relevance debug output in diagnostics panel
+### Web search
 
-### Task 12: Source Attribution for Files
-- Track which filename produced each chunk
-- Return file citations with chunk snippets in done metadata
-- Show per-file citations in assistant message UI
+- Tavily integration
+- Blob-backed search cache
+- sidebar `Web search` control
+- source metadata returned with chat responses
 
-### Task 13: Image Understanding Path
-- Add OCR/vision extraction for PNG/JPG uploads
-- Keep existing text parser for docs/txt/csv
-- Add clear UI indicator when image context is used
+### File retrieval
 
-### Task 14: Deployment Hardening
-- Move secrets to managed secret storage and rotate exposed values
-- Add release checklist for Azure Function settings and CORS
-- Add browser-level smoke test automation for hosted backend
+- upload validation and Blob persistence
+- parsed chunk storage and reuse
+- session-scoped file listing and delete
+- file-context injection into chat answers
 
-## Daily Learning Loop (45-60 minutes)
+### Agent Mode
 
-1. Goal
-2. What you type
-3. Why it works
-4. Break test
-5. Own rewrite
+- LangChain + LangGraph orchestration
+- plan-first UX
+- explicit run step
+- streamed progress and final summary
+- stored plan and execution log history
+- loop guard, step cap, and timeout safety rules
 
-## Weekly Habit
+### Conversation naming
 
-- Pick one feature file and rebuild it from memory.
-- Add one bug-journal entry with:
-  - bug
-  - root cause
-  - fix
-  - prevention rule
+- local summary title generation in the frontend
+- backend title refinement endpoint
+- readable session naming reused in Blob storage
+
+## Next Recommended Work
+
+### 1. Retrieval quality upgrade
+
+- replace keyword-only chunk selection with embeddings-based ranking
+- keep a simple fallback path for resilience
+- expose better retrieval debug information in the UI
+
+### 2. Stronger file attribution
+
+- track exactly which file and chunk were used in each answer
+- return file citations in response metadata
+- render file citations in assistant responses
+
+### 3. Better image understanding
+
+- add OCR or multimodal extraction for image uploads
+- distinguish image-derived context from text-derived context
+- keep existing document parsing path intact
+
+### 4. Deployment hardening
+
+- move secrets fully into managed secret storage
+- add repeatable release and smoke-test checklists
+- tighten CORS and environment validation guidance
+
+### 5. Product polish
+
+- manual chat title rename
+- richer conversation sharing flow
+- more complete agent-history filtering and organization
+- reduce frontend bundle size through code splitting
+
+## Guiding Principle
+
+Near-term roadmap work should improve reliability, retrieval quality, and product polish without breaking the current separation between:
+
+- user-level memory
+- session-level chat/file/agent artifacts
+- normal chat mode
+- Agent Mode
