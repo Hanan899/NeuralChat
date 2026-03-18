@@ -7,12 +7,14 @@ interface SidebarProps {
   archivedHistoryItems: ConversationSummary[];
   activeConversationId: string;
   isMobileOpen: boolean;
+  isCollapsed?: boolean;
   userName: string;
   userSubtitle: string;
   themeMode: ThemeMode;
   isWebSearchMode: boolean;
   isWebSearchAvailable: boolean;
   isAgentMode: boolean;
+  activeShortcutId?: ShortcutId;
   onNewChat: () => void;
   onSelectConversation: (conversationId: string) => void;
   onToggleArchiveConversation: (conversationId: string) => void;
@@ -25,6 +27,7 @@ interface SidebarProps {
   onOpenUserSettings: () => void;
   onSignOut: () => void;
   onCloseMobile: () => void;
+  onToggleCollapse: () => void;
   // Optional shortcut handlers
   onOpenImages?: () => void;
   onOpenApps?: () => void;
@@ -33,7 +36,7 @@ interface SidebarProps {
   onOpenProjects?: () => void;
 }
 
-type ShortcutId = "new" | "images" | "apps" | "research" | "codex" | "projects";
+export type ShortcutId = "new" | "images" | "apps" | "research" | "codex" | "projects";
 type SidebarModeId = "web-search" | "agent";
 
 interface ShortcutItem {
@@ -186,12 +189,14 @@ export function Sidebar({
   archivedHistoryItems,
   activeConversationId,
   isMobileOpen,
+  isCollapsed = false,
   userName,
   userSubtitle,
   themeMode,
   isWebSearchMode,
   isWebSearchAvailable,
   isAgentMode,
+  activeShortcutId = "new",
   onNewChat,
   onSelectConversation,
   onToggleArchiveConversation,
@@ -204,6 +209,7 @@ export function Sidebar({
   onOpenUserSettings,
   onSignOut,
   onCloseMobile,
+  onToggleCollapse,
   onOpenImages,
   onOpenApps,
   onOpenResearch,
@@ -252,6 +258,8 @@ export function Sidebar({
   }, []);
 
   function handleShortcutClick(id: ShortcutId) {
+    onCloseMobile();
+
     switch (id) {
       case "new":
         onNewChat();
@@ -351,7 +359,7 @@ export function Sidebar({
 
   return (
     <aside
-      className={`nc-sidebar ${isMobileOpen ? "nc-sidebar--open" : ""}`}
+      className={`nc-sidebar ${isMobileOpen ? "nc-sidebar--open" : ""} ${isCollapsed ? "nc-sidebar--collapsed" : ""}`}
       aria-label="Conversation sidebar"
       data-testid="conversation-sidebar"
     >
@@ -362,12 +370,18 @@ export function Sidebar({
             <span className="nc-brand-mark" aria-hidden="true" style={{ flexShrink: 0 }}>
               <NeuralNetworkLogo />
             </span>
-            <span style={{ display: "flex", flexDirection: "column", gap: "2px", lineHeight: 1 }}>
+            <span className="nc-brand-copy" style={{ display: "flex", flexDirection: "column", gap: "2px", lineHeight: 1 }}>
               <span className="nc-brand-name" style={{ fontWeight: 600, fontSize: "15px", whiteSpace: "nowrap" }}>NeuralChat</span>
               <span className="nc-brand-subtitle" style={{ fontSize: "11px", opacity: 0.5, whiteSpace: "nowrap" }}>AI Chat Assistant</span>
             </span>
           </div>
-          <button type="button" className="nc-sidebar-pane-btn" onClick={onCloseMobile} aria-label="Close sidebar">
+          <button
+            type="button"
+            className="nc-sidebar-pane-btn"
+            onClick={onToggleCollapse}
+            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" strokeWidth="1.7" />
               <path d="M12 4V20" stroke="currentColor" strokeWidth="1.7" />
@@ -380,14 +394,16 @@ export function Sidebar({
             <div key={shortcut.id} className="nc-shortcut-group">
               <button
                 type="button"
-                className="nc-shortcut-item"
+                className={`nc-shortcut-item ${activeShortcutId === shortcut.id ? "nc-shortcut-item--active" : ""}`}
                 onClick={() => handleShortcutClick(shortcut.id)}
                 aria-label={shortcut.label}
+                aria-current={activeShortcutId === shortcut.id ? "page" : undefined}
+                title={isCollapsed ? shortcut.label : undefined}
               >
                 <span className="nc-shortcut-item__icon">
                   <ShortcutIcon id={shortcut.id} />
                 </span>
-                <span>{shortcut.label}</span>
+                <span className="nc-shortcut-item__label">{shortcut.label}</span>
               </button>
 
               {shortcut.id === "new" ? (
@@ -397,7 +413,10 @@ export function Sidebar({
                   aria-label="Toggle Web Search Mode"
                   aria-pressed={isWebSearchMode}
                   disabled={!isWebSearchAvailable}
-                  onClick={onToggleWebSearchMode}
+                  onClick={() => {
+                    onToggleWebSearchMode();
+                    onCloseMobile();
+                  }}
                 >
                   <span className="nc-shortcut-subitem__icon">
                     <SidebarModeIcon id="web-search" />
@@ -415,7 +434,10 @@ export function Sidebar({
                   className={`nc-shortcut-subitem ${isAgentMode ? "nc-shortcut-subitem--active" : ""}`}
                   aria-label="Toggle Agent Mode"
                   aria-pressed={isAgentMode}
-                  onClick={onToggleAgentMode}
+                  onClick={() => {
+                    onToggleAgentMode();
+                    onCloseMobile();
+                  }}
                 >
                   <span className="nc-shortcut-subitem__icon">
                     <SidebarModeIcon id="agent" />

@@ -148,6 +148,14 @@ select {
   grid-template-columns: 260px 1fr 320px;
 }
 
+.nc-shell--sidebar-collapsed {
+  grid-template-columns: 84px 1fr;
+}
+
+.nc-shell--sidebar-collapsed.nc-shell--with-panel {
+  grid-template-columns: 84px 1fr 320px;
+}
+
 .nc-sidebar {
   display: flex;
   flex-direction: column;
@@ -156,6 +164,11 @@ select {
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-subtle);
   overflow: hidden;
+  transition: width 180ms ease;
+}
+
+.nc-sidebar--collapsed {
+  width: 84px;
 }
 
 .nc-sidebar__top {
@@ -173,6 +186,10 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+}
+
+.nc-brand-copy {
+  min-width: 0;
 }
 
 .nc-brand-mark {
@@ -253,6 +270,16 @@ select {
   background: var(--bg-sidebar-hover);
 }
 
+.nc-shortcut-item--active {
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.nc-shortcut-item--active .nc-shortcut-item__icon {
+  color: var(--accent-primary);
+}
+
 .nc-shortcut-item__icon {
   width: 22px;
   height: 22px;
@@ -265,6 +292,13 @@ select {
 .nc-shortcut-item__icon svg {
   width: 20px;
   height: 20px;
+}
+
+.nc-shortcut-item__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nc-shortcut-subitem {
@@ -708,6 +742,73 @@ select {
   text-transform: uppercase;
 }
 
+.nc-sidebar--collapsed .nc-sidebar__top {
+  padding: 14px 10px 0;
+}
+
+.nc-sidebar--collapsed .nc-brand-lockup {
+  justify-content: center;
+  width: 100%;
+}
+
+.nc-sidebar--collapsed .nc-brand-copy,
+.nc-sidebar--collapsed .nc-history-scroll,
+.nc-sidebar--collapsed .nc-shortcut-subitem {
+  display: none;
+}
+
+.nc-sidebar--collapsed .nc-brand-row {
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.nc-sidebar--collapsed .nc-shortcuts {
+  gap: 10px;
+}
+
+.nc-sidebar--collapsed .nc-shortcut-group {
+  align-items: center;
+}
+
+.nc-sidebar--collapsed .nc-shortcut-item {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 14px;
+}
+
+.nc-sidebar--collapsed .nc-shortcut-item__label {
+  display: none;
+}
+
+.nc-sidebar--collapsed .nc-shortcut-item__icon {
+  width: 22px;
+  height: 22px;
+}
+
+.nc-sidebar--collapsed .nc-sidebar__bottom {
+  padding: 12px 10px 14px;
+}
+
+.nc-sidebar--collapsed .nc-user-chip {
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 4px;
+}
+
+.nc-sidebar--collapsed .nc-user-meta {
+  display: none;
+}
+
+.nc-sidebar--collapsed .nc-user-menu-wrap {
+  width: 100%;
+  justify-content: center;
+}
+
 .nc-user-menu__theme-group {
   display: grid;
   gap: 4px;
@@ -991,6 +1092,79 @@ select {
 
 .nc-empty-chip:hover {
   border-color: var(--accent-primary);
+}
+
+.nc-workspace-view {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.nc-workspace-view__card {
+  width: min(680px, 100%);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-card);
+  padding: 28px;
+  text-align: center;
+}
+
+.nc-workspace-view__mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  margin: 0 auto 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+  background: rgba(127, 119, 221, 0.10);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
+.nc-workspace-view__icon {
+  width: 24px;
+  height: 24px;
+}
+
+.nc-workspace-view__eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nc-workspace-view__card h2 {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.nc-workspace-view__description {
+  margin: 14px auto 0;
+  max-width: 560px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.nc-workspace-view__actions {
+  margin-top: 22px;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nc-workspace-view__hint {
+  margin: 18px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .nc-message {
