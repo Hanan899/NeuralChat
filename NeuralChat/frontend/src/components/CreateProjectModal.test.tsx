@@ -80,42 +80,37 @@ describe("CreateProjectModal", () => {
     cleanup();
   });
 
-  it("shows all 7 template cards", () => {
+  it("shows the selected template summary instead of a template picker", () => {
     render(
       <CreateProjectModal
         open={true}
         authToken="token"
         templates={templates}
+        initialTemplate="code"
         onClose={vi.fn()}
         onCreated={vi.fn()}
       />
     );
 
-    expect(screen.getByText("Startup Builder")).toBeInTheDocument();
-    expect(screen.getByText("Study Assistant")).toBeInTheDocument();
-    expect(screen.getByText("Code Reviewer")).toBeInTheDocument();
-    expect(screen.getByText("Writing Partner")).toBeInTheDocument();
-    expect(screen.getByText("Research Hub")).toBeInTheDocument();
-    expect(screen.getByText("Job Search")).toBeInTheDocument();
-    expect(screen.getByText("Custom Project")).toBeInTheDocument();
+    expect(screen.getAllByText("Code Reviewer").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /study assistant/i })).not.toBeInTheDocument();
   });
 
-  it("selecting a template prefills description and memory keys", async () => {
+  it("uses the selected template to prefill description and show a template summary", () => {
     render(
       <CreateProjectModal
         open={true}
         authToken="token"
         templates={templates}
+        initialTemplate="study"
         onClose={vi.fn()}
         onCreated={vi.fn()}
       />
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /study assistant/i }));
-
-    expect(screen.getByRole("textbox", { name: /describe it/i })).toHaveValue("Master any subject or skill");
-    expect(screen.getByText("subject")).toBeInTheDocument();
-    expect(screen.getByText("current_level")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /description/i })).toHaveValue("Master any subject or skill");
+    expect(screen.getAllByText("Study Assistant").length).toBeGreaterThan(0);
+    expect(screen.queryByText("subject")).not.toBeInTheDocument();
   });
 
   it("disables create button until name is provided and updates preview", async () => {
@@ -153,13 +148,13 @@ describe("CreateProjectModal", () => {
         open={true}
         authToken="token"
         templates={templates}
+        initialTemplate="study"
         naming={{ userDisplayName: "Ali Khan" }}
         onClose={vi.fn()}
         onCreated={onCreated}
       />
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /study assistant/i }));
     await userEvent.clear(screen.getByRole("textbox", { name: /name your project/i }));
     await userEvent.type(screen.getByRole("textbox", { name: /name your project/i }), "Test Project");
     await userEvent.click(screen.getByRole("button", { name: /create project/i }));
@@ -172,5 +167,64 @@ describe("CreateProjectModal", () => {
       );
     });
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "proj-1" }));
+  });
+
+  it("can create a project by resolving a fresh auth token at submit time", async () => {
+    const onCreated = vi.fn();
+    const getAuthToken = vi.fn().mockResolvedValue("fresh-token");
+    createProjectMock.mockResolvedValue({
+      project_id: "proj-2",
+      name: "ChatAssist AI",
+      template: "custom",
+      emoji: "✨",
+      color: "#6b7280",
+    });
+
+    render(
+      <CreateProjectModal
+        open={true}
+        authToken=""
+        getAuthToken={getAuthToken}
+        templates={templates}
+        onClose={vi.fn()}
+        onCreated={onCreated}
+      />
+    );
+
+    await userEvent.type(screen.getByRole("textbox", { name: /name your project/i }), "ChatAssist AI");
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
+
+    await waitFor(() => {
+      expect(getAuthToken).toHaveBeenCalled();
+      expect(createProjectMock).toHaveBeenCalledWith(
+        "fresh-token",
+        expect.objectContaining({ name: "ChatAssist AI", template: "startup" }),
+        undefined
+      );
+    });
+    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "proj-2" }));
+  });
+
+  it("shows a friendly error when a fresh auth token still cannot be resolved", async () => {
+    const getAuthToken = vi.fn().mockResolvedValue(null);
+
+    render(
+      <CreateProjectModal
+        open={true}
+        authToken=""
+        getAuthToken={getAuthToken}
+        templates={templates}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+      />
+    );
+
+    await userEvent.type(screen.getByRole("textbox", { name: /name your project/i }), "ChatAssist AI");
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("We couldn't confirm your session yet. Please wait a second and try again.")).toBeInTheDocument();
+    });
+    expect(createProjectMock).not.toHaveBeenCalled();
   });
 });

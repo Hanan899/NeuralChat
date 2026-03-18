@@ -153,6 +153,7 @@ describe("Sidebar", () => {
 
   it("renders project subitems under Projects and opens a project", async () => {
     const onOpenProject = vi.fn();
+    const onCreateProject = vi.fn();
     renderSidebar({
       projects: [
         {
@@ -171,8 +172,12 @@ describe("Sidebar", () => {
       ],
       activeShortcutId: "projects",
       activeProjectId: "proj-1",
+      onCreateProject,
       onOpenProject,
     });
+
+    await userEvent.click(screen.getByRole("button", { name: /new project/i }));
+    expect(onCreateProject).toHaveBeenCalledTimes(1);
 
     const projectButton = screen.getByRole("button", { name: /neuralchat startup/i });
     expect(projectButton).toHaveAttribute("aria-current", "page");

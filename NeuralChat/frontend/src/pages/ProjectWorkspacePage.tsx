@@ -15,6 +15,7 @@ interface ProjectWorkspacePageProps {
   naming?: { userDisplayName?: string; sessionTitle?: string };
   onBack: () => void;
   onOpenChat: (sessionId: string) => void;
+  onDeleteChat: (sessionId: string) => void;
   onCreateChat: () => void;
   onRefresh: () => Promise<void> | void;
   onProjectUpdated: (project: Project) => void;
@@ -33,6 +34,7 @@ export function ProjectWorkspacePage({
   naming,
   onBack,
   onOpenChat,
+  onDeleteChat,
   onCreateChat,
   onRefresh,
   onProjectUpdated,
@@ -108,10 +110,20 @@ export function ProjectWorkspacePage({
           ) : (
             <div className="nc-project-chat-list">
               {chats.map((chat) => (
-                <button key={chat.session_id} type="button" className="nc-project-chat-row" onClick={() => onOpenChat(chat.session_id)}>
-                  <strong>{chat.last_message_preview || "Untitled chat"}</strong>
-                  <span>{chat.message_count} messages</span>
-                </button>
+                <div key={chat.session_id} className="nc-project-chat-row">
+                  <button type="button" className="nc-project-chat-row__main" onClick={() => onOpenChat(chat.session_id)}>
+                    <strong>{chat.last_message_preview || "Untitled chat"}</strong>
+                    <span>{chat.message_count} messages</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="nc-project-chat-row__delete"
+                    aria-label={`Delete ${chat.last_message_preview || "Untitled chat"}`}
+                    onClick={() => onDeleteChat(chat.session_id)}
+                  >
+                    Delete
+                  </button>
+                </div>
               ))}
             </div>
           )}

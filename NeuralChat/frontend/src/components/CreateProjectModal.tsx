@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { RequestNamingContext } from "../api";
 import { createProject } from "../api/projects";
@@ -8,6 +8,7 @@ import type { CreateProjectInput, Project, ProjectTemplate } from "../types/proj
 interface CreateProjectModalProps {
   open: boolean;
   authToken: string;
+  getAuthToken?: () => Promise<string | null>;
   templates: Record<string, ProjectTemplate>;
   naming?: RequestNamingContext;
   initialTemplate?: string;
@@ -15,12 +16,10 @@ interface CreateProjectModalProps {
   onCreated: (project: Project) => void;
 }
 
-const TEMPLATE_ORDER = ["startup", "study", "code", "writing", "research", "job", "custom"];
-const COLOR_SWATCHES = ["#6366f1", "#10b981", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899", "#6b7280"];
-
 export function CreateProjectModal({
   open,
   authToken,
+  getAuthToken,
   templates,
   naming,
   initialTemplate = "startup",
@@ -31,8 +30,6 @@ export function CreateProjectModal({
   const [selectedTemplate, setSelectedTemplate] = useState(initialTemplate);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
-  const [projectEmoji, setProjectEmoji] = useState("");
-  const [projectColor, setProjectColor] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorText, setErrorText] = useState("");
 
@@ -50,8 +47,6 @@ export function CreateProjectModal({
       return;
     }
     setProjectDescription((previous) => previous || activeTemplate.description || "");
-    setProjectEmoji((previous) => previous || activeTemplate.emoji || "");
-    setProjectColor((previous) => previous || activeTemplate.color || "");
     window.setTimeout(() => nameInputRef.current?.focus(), 0);
   }, [activeTemplate, open]);
 
@@ -59,17 +54,33 @@ export function CreateProjectModal({
   const previewDescription = projectDescription.trim() || activeTemplate?.description || "Describe what this project is for.";
   const canCreate = projectName.trim().length > 0 && !isSubmitting;
 
-  const orderedTemplates = useMemo(
-    () => TEMPLATE_ORDER.filter((templateKey) => Boolean(templates[templateKey])).map((templateKey) => ({ key: templateKey, ...templates[templateKey] })),
-    [templates]
-  );
-
   if (!open) {
     return null;
   }
 
+  function buildProjectErrorMessage(error: unknown): string {
+    if (!(error instanceof Error)) {
+      return "Failed to create project.";
+    }
+
+    const normalizedMessage = error.message.trim().toLowerCase();
+    if (normalizedMessage.includes("invalid authentication token")) {
+      return "Your session is not ready yet. Please wait a moment and try again.";
+    }
+
+    if (normalizedMessage.includes("authentication")) {
+      return "We couldn't verify your session. Please refresh and try again.";
+    }
+
+    return error.message;
+  }
+
   async function handleCreateProject() {
-    if (!canCreate || !activeTemplate) {
+    if (!activeTemplate) {
+      return;
+    }
+
+    if (!projectName.trim() || isSubmitting) {
       return;
     }
 
@@ -77,17 +88,30 @@ export function CreateProjectModal({
     setErrorText("");
 
     try {
+      let resolvedAuthToken = authToken.trim();
+      if (!resolvedAuthToken && getAuthToken) {
+        for (let attemptNumber = 0; attemptNumber < 3 && !resolvedAuthToken; attemptNumber += 1) {
+          resolvedAuthToken = (await getAuthToken())?.trim() || "";
+          if (!resolvedAuthToken && attemptNumber < 2) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250));
+          }
+        }
+      }
+
+      if (!resolvedAuthToken) {
+        setErrorText("We couldn't confirm your session yet. Please wait a second and try again.");
+        return;
+      }
+
       const payload: CreateProjectInput = {
         name: projectName.trim(),
         template: selectedTemplate,
         description: projectDescription.trim(),
-        emoji: projectEmoji.trim(),
-        color: projectColor.trim(),
       };
-      const project = await createProject(authToken, payload, naming);
+      const project = await createProject(resolvedAuthToken, payload, naming);
       onCreated(project);
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to create project.");
+      setErrorText(buildProjectErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -100,119 +124,72 @@ export function CreateProjectModal({
         <header className="nc-project-modal__header">
           <div>
             <h2>Create New Project</h2>
-            <p>Give NeuralChat a dedicated workspace for one focused area of work.</p>
+            <p>Name the workspace, tune the description, and review how NeuralChat will frame this project before you create it.</p>
           </div>
           <button type="button" className="nc-modal__close" onClick={onClose} aria-label="Close modal">
             ×
           </button>
         </header>
 
-        <div className="nc-project-modal__section">
-          <h3>1. Pick a template</h3>
-          <div className="nc-template-pill-grid">
-            {orderedTemplates.map((template) => {
-              const isActive = template.key === selectedTemplate;
-              return (
-                <button
-                  key={template.key}
-                  type="button"
-                  className={`nc-template-pill ${isActive ? "nc-template-pill--active" : ""}`}
-                  style={{ ["--template-color" as string]: template.color }}
-                  onClick={() => {
-                    setSelectedTemplate(template.key);
-                    setProjectDescription(template.description || "");
-                    setProjectEmoji(template.emoji || "");
-                    setProjectColor(template.color || "");
-                  }}
-                >
-                  <ProjectTemplateIcon template={template.key} color={template.color} className="nc-template-pill__icon" />
-                  <span className="nc-template-pill__label">{template.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="nc-project-modal__fields">
-          <label className="nc-project-field">
-            <span>2. Name your project</span>
-            <input
-              ref={nameInputRef}
-              type="text"
-              value={projectName}
-              maxLength={50}
-              onChange={(event) => setProjectName(event.target.value)}
-              placeholder="My Startup"
-            />
-          </label>
-
-          <label className="nc-project-field">
-            <span>3. Describe it (optional)</span>
-            <textarea
-              value={projectDescription}
-              onChange={(event) => setProjectDescription(event.target.value)}
-              placeholder={activeTemplate?.description || "Describe what this project is for"}
-              rows={3}
-            />
-          </label>
-
-          <div className="nc-project-modal__customize">
-            <label className="nc-project-field nc-project-field--emoji">
-              <span>Accent mark</span>
-              <input type="text" value={projectEmoji} maxLength={2} onChange={(event) => setProjectEmoji(event.target.value)} />
-            </label>
-
-            <div className="nc-project-field nc-project-field--swatches">
-              <span>Color</span>
-              <div className="nc-project-color-swatches">
-                {COLOR_SWATCHES.map((swatch) => (
-                  <button
-                    key={swatch}
-                    type="button"
-                    className={`nc-project-color-swatch ${projectColor === swatch ? "nc-project-color-swatch--active" : ""}`}
-                    style={{ background: swatch }}
-                    aria-label={`Choose ${swatch} as project color`}
-                    onClick={() => setProjectColor(swatch)}
-                  />
-                ))}
+        <div className="nc-project-modal__body">
+          <div className="nc-project-modal__main">
+            <div className="nc-project-modal__template-summary" style={{ ["--template-color" as string]: activeTemplate?.color || "#6366f1" }}>
+              <ProjectTemplateIcon template={selectedTemplate} color={activeTemplate?.color} className="nc-project-modal__template-summary-icon" />
+              <div className="nc-project-modal__template-summary-copy">
+                <strong>{activeTemplate?.label ?? "Selected template"}</strong>
+                <span>{activeTemplate?.description ?? "Template-specific workspace"}</span>
               </div>
             </div>
-          </div>
-        </div>
 
-        <section className="nc-project-preview" style={{ ["--project-preview-color" as string]: projectColor || activeTemplate?.color || "#6366f1" }}>
-          <ProjectTemplateIcon template={selectedTemplate} color={projectColor || activeTemplate?.color} className="nc-project-preview__icon" />
-          <div className="nc-project-preview__copy">
-            <strong>{previewName}</strong>
-            <span>{previewDescription}</span>
-          </div>
-          <div className="nc-project-preview__aside">
-            {projectEmoji.trim() ? <span className="nc-project-preview__mark">{projectEmoji.trim()}</span> : null}
-            <span className="nc-project-preview__badge">Preview</span>
-          </div>
-        </section>
+            <div className="nc-project-modal__fields">
+              <label className="nc-project-field">
+                <span>Name your project</span>
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  value={projectName}
+                  maxLength={50}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  placeholder="My Startup"
+                />
+              </label>
 
-        <section className="nc-project-memory-keys">
-          <h3>AI will remember</h3>
-          {activeTemplate?.memory_keys?.length ? (
-            <div className="nc-project-memory-keys__list">
-              {activeTemplate.memory_keys.map((memoryKey) => (
-                <span key={memoryKey} className="nc-project-memory-keys__item">
-                  {memoryKey}
-                </span>
-              ))}
+              <label className="nc-project-field">
+                <span>Description (optional)</span>
+                <textarea
+                  value={projectDescription}
+                  onChange={(event) => setProjectDescription(event.target.value)}
+                  placeholder={activeTemplate?.description || "Describe what this project is for"}
+                  rows={4}
+                />
+              </label>
             </div>
-          ) : (
-            <p>This template starts blank so the AI can learn your own custom structure.</p>
-          )}
-        </section>
+          </div>
+
+          <aside className="nc-project-modal__sidebar">
+            <section className="nc-project-preview" style={{ ["--project-preview-color" as string]: activeTemplate?.color || "#6366f1" }}>
+              <div className="nc-project-preview__header">
+                <span className="nc-project-preview__eyebrow">Preview</span>
+                <span className="nc-project-preview__template-name">{activeTemplate?.label ?? "Template"}</span>
+              </div>
+              <div className="nc-project-preview__body">
+                <ProjectTemplateIcon template={selectedTemplate} color={activeTemplate?.color} className="nc-project-preview__icon" />
+                <div className="nc-project-preview__copy">
+                  <strong>{previewName}</strong>
+                  <span>{previewDescription}</span>
+                </div>
+              </div>
+              <div className="nc-project-preview__hint">
+                This workspace will keep related chats, files, and memory together.
+              </div>
+            </section>
+          </aside>
+        </div>
 
         {errorText ? <p className="nc-project-modal__error">{errorText}</p> : null}
 
         <footer className="nc-project-modal__footer">
-          <button type="button" className="nc-button nc-button--ghost" onClick={onClose}>
-            Cancel
-          </button>
+          <span className="nc-project-modal__hint">NeuralChat will set up this workspace and open it right away.</span>
           <button type="button" className="nc-button nc-button--primary" disabled={!canCreate} onClick={() => void handleCreateProject()}>
             {isSubmitting ? "Creating…" : "Create Project →"}
           </button>

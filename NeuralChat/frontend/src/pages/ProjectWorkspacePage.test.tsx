@@ -41,6 +41,7 @@ describe("ProjectWorkspacePage", () => {
         files={[{ filename: "pitch-deck.pdf", blob_path: "blob", uploaded_at: "2026-03-17T12:00:00Z" }]}
         onBack={vi.fn()}
         onOpenChat={vi.fn()}
+        onDeleteChat={vi.fn()}
         onCreateChat={vi.fn()}
         onRefresh={vi.fn()}
         onProjectUpdated={vi.fn()}
@@ -60,6 +61,7 @@ describe("ProjectWorkspacePage", () => {
   it("opens a chat and creates a new chat from the workspace controls", async () => {
     const onOpenChat = vi.fn();
     const onCreateChat = vi.fn();
+    const onDeleteChat = vi.fn();
 
     render(
       <ProjectWorkspacePage
@@ -71,6 +73,7 @@ describe("ProjectWorkspacePage", () => {
         files={[]}
         onBack={vi.fn()}
         onOpenChat={onOpenChat}
+        onDeleteChat={onDeleteChat}
         onCreateChat={onCreateChat}
         onRefresh={vi.fn()}
         onProjectUpdated={vi.fn()}
@@ -83,8 +86,11 @@ describe("ProjectWorkspacePage", () => {
     await userEvent.click(screen.getByRole("button", { name: /\+ new chat/i }));
     expect(onCreateChat).toHaveBeenCalledTimes(1);
 
-    await userEvent.click(screen.getByRole("button", { name: /prd discussion/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^prd discussion/i }));
     expect(onOpenChat).toHaveBeenCalledWith("chat-1");
+
+    await userEvent.click(screen.getByRole("button", { name: /delete prd discussion/i }));
+    expect(onDeleteChat).toHaveBeenCalledWith("chat-1");
   });
 
   it("goes back to the projects list", async () => {
@@ -99,6 +105,7 @@ describe("ProjectWorkspacePage", () => {
         files={[]}
         onBack={onBack}
         onOpenChat={vi.fn()}
+        onDeleteChat={vi.fn()}
         onCreateChat={vi.fn()}
         onRefresh={vi.fn()}
         onProjectUpdated={vi.fn()}

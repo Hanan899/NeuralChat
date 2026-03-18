@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 
-import { ProjectTemplateIcon } from "./ProjectTemplateIcon";
 import type { ConversationSummary, ThemeMode } from "../types";
 import type { Project } from "../types/project";
 
@@ -38,6 +37,7 @@ interface SidebarProps {
   onOpenResearch?: () => void;
   onOpenCodex?: () => void;
   onOpenProjects?: () => void;
+  onCreateProject?: () => void;
   onOpenProject?: (projectId: string) => void;
 }
 
@@ -222,6 +222,7 @@ export function Sidebar({
   onOpenResearch,
   onOpenCodex,
   onOpenProjects,
+  onCreateProject,
   onOpenProject,
 }: SidebarProps) {
   const userInitials = buildInitials(userName);
@@ -365,15 +366,42 @@ export function Sidebar({
     );
   }
 
+  function ProjectSidebarIcon({ kind }: { kind: "new" | "project" }) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M4 8C4 6.9 4.9 6 6 6H10.6L12.6 8H18C19.1 8 20 8.9 20 10V17C20 18.1 19.1 19 18 19H6C4.9 19 4 18.1 4 17V8Z"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinejoin="round"
+        />
+        {kind === "new" ? <path d="M12 11.3V15.7M9.8 13.5H14.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /> : null}
+      </svg>
+    );
+  }
+
   function renderProjectSubitems() {
-    if (isCollapsed || projects.length === 0) {
+    if (isCollapsed || (projects.length === 0 && activeShortcutId !== "projects")) {
       return null;
     }
 
-    const visibleProjects = projects.slice(0, 3);
     return (
       <div className="nc-project-subnav">
-        {visibleProjects.map((project) => (
+        <button
+          type="button"
+          className="nc-project-subnav__item nc-project-subnav__item--new"
+          onClick={() => {
+            onCreateProject?.();
+            onCloseMobile();
+          }}
+        >
+          <span className="nc-project-subnav__icon nc-project-subnav__icon--folder">
+            <ProjectSidebarIcon kind="new" />
+          </span>
+          <span className="nc-project-subnav__label">New project</span>
+        </button>
+
+        {projects.map((project) => (
           <button
             key={project.project_id}
             type="button"
@@ -385,23 +413,12 @@ export function Sidebar({
             }}
             title={project.name}
           >
-            <ProjectTemplateIcon template={project.template} color={project.color} className="nc-project-subnav__icon" />
+            <span className="nc-project-subnav__icon nc-project-subnav__icon--folder">
+              <ProjectSidebarIcon kind="project" />
+            </span>
             <span className="nc-project-subnav__label">{project.name}</span>
           </button>
         ))}
-
-        {projects.length > 3 ? (
-          <button
-            type="button"
-            className="nc-project-subnav__more"
-            onClick={() => {
-              onOpenProjects?.();
-              onCloseMobile();
-            }}
-          >
-            See all projects →
-          </button>
-        ) : null}
       </div>
     );
   }
