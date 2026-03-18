@@ -42,7 +42,7 @@ export function getApiBaseUrl(): string {
   return API_BASE_URL;
 }
 
-function buildProtectedHeaders(authToken: string, naming?: RequestNamingContext, includeJson = false): HeadersInit {
+export function buildProtectedHeaders(authToken: string, naming?: RequestNamingContext, includeJson = false): HeadersInit {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${authToken}`
   };
@@ -58,7 +58,7 @@ function buildProtectedHeaders(authToken: string, naming?: RequestNamingContext,
   return headers;
 }
 
-async function readErrorMessage(response: Response, fallbackMessage: string): Promise<string> {
+export async function readErrorMessage(response: Response, fallbackMessage: string): Promise<string> {
   const responseText = await response.text();
   if (!responseText) {
     return fallbackMessage;
@@ -279,6 +279,17 @@ export async function getFiles(authToken: string, sessionId: string, naming?: Re
   return (await response.json()) as FilesResponse;
 }
 
+export async function getProjectFiles(authToken: string, projectId: string, naming?: RequestNamingContext): Promise<FilesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/files?project_id=${encodeURIComponent(projectId)}`, {
+    headers: buildProtectedHeaders(authToken, naming)
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to load project files.");
+  }
+  return (await response.json()) as FilesResponse;
+}
+
 export async function deleteFile(
   authToken: string,
   sessionId: string,
@@ -293,6 +304,24 @@ export async function deleteFile(
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(errorText || "Failed to delete file.");
+  }
+  return (await response.json()) as { message: string };
+}
+
+export async function deleteProjectFile(
+  authToken: string,
+  projectId: string,
+  filename: string,
+  naming?: RequestNamingContext
+): Promise<{ message: string }> {
+  const encodedFilename = encodeURIComponent(filename);
+  const response = await fetch(`${API_BASE_URL}/api/files/${encodedFilename}?project_id=${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: buildProtectedHeaders(authToken, naming)
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Failed to delete project file.");
   }
   return (await response.json()) as { message: string };
 }
@@ -323,6 +352,56 @@ export function uploadFileWithProgress(
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     formData.append("session_id", sessionId);
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}/api/upload`);
+    xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
+    if (naming?.userDisplayName?.trim()) {
+      xhr.setRequestHeader("X-User-Display-Name", naming.userDisplayName.trim());
+    }
+    if (naming?.sessionTitle?.trim()) {
+      xhr.setRequestHeader("X-Session-Title", naming.sessionTitle.trim());
+    }
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      onProgress(percent);
+    };
+    xhr.onerror = () => reject(new Error("Upload failed due to a network error."));
+    xhr.onload = () => {
+      try {
+        const responseText = xhr.responseText || "";
+        const parsed = responseText ? (JSON.parse(responseText) as UploadResponse | { detail?: string }) : {};
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(parsed as UploadResponse);
+          return;
+        }
+        const detailMessage =
+          typeof (parsed as { detail?: unknown }).detail === "string"
+            ? String((parsed as { detail?: unknown }).detail)
+            : responseText || "File upload failed.";
+        reject(new Error(detailMessage));
+      } catch {
+        reject(new Error("File upload failed."));
+      }
+    };
+    xhr.send(formData);
+  });
+}
+
+export function uploadProjectFileWithProgress(
+  authToken: string,
+  projectId: string,
+  file: File,
+  onProgress: (percent: number) => void,
+  naming?: RequestNamingContext
+): Promise<UploadResponse> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("project_id", projectId);
     formData.append("file", file);
 
     const xhr = new XMLHttpRequest();

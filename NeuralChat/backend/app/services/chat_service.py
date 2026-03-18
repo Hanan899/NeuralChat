@@ -30,8 +30,9 @@ async def generate_reply(
     memory_prompt: str = "",
     search_prompt: str = "",
     file_prompt: str = "",
+    history_override: list[dict[str, Any]] | None = None,
 ) -> str:
-    history = load_messages(store, user_id, request["session_id"], display_name, session_title)
+    history = history_override if history_override is not None else load_messages(store, user_id, request["session_id"], display_name, session_title)
     model_kwargs: dict[str, Any] = {
         "model": request["model"],
         "message": request["message"],
@@ -54,8 +55,9 @@ async def generate_reply_with_usage(
     memory_prompt: str = "",
     search_prompt: str = "",
     file_prompt: str = "",
+    history_override: list[dict[str, Any]] | None = None,
 ) -> tuple[str, TokenUsage]:
-    history = load_messages(store, user_id, request["session_id"], display_name, session_title)
+    history = history_override if history_override is not None else load_messages(store, user_id, request["session_id"], display_name, session_title)
     model_kwargs: dict[str, Any] = {
         "model": request["model"],
         "message": request["message"],
@@ -79,8 +81,9 @@ async def generate_reply_stream(
     memory_prompt: str = "",
     search_prompt: str = "",
     file_prompt: str = "",
+    history_override: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[str]:
-    history = load_messages(store, user_id, request["session_id"], display_name, session_title)
+    history = history_override if history_override is not None else load_messages(store, user_id, request["session_id"], display_name, session_title)
     model_kwargs: dict[str, Any] = {
         "model": request["model"],
         "message": request["message"],
@@ -104,8 +107,9 @@ async def generate_reply_stream_with_usage(
     memory_prompt: str = "",
     search_prompt: str = "",
     file_prompt: str = "",
+    history_override: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    history = load_messages(store, user_id, request["session_id"], display_name, session_title)
+    history = history_override if history_override is not None else load_messages(store, user_id, request["session_id"], display_name, session_title)
     model_kwargs: dict[str, Any] = {
         "model": request["model"],
         "message": request["message"],

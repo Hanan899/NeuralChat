@@ -150,4 +150,34 @@ describe("Sidebar", () => {
 
     expect(onToggleCollapse).toHaveBeenCalledTimes(1);
   });
+
+  it("renders project subitems under Projects and opens a project", async () => {
+    const onOpenProject = vi.fn();
+    renderSidebar({
+      projects: [
+        {
+          project_id: "proj-1",
+          name: "NeuralChat Startup",
+          description: "",
+          emoji: "🚀",
+          template: "startup",
+          color: "#6366f1",
+          system_prompt: "Prompt",
+          created_at: "2026-03-17T10:00:00Z",
+          updated_at: "2026-03-17T10:00:00Z",
+          chat_count: 2,
+          pinned: false,
+        },
+      ],
+      activeShortcutId: "projects",
+      activeProjectId: "proj-1",
+      onOpenProject,
+    });
+
+    const projectButton = screen.getByRole("button", { name: /neuralchat startup/i });
+    expect(projectButton).toHaveAttribute("aria-current", "page");
+
+    await userEvent.click(projectButton);
+    expect(onOpenProject).toHaveBeenCalledWith("proj-1");
+  });
 });

@@ -1,68 +1,49 @@
 # NeuralChat
 
-NeuralChat is a personal AI chat app with authenticated GPT-5 chat, deep memory, optional web search, session-scoped file retrieval, and plan-first Agent Mode. The current project is split into a Vite frontend and a FastAPI backend mounted through Azure Functions.
+NeuralChat is a personal AI workspace built around authenticated GPT-5 chat, persistent memory, optional web search, file-grounded answers, plan-first agents, cost visibility, and dedicated project workspaces.
+
+The app is split into:
+- a React + TypeScript frontend in `frontend/`
+- a FastAPI backend in `backend/`
+- Azure Blob persistence for user, session, project, file, agent, and usage data
 
 ## Stack
 
-- Frontend: Vite, React, TypeScript, Tailwind CSS, Clerk React
-- Backend: FastAPI, Azure Functions ASGI, Azure Blob Storage
+- Frontend: React, TypeScript, Vite, `react-router-dom`, CSS-based design system, Clerk React
+- Backend: FastAPI mounted through Azure Functions ASGI
 - Model provider: Azure OpenAI GPT-5
 - Search provider: Tavily
 - Agent orchestration: LangChain + LangGraph
-- Auth: Clerk JWT verification with JWKS
+- Storage: Azure Blob Storage
+- Auth: Clerk JWT verification via JWKS
 
-## Project Layout
-
-```text
-NeuralChat/
-├── backend/
-│   ├── app/
-│   │   ├── main.py
-│   │   └── services/
-│   ├── function_app.py
-│   ├── host.json
-│   ├── local.settings.example.json
-│   ├── requirements.txt
-│   └── tests/
-├── frontend/
-│   ├── src/
-│   ├── index.html
-│   ├── package.json
-│   └── .env.example
-└── docs/
-```
-
-## Current Features
+## App Capabilities
 
 ### Auth and identity
 
-- Signed-out users authenticate with Clerk.
-- Protected frontend requests send `Authorization: Bearer <token>`.
-- Backend verifies the token and derives `user_id` from the Clerk `sub` claim.
-- Protected requests can also send readable naming headers:
+- Clerk handles sign-in and session management on the frontend.
+- Protected requests send `Authorization: Bearer <token>`.
+- The backend validates the token and derives `user_id` from the Clerk `sub` claim.
+- Protected requests can also include readable naming headers:
   - `X-User-Display-Name`
   - `X-Session-Title`
 
 ### Chat
 
-- `POST /api/chat` supports GPT-5 chat with streaming NDJSON responses.
-- Streamed chunks include `token`, `done`, and `error` events.
+- `POST /api/chat` supports normal session chat and project-scoped chat.
+- NDJSON streaming returns `token`, `done`, and `error` events.
 - Final chat metadata can include:
   - `search_used`
   - `file_context_used`
   - `sources`
-  - timing metrics and token counts
+  - timing metrics
+  - token usage
 
-### Deep Memory
+### Deep memory
 
-- Memory is stored per user in Azure Blob Storage.
-- Backend extracts facts from chat exchanges and saves profile fields such as:
-  - `name`
-  - `job`
-  - `city`
-  - `preferences`
-  - `goals`
-- Memory endpoints:
+- Global memory is stored per user profile.
+- Memory is extracted from chat and injected into later prompts.
+- Global memory endpoints:
   - `GET /api/me`
   - `PATCH /api/me/memory`
   - `DELETE /api/me/memory`
@@ -70,81 +51,129 @@ NeuralChat/
 ### Web search
 
 - Search availability is exposed by `GET /api/search/status`.
-- Tavily search results are cached in Blob for reuse.
-- The frontend exposes a sidebar `Web search` control under `New chat`.
-- When search is used, assistant messages can include a search badge and sources list.
+- Tavily results are cached in Blob.
+- The frontend exposes `Web search` in the sidebar under `New chat`.
+- Search-backed answers return source metadata for UI citations.
 
 ### File upload and retrieval
 
-- Users upload files with `POST /api/upload` using multipart form data.
-- Session-scoped file APIs:
-  - `GET /api/files?session_id=...`
-  - `DELETE /api/files/{filename}?session_id=...`
-- Supported file flow:
-  - raw upload saved to Blob
-  - parsed text chunked and cached
-  - relevant chunks injected into the chat prompt later
-- Files remain scoped to the active chat session only.
+- Files can be uploaded into a normal chat session or into a project.
+- Raw uploads are stored once, parsed chunks are cached, and relevant chunks are injected later.
+- Supported APIs:
+  - `POST /api/upload`
+  - `GET /api/files`
+  - `DELETE /api/files/{filename}`
 
 ### Hybrid conversation titles
 
-- New conversations get an immediate local summary title in the frontend.
-- After the first useful reply or agent plan, the frontend can refine the title by calling:
+- The frontend creates an immediate local title from the first prompt.
+- The backend can refine it via:
   - `POST /api/conversations/title`
-- This keeps the UI responsive while still producing cleaner chat names over time.
+- The same refined title is reused in readable blob naming.
 
 ### Agent Mode
 
 - Agent Mode is separate from normal chat.
 - The sidebar exposes `Agent mode` under `Codex`.
-- The flow is plan-first:
+- Flow:
   1. Create a plan
   2. Show the plan in-thread
-  3. Let the user explicitly run it
+  3. Explicitly run it
   4. Stream live progress and final summary
-- Endpoints:
+- APIs:
   - `POST /api/agent/plan`
   - `POST /api/agent/run/{plan_id}`
   - `GET /api/agent/history`
   - `GET /api/agent/history/{plan_id}`
-- Supported v1 tools:
-  - `web_search`
-  - `read_file`
-  - `memory_recall`
-  - reasoning-only steps
-- Safety behavior:
-  - max 6 steps
-  - loop guard
-  - failed steps are logged instead of aborting the whole task
-  - 60-second execution timeout
-  - fallback reasoning step if the planner returns no valid steps
 
-## API Surface
+### Cost monitoring
 
-### Public
+- Every billed GPT path logs usage and estimated spend.
+- Usage is aggregated per user by day.
+- Settings includes a `Cost monitoring` section with:
+  - today’s spend
+  - current month summary
+  - feature breakdown
+  - 30-day trend
+  - editable daily limit
+- The chat area can show a warning banner when the daily budget reaches 80%.
+- APIs:
+  - `GET /api/usage/summary`
+  - `GET /api/usage/today`
+  - `GET /api/usage/limit`
+  - `PATCH /api/usage/limit`
 
-- `GET /api/health`
-- `GET /api/search/status`
+### Projects
 
-### Auth required
+- `Projects` is a real workspace system, not a placeholder.
+- Each project has isolated:
+  - metadata
+  - chats
+  - project memory
+  - files and parsed file chunks
+- Public template endpoint:
+  - `GET /api/projects/templates`
+- Authenticated project endpoints:
+  - `GET /api/projects`
+  - `POST /api/projects`
+  - `GET /api/projects/{project_id}`
+  - `PATCH /api/projects/{project_id}`
+  - `DELETE /api/projects/{project_id}`
+  - `GET /api/projects/{project_id}/memory`
+  - `GET /api/projects/{project_id}/chats`
+  - `GET /api/projects/{project_id}/chats/{session_id}`
+  - `POST /api/projects/{project_id}/chats`
+  - `DELETE /api/projects/{project_id}/chats/{session_id}`
 
-- `POST /api/conversations/title`
-- `GET /api/me`
-- `PATCH /api/me/memory`
-- `DELETE /api/me/memory`
-- `POST /api/upload`
-- `GET /api/files`
-- `DELETE /api/files/{filename}`
-- `DELETE /api/conversations/{session_id}`
-- `POST /api/agent/plan`
-- `POST /api/agent/run/{plan_id}`
-- `GET /api/agent/history`
-- `GET /api/agent/history/{plan_id}`
-- `POST /api/chat`
+## Frontend UX Model
+
+### Main navigation
+
+Sidebar sections:
+- `New chat`
+- `Web search`
+- `Images`
+- `Apps`
+- `Deep research`
+- `Codex`
+- `Agent mode`
+- `Projects`
+- project sub-items under `Projects`
+- `Recents`
+
+Top bar actions:
+- sidebar collapse / mobile drawer
+- route-aware page title
+- `Agents`
+- `Share`
+- model pill / selector surface
+- notification control
+
+User menu:
+- `Settings`
+- `Manage account`
+- theme selection
+- sign out
+
+### Settings
+
+Settings opens from the user menu, not the main sidebar.
+
+Settings sections:
+- `General`
+- `Cost monitoring`
+- `Account`
+
+### Projects routing
+
+- `/` -> standard chat shell
+- `/projects` -> projects index page
+- `/projects/:projectId` -> project workspace overview
+- `/projects/:projectId?chat=<session_id>` -> project-scoped chat view
 
 ## Storage Layout
 
-NeuralChat stores readable names in Blob paths while keeping stable ids in every segment.
+NeuralChat uses readable blob naming while preserving stable ids in every path segment.
 
 ### Containers
 
@@ -154,65 +183,112 @@ NeuralChat stores readable names in Blob paths while keeping stable ids in every
 - `neurarchat-parsed`
 - `neurarchat-agents`
 
-### Canonical path patterns
+### Canonical paths
 
-- Conversations:
-  - `conversations/{display_name__user_id}/{session_title__session_id}.json`
-- Profiles:
-  - `profiles/{display_name__user_id}.json`
-- Raw uploads:
-  - `{display_name__user_id}/{session_title__session_id}/{filename}`
-- Parsed chunks:
-  - `{display_name__user_id}/{session_title__session_id}/{filename}.json`
-- Agent plans:
-  - `{display_name__user_id}/{session_title__session_id}/plans/{plan_id}.json`
-- Agent logs:
-  - `{display_name__user_id}/{session_title__session_id}/logs/{plan_id}.json`
-- Search cache:
-  - `search-cache/{sha256(normalized_query)}.json`
+Global chat and memory:
+- `conversations/{display_name__user_id}/{session_title__session_id}.json`
+- `profiles/{display_name__user_id}.json`
 
-Legacy id-only blob names are migrated lazily on the next read or write.
+Session files:
+- `{display_name__user_id}/{session_title__session_id}/{filename}`
+- `{display_name__user_id}/{session_title__session_id}/{filename}.json`
 
-## Delete Chat Behavior
+Agents:
+- `{display_name__user_id}/{session_title__session_id}/plans/{plan_id}.json`
+- `{display_name__user_id}/{session_title__session_id}/logs/{plan_id}.json`
 
-Deleting a chat is a backend cleanup operation, not only a frontend UI removal.
+Projects:
+- `projects/{display_name__user_id}/index.json`
+- `projects/{display_name__user_id}/{project_name__project_id}/meta.json`
+- `projects/{display_name__user_id}/{project_name__project_id}/memory.json`
+- `projects/{display_name__user_id}/{project_name__project_id}/chats/{session_title__session_id}.json`
+- `projects/{display_name__user_id}/{project_name__project_id}/files/{filename}`
+- `projects/{display_name__user_id}/{project_name__project_id}/files_parsed/{filename}.json`
 
-The frontend calls:
+Usage tracking:
+- `usage/{display_name__user_id}/{YYYY-MM-DD}.json`
 
-- `DELETE /api/conversations/{session_id}`
+Search cache:
+- `search-cache/{sha256(normalized_query)}.json`
 
-The backend removes session-scoped artifacts for that authenticated user:
+Legacy id-only blob names are migrated lazily on later reads or writes.
 
+## Visual Workflows
+
+### Standard chat
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant B as Backend
+  participant O as Azure OpenAI
+  participant S as Blob Storage
+
+  U->>F: Send message
+  F->>B: POST /api/chat
+  B->>S: Load memory + session history
+  B->>B: Optional search + file retrieval
+  B->>O: Generate reply
+  O-->>B: Stream tokens + usage
+  B-->>F: NDJSON stream
+  B->>S: Save conversation
+  B->>S: Save memory updates in background
+  B->>S: Save usage log in background
+```
+
+### Project workspace
+
+```mermaid
+flowchart TD
+  A[Open Projects] --> B[Projects page]
+  B --> C{Has projects?}
+  C -- No --> D[Template gallery]
+  C -- Yes --> E[Project grid]
+  D --> F[Create project modal]
+  E --> G[Open project workspace]
+  G --> H[Overview: chats + memory + files]
+  H --> I[Open or create project chat]
+  I --> J[/api/chat with project_id]
+  J --> K[Project-scoped prompt, history, files, memory]
+```
+
+### Cost monitoring
+
+```mermaid
+flowchart LR
+  A[Chat or agent call] --> B[Token usage extracted]
+  B --> C[Daily usage JSON updated]
+  C --> D[/api/usage/today]
+  C --> E[/api/usage/summary]
+  D --> F[Chat warning banner]
+  E --> G[Settings > Cost monitoring]
+```
+
+## Delete Behavior
+
+### Delete chat
+
+`DELETE /api/conversations/{session_id}` performs backend cleanup, not only UI removal.
+
+It deletes session-scoped artifacts for that user:
 - conversation history
 - raw uploaded files
 - parsed file chunks
 - agent plans
-- agent execution logs
+- agent logs
 
-User-level memory in `neurarchat-profiles` is intentionally preserved.
+It does not delete user-level profile memory.
 
-## Frontend UI Behavior
+### Delete project
 
-Current top-level interaction model:
-
-- Sidebar:
-  - `New chat`
-  - `Web search`
-  - `Images`
-  - `Apps`
-  - `Deep research`
-  - `Codex`
-  - `Agent mode`
-  - `Projects`
-- Top bar:
-  - `Agents`
-  - `Share`
-  - model selector
-  - `Debug`
-- Composer:
-  - message input
-  - `Add files`
-  - send or stop button
+`DELETE /api/projects/{project_id}` removes the full project subtree:
+- `meta.json`
+- `memory.json`
+- project chats
+- project files
+- parsed project file chunks
+- project index entry
 
 ## Local Development
 
@@ -226,7 +302,7 @@ pip install -r requirements.txt
 func start
 ```
 
-Optional direct FastAPI run:
+Optional direct run:
 
 ```bash
 uvicorn app.main:app --reload --port 8000
@@ -240,19 +316,16 @@ npm install
 npm run dev
 ```
 
-## Configuration
+## Environment
 
 ### Frontend `.env`
 
 - `VITE_CLERK_PUBLISHABLE_KEY`
 - `VITE_API_BASE_URL`
 
-Current example backend:
-
-- `https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net`
-
 ### Backend `local.settings.json`
 
+- `FUNCTIONS_WORKER_RUNTIME`
 - `AzureWebJobsStorage`
 - `AZURE_STORAGE_CONNECTION_STRING`
 - `AZURE_BLOB_MEMORY_CONTAINER`
@@ -269,19 +342,3 @@ Current example backend:
 - `AZURE_OPENAI_API_VERSION`
 - `TAVILY_API_KEY`
 - `MOCK_STREAM_DELAY_MS`
-- `FUNCTIONS_WORKER_RUNTIME`
-
-## Tests
-
-- Backend:
-  - `cd backend && .venv/bin/pytest -q tests`
-- Frontend tests:
-  - `cd frontend && npm run test -- --run`
-- Frontend production build:
-  - `cd frontend && npm run build`
-
-## Related Docs
-
-- [Architecture](/Users/hanan/Documents/PROJECT/NeuralChat/docs/ARCHITECTURE.md)
-- [Deployment](/Users/hanan/Documents/PROJECT/NeuralChat/docs/DEPLOYMENT.md)
-- [Roadmap](/Users/hanan/Documents/PROJECT/NeuralChat/docs/ROADMAP.md)

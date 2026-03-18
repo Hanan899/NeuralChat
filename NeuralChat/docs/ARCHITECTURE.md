@@ -1,308 +1,325 @@
 # NeuralChat Architecture
 
-NeuralChat is split into a Vite frontend and a FastAPI backend mounted through Azure Functions. The system is organized around authenticated chat sessions, user-level memory, optional external retrieval, and session-scoped file and agent artifacts stored in Azure Blob Storage.
+NeuralChat is organized around a single signed-in application shell backed by FastAPI on Azure Functions. The system separates user-level memory from session-level chat artifacts and project-level workspaces, while keeping Azure Blob paths readable through stable-id-aware naming helpers.
 
 ## Runtime Components
 
 ### Frontend
 
-- React + TypeScript + Tailwind CSS
-- Clerk React for auth shell and token retrieval
-- Local conversation state in browser storage
-- Streaming NDJSON handling for chat and agent execution
-- Sidebar controls for `Web search` and `Agent mode`
-- In-thread rendering for normal assistant replies and agent progress blocks
+- React + TypeScript application mounted through Vite
+- Browser routing with `react-router-dom`
+- Clerk for sign-in shell and token retrieval
+- CSS-based component system for app chrome, panels, pages, and modals
+- NDJSON stream consumers for chat and agent execution
 
 ### Backend
 
 - FastAPI app in `backend/app/main.py`
-- Azure Functions ASGI entry point in `backend/function_app.py`
+- Azure Functions entrypoint in `backend/function_app.py`
 - Service modules for:
   - chat orchestration
-  - memory
-  - search
+  - global memory
+  - project workspaces
   - file handling
-  - title generation
-  - storage
-  - agent planning and execution
+  - titles
+  - search
+  - agents
+  - usage / cost tracking
+  - blob path naming and migration
 
 ### External services
 
-- Clerk for auth and identity
-- Azure OpenAI GPT-5 for chat, title refinement, memory extraction, and agent planning/summarization
-- Tavily for external web search
-- Azure Blob Storage for app persistence
+- Clerk for identity and JWT verification
+- Azure OpenAI GPT-5 for chat, memory extraction, title refinement, and agents
+- Tavily for search
+- Azure Blob Storage for persistence
 
-## Identity and Naming Model
+## Identity Model
 
-### Stable identity
+### Stable ownership
 
 Authorization and ownership always depend on:
-
-- `user_id` from the Clerk JWT `sub` claim
-- `session_id` from the app request payload or query string
+- `user_id` from Clerk JWT `sub`
+- `session_id` from request payload or route/query context
+- `project_id` when a request is project-scoped
 
 ### Readable naming
 
 Protected frontend requests may include:
-
 - `X-User-Display-Name`
 - `X-Session-Title`
 
-The backend uses these only to make Blob paths readable in Azure. Stable ids stay embedded in every canonical path segment.
+These values are used for readable Blob path segments only. Stable ids remain embedded in canonical paths.
 
 Examples:
-
-- user segment:
-  - `abdul-hanan__user_abc123`
-- session segment:
-  - `rag-based-chatbot-architecture__session_xyz789`
+- user segment: `abdul-hanan__user_abc123`
+- session segment: `prd-review__session_xyz789`
+- project segment: `ai-engineer__project_abcd1234`
 
 ### Lazy migration
 
-Older id-only blob names are still readable. On later reads or writes, the backend migrates them to the readable canonical path.
+Older id-only blob names remain readable. When touched later, the backend migrates them to canonical readable paths.
 
-## Storage Containers and Paths
+## Storage Layout
 
 ### `neurarchat-memory`
 
-- conversations:
-  - `conversations/{display_name__user_id}/{session_title__session_id}.json`
-- search cache:
-  - `search-cache/{sha256(normalized_query)}.json`
+Global:
+- `conversations/{user_segment}/{session_segment}.json`
+- `search-cache/{query_hash}.json`
+- `usage/{user_segment}/{YYYY-MM-DD}.json`
+
+Projects:
+- `projects/{user_segment}/index.json`
+- `projects/{user_segment}/{project_segment}/meta.json`
+- `projects/{user_segment}/{project_segment}/memory.json`
+- `projects/{user_segment}/{project_segment}/chats/{session_segment}.json`
 
 ### `neurarchat-profiles`
 
-- profile facts:
-  - `profiles/{display_name__user_id}.json`
+- `profiles/{user_segment}.json`
 
 ### `neurarchat-uploads`
 
-- raw files:
-  - `{display_name__user_id}/{session_title__session_id}/{filename}`
+Global session files:
+- `{user_segment}/{session_segment}/{filename}`
+
+Project files:
+- `projects/{user_segment}/{project_segment}/files/{filename}`
 
 ### `neurarchat-parsed`
 
-- parsed chunks:
-  - `{display_name__user_id}/{session_title__session_id}/{filename}.json`
+Global parsed chunks:
+- `{user_segment}/{session_segment}/{filename}.json`
+
+Project parsed chunks:
+- `projects/{user_segment}/{project_segment}/files_parsed/{filename}.json`
 
 ### `neurarchat-agents`
 
-- plan JSON:
-  - `{display_name__user_id}/{session_title__session_id}/plans/{plan_id}.json`
-- execution log JSON:
-  - `{display_name__user_id}/{session_title__session_id}/logs/{plan_id}.json`
+- `{user_segment}/{session_segment}/plans/{plan_id}.json`
+- `{user_segment}/{session_segment}/logs/{plan_id}.json`
+
+## System Flows
+
+### 1. Auth flow
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant C as Clerk
+  participant B as Backend
+
+  U->>F: Open app
+  F->>C: Render Clerk auth
+  C-->>F: Session token
+  F->>B: Protected request with Bearer token
+  B->>C: Verify via JWKS
+  C-->>B: Token valid
+  B-->>F: User-scoped response
+```
+
+### 2. Standard chat flow
+
+```mermaid
+flowchart TD
+  A[POST /api/chat] --> B[Validate payload]
+  B --> C[Load global conversation history]
+  C --> D[Build global memory prompt]
+  D --> E[Optional search decision and retrieval]
+  E --> F[Optional session file chunk retrieval]
+  F --> G[Azure OpenAI GPT-5]
+  G --> H[Stream tokens to frontend]
+  H --> I[Save assistant reply]
+  I --> J[Background profile memory extraction]
+  I --> K[Background usage logging]
+```
+
+### 3. Project chat flow
+
+```mermaid
+flowchart TD
+  A[POST /api/chat with project_id] --> B[Verify project belongs to user]
+  B --> C[Load project meta]
+  C --> D[Build project system prompt]
+  D --> E[Load project memory]
+  E --> F[Load project chat history]
+  F --> G[Load project file chunks]
+  G --> H[Azure OpenAI GPT-5]
+  H --> I[Save into project chat path]
+  I --> J[Background project memory extraction]
+  I --> K[Background usage logging]
+```
+
+### 4. Search flow
+
+```mermaid
+flowchart TD
+  A[Frontend forces or allows search] --> B[Backend decides if search is needed]
+  B --> C{Cached?}
+  C -- Yes --> D[Reuse Blob cache]
+  C -- No --> E[Call Tavily]
+  E --> F[Save normalized results to cache]
+  D --> G[Append search context to prompt]
+  F --> G
+  G --> H[Assistant reply includes sources metadata]
+```
+
+### 5. File flow
+
+```mermaid
+flowchart TD
+  A[Upload file] --> B[Validate extension and size]
+  B --> C{Project file?}
+  C -- No --> D[Save under session uploads path]
+  C -- Yes --> E[Save under project files path]
+  D --> F[Parse and chunk if needed]
+  E --> F
+  F --> G[Save parsed chunks]
+  G --> H[Later chat loads relevant chunks]
+```
+
+### 6. Agent flow
+
+```mermaid
+flowchart TD
+  A[POST /api/agent/plan] --> B[GPT builds plan]
+  B --> C[Normalize and cap steps]
+  C --> D[Save plan]
+  D --> E[User runs plan]
+  E --> F[LangGraph executes sequential steps]
+  F --> G[Emit step stream events]
+  G --> H[Save logs]
+  H --> I[Return summary + usage]
+```
+
+### 7. Cost monitoring flow
+
+```mermaid
+flowchart TD
+  A[GPT call returns usage] --> B[Normalize input and output tokens]
+  B --> C[Estimate USD cost]
+  C --> D[Append daily usage record]
+  D --> E[Aggregate summary endpoints]
+  E --> F[Settings cost dashboard]
+  E --> G[Chat warning banner]
+```
+
+## Memory Architecture
+
+### Global memory
+
+Global memory is user-level and stored in `profiles/{user_segment}.json`.
+
+It supports:
+- automatic extraction from normal chat
+- manual read/update/clear endpoints
+- prompt injection for future non-project chats
+- `daily_limit_usd` storage for cost monitoring preferences
 
-## Auth Flow
-
-1. User signs in through Clerk on the frontend.
-2. Frontend obtains a session token.
-3. Protected requests send `Authorization: Bearer <token>`.
-4. Backend verifies the token using Clerk JWKS.
-5. Backend derives `user_id` and scopes all data access to that user.
-6. Optional readable naming headers are applied only to Blob path naming.
-
-## Chat Flow
-
-### Request
-
-`POST /api/chat`
-
-Validated payload:
-
-- `session_id`
-- `message`
-- `model` where the only allowed value is `gpt-5`
-- `stream`
-- optional `force_search`
-
-### Pipeline
-
-1. Save the user message into the conversation blob.
-2. Build a memory prompt from the stored profile.
-3. If search is forced or selected by backend logic, resolve cached or live Tavily results.
-4. Load uploaded files for the current user and session.
-5. Load parsed chunks and rank relevant chunks for the current message.
-6. Compose the final prompt context from:
-   - memory
-   - search context
-   - file context
-   - base instructions
-7. Generate the assistant reply through Azure OpenAI.
-8. Stream NDJSON tokens back to the frontend.
-9. Save the assistant message and metadata.
-10. Trigger asynchronous memory extraction for the exchange.
-
-### Chat stream contract
-
-Chunk types:
-
-- `token`
-- `done`
-- `error`
-
-The final `done` payload can include:
-
-- `request_id`
-- `response_ms`
-- `first_token_ms`
-- `tokens_emitted`
-- `status`
-- `search_used`
-- `file_context_used`
-- `sources`
-
-## Memory Flow
-
-### Stored profile fields
-
-The backend extracts compact user facts into profile JSON, including fields such as:
-
-- `name`
-- `job`
-- `city`
-- `preferences`
-- `goals`
-
-### Memory usage
-
-- `GET /api/me` returns the current profile
-- `PATCH /api/me/memory` updates one memory key or merges new facts
-- `DELETE /api/me/memory` clears the whole profile
-- `build_memory_prompt()` injects profile facts into later chat prompts
-
-Profile memory is user-level, not session-level.
-
-## Web Search Flow
-
-1. Frontend toggles `Web search` from the sidebar.
-2. Chat request includes `force_search: true` when the user explicitly wants web results.
-3. Backend checks cache first.
-4. If not cached, backend calls Tavily and stores normalized results in Blob.
-5. Search context is appended to the system prompt.
-6. Assistant reply metadata marks `search_used` and includes `sources`.
-
-## File Upload and Retrieval Flow
-
-### Upload path
-
-`POST /api/upload`
-
-Form fields:
-
-- `session_id`
-- `file`
-
-### Pipeline
-
-1. Validate extension and 25 MB size limit.
-2. Save the raw file into `neurarchat-uploads`.
-3. Check whether parsed chunks already exist.
-4. If not, parse and chunk the file.
-5. Save parsed chunk JSON into `neurarchat-parsed`.
-6. Return filename, blob path, chunk count, and success message.
-
-### Retrieval path
-
-- `GET /api/files?session_id=...`
-- `DELETE /api/files/{filename}?session_id=...`
-
-Parsed chunks are reused across later prompts in the same chat session.
-
-## Hybrid Conversation Title Flow
-
-NeuralChat uses a two-stage title strategy.
-
-### Stage 1: immediate local title
-
-The frontend creates a short local title from the first prompt so the sidebar updates instantly.
-
-### Stage 2: backend refinement
-
-After the first useful reply or first useful agent result, the frontend may call:
-
-- `POST /api/conversations/title`
-
-The backend returns a concise 3 to 6 word summary title. If refinement fails, the local title remains in place.
-
-This same title is then reused as the readable session label sent in `X-Session-Title`.
-
-## Agent Mode Flow
-
-### Planning
-
-`POST /api/agent/plan`
-
-Validated payload:
-
-- `goal`
-- `session_id`
-
-Pipeline:
-
-1. Backend asks GPT-5 for a step-by-step JSON plan.
-2. Plan is normalized and capped at 6 steps.
-3. If the planner returns no valid steps, a fallback reasoning step is injected.
-4. Plan is saved to Blob.
-5. Frontend renders the plan inside the chat thread.
-
-### Execution
-
-`POST /api/agent/run/{plan_id}`
-
-Validated payload:
-
-- `session_id`
-
-Execution uses LangGraph as a sequential state machine over the stored plan.
-
-Supported tools:
-
-- `web_search`
-- `read_file`
-- `memory_recall`
-- reasoning-only step with no tool
-
-Safety rules:
-
-- max 6 steps per plan
-- repeated identical tool calls trigger a loop warning and stop execution
-- failed steps are recorded and execution continues
-- total execution timeout is 60 seconds
-
-### Agent stream contract
-
-Chunk types:
-
-- `plan`
-- `step_start`
-- `step_done`
-- `warning`
-- `summary`
-- `done`
-- `error`
-
-### Agent history
-
-- `GET /api/agent/history`
-- `GET /api/agent/history/{plan_id}`
-
-History is user-scoped. It is not filtered by session at the API layer.
-
-## Delete Chat Flow
-
-`DELETE /api/conversations/{session_id}` performs real backend cleanup for the authenticated user.
-
-It deletes:
-
-- the conversation blob
-- raw uploaded files for that session
-- parsed file chunk blobs for that session
-- agent plans for that session
-- agent execution logs for that session
-
-It does not delete:
-
-- the user profile memory blob
-
-That separation is intentional because profile memory is account-scoped while chats are session-scoped.
+### Project memory
+
+Project memory is separate from global memory and stored in each project subtree.
+
+It supports:
+- template-aware fact extraction
+- memory keys constrained by the selected project template
+- project-specific prompt building
+- no mixing with global memory
+
+## Projects Architecture
+
+Projects introduce a third scope alongside global user memory and session chat state.
+
+### Project templates
+
+The backend ships seven predefined templates:
+- startup
+- study
+- code
+- writing
+- research
+- job
+- custom
+
+Each template provides:
+- default icon/visual identity fields
+- default accent color
+- label and description
+- base system prompt
+- tracked `memory_keys`
+
+### Project routes and workspace states
+
+```mermaid
+flowchart LR
+  A[/projects] --> B{Any projects?}
+  B -- No --> C[Template gallery]
+  B -- Yes --> D[Projects grid]
+  D --> E[/projects/:projectId]
+  E --> F[Workspace overview]
+  F --> G[/projects/:projectId?chat=session_id]
+  G --> H[Project-scoped chat thread]
+```
+
+### Project workspace composition
+
+The project workspace overview combines:
+- project header and template identity
+- project chats list
+- project memory snapshot
+- project file list
+- system prompt editing modal
+
+## Frontend Shell Architecture
+
+The app keeps one shared shell around route-driven content.
+
+Shared frame:
+- sidebar
+- top bar
+- notifications
+- settings flow
+- file modal
+- agent history panel
+- warning banner
+
+Route-specific main content:
+- settings page
+- chat view
+- projects index
+- project workspace overview
+- project chat thread
+- placeholder workspaces for future sections
+
+## Deletion Semantics
+
+### Delete chat
+
+`DELETE /api/conversations/{session_id}` removes:
+- conversation history
+- session files or project chat file references depending on scope
+- parsed chunks for that scope
+- session agent artifacts
+
+It does not remove global profile memory.
+
+### Delete project chat
+
+`DELETE /api/projects/{project_id}/chats/{session_id}` removes:
+- the project chat conversation
+- session-scoped agent artifacts for that chat session
+
+### Delete project
+
+`DELETE /api/projects/{project_id}` removes the full project subtree and updates the user project index.
+
+## Key Separation Rules
+
+NeuralChat intentionally separates:
+- user-level memory from session-level artifacts
+- global chat from project chat
+- global files from project files
+- normal chat from Agent Mode
+- cost tracking display from core chat navigation

@@ -1,9 +1,21 @@
 import { SignIn, SignedIn, SignedOut, useAuth, useClerk, useUser } from "@clerk/clerk-react";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
-import { checkHealth, checkSearchStatus, deleteConversationSession, generateConversationTitle, getFiles, streamChat } from "./api";
+import { checkHealth, checkSearchStatus, deleteConversationSession, generateConversationTitle, getFiles, getProjectFiles, streamChat } from "./api";
 import type { RequestNamingContext } from "./api";
 import { createAgentPlan, runAgent } from "./api/agent";
+import {
+  createProjectChat,
+  deleteProject,
+  getAllProjects,
+  getProject,
+  getProjectChatMessages,
+  getProjectChats,
+  getProjectMemory,
+  getTemplates,
+  updateProject,
+} from "./api/projects";
 import { getTodayUsage } from "./api/usage";
 import { AgentHistory } from "./components/AgentHistory";
 import { ChatWindow } from "./components/ChatWindow";
@@ -13,6 +25,8 @@ import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import type { ShortcutId } from "./components/Sidebar";
+import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import type {
   AgentPlan,
   AgentStepResult,
@@ -25,6 +39,7 @@ import type {
   ThemeMode,
   UploadedFileItem,
 } from "./types";
+import type { Project, ProjectChat, ProjectTemplate } from "./types/project";
 
 const EMPTY_SUGGESTIONS = [
   "Summarize this project architecture in simple terms",
@@ -392,6 +407,9 @@ function ChatShell() {
   const { getToken, userId } = useAuth();
   const clerk = useClerk();
   const { user } = useUser();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [input, setInput] = useState("");
   const [model, setModel] = useState<ChatModel>("gpt-5");
   const [isSending, setIsSending] = useState(false);
@@ -421,9 +439,19 @@ function ChatShell() {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isFileModalOpen, setIsFileModalOpen] = useState(false);
   const [fileModalAuthToken, setFileModalAuthToken] = useState("");
+  const [sessionAuthToken, setSessionAuthToken] = useState("");
   const [isAgentHistoryOpen, setIsAgentHistoryOpen] = useState(false);
   const [agentHistoryAuthToken, setAgentHistoryAuthToken] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectTemplates, setProjectTemplates] = useState<Record<string, ProjectTemplate>>({});
+  const [isProjectsLoading, setIsProjectsLoading] = useState(false);
+  const [projectsErrorText, setProjectsErrorText] = useState("");
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [projectChats, setProjectChats] = useState<ProjectChat[]>([]);
+  const [projectMemory, setProjectMemory] = useState<Record<string, unknown>>({});
+  const [projectFiles, setProjectFiles] = useState<UploadedFileItem[]>([]);
+  const [isProjectWorkspaceLoading, setIsProjectWorkspaceLoading] = useState(false);
   const [todayUsageSummary, setTodayUsageSummary] = useState<DailyLimitSummary | null>(null);
   const [isCostWarningDismissed, setIsCostWarningDismissed] = useState(false);
   const [activeUsageDate, setActiveUsageDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -447,6 +475,13 @@ function ChatShell() {
   const resolvedThemeMode: "dark" | "light" = themeMode === "system" ? systemTheme : themeMode;
   const userDisplayName = resolveDisplayName(user, userId);
   const userSubtitle = resolveUserSubtitle(user);
+  const projectRouteMatch = location.pathname.match(/^\/projects\/([^/]+)$/);
+  const activeProjectId = projectRouteMatch ? decodeURIComponent(projectRouteMatch[1]) : null;
+  const isProjectsIndexRoute = location.pathname === "/projects";
+  const activeProjectChatId = activeProjectId ? searchParams.get("chat") : null;
+  const isProjectOverviewRoute = Boolean(activeProjectId && !activeProjectChatId);
+  const isProjectChatRoute = Boolean(activeProjectId && activeProjectChatId);
+  const activeSessionId = isProjectChatRoute ? (activeProjectChatId ?? "") : activeConversationId;
   const sortedConversations = useMemo(
     () => [...conversations].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()),
     [conversations]
@@ -460,15 +495,17 @@ function ChatShell() {
     [sortedConversations]
   );
 
-  const currentMessages = activeConversationId ? messagesByConversation[activeConversationId] ?? [] : [];
+  const currentMessages = activeSessionId ? messagesByConversation[activeSessionId] ?? [] : [];
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
-  const activeFiles = activeConversationId ? filesByConversation[activeConversationId] ?? [] : [];
+  const activeFiles = isProjectOverviewRoute || isProjectChatRoute ? projectFiles : (activeConversationId ? filesByConversation[activeConversationId] ?? [] : []);
   const activeRequestNaming = useMemo<RequestNamingContext>(
     () => ({
       userDisplayName,
-      sessionTitle: activeConversation?.title?.trim() || "New chat",
+      sessionTitle: isProjectOverviewRoute || isProjectChatRoute
+        ? activeProject?.name?.trim() || "Project chat"
+        : activeConversation?.title?.trim() || "New chat",
     }),
-    [activeConversation?.title, userDisplayName]
+    [activeConversation?.title, activeProject?.name, isProjectChatRoute, isProjectOverviewRoute, userDisplayName]
   );
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
@@ -476,6 +513,142 @@ function ChatShell() {
       .then((status) => setSearchEnabled(status))
       .catch(() => setSearchEnabled(false));
   }, []);
+
+  useEffect(() => {
+    getTemplates()
+      .then(setProjectTemplates)
+      .catch(() => setProjectTemplates({}));
+  }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setSessionAuthToken("");
+      return;
+    }
+    let cancelled = false;
+    async function loadSessionToken() {
+      const authToken = await getToken();
+      if (!cancelled && authToken) {
+        setSessionAuthToken(authToken);
+      }
+    }
+    void loadSessionToken();
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken, userId]);
+
+  useEffect(() => {
+    if (isProjectsIndexRoute || isProjectOverviewRoute || isProjectChatRoute) {
+      setActiveShortcutId("projects");
+      setActiveWorkspaceShortcut(null);
+    }
+  }, [isProjectChatRoute, isProjectOverviewRoute, isProjectsIndexRoute]);
+
+  const refreshProjects = useCallback(async () => {
+    if (!userId) {
+      setProjects([]);
+      return;
+    }
+
+    try {
+      setIsProjectsLoading(true);
+      setProjectsErrorText("");
+      const authToken = await getToken();
+      if (!authToken) {
+        return;
+      }
+      const nextProjects = await getAllProjects(authToken, { userDisplayName });
+      setProjects(nextProjects);
+    } catch (error) {
+      setProjectsErrorText(error instanceof Error ? error.message : "Failed to load projects.");
+    } finally {
+      setIsProjectsLoading(false);
+    }
+  }, [getToken, userDisplayName, userId]);
+
+  const refreshActiveProjectWorkspace = useCallback(async () => {
+    if (!userId || !activeProjectId) {
+      setActiveProject(null);
+      setProjectChats([]);
+      setProjectMemory({});
+      setProjectFiles([]);
+      return;
+    }
+
+    try {
+      setIsProjectWorkspaceLoading(true);
+      const authToken = await getToken();
+      if (!authToken) {
+        return;
+      }
+      const [projectData, nextProjectChats, nextProjectMemory, nextProjectFiles] = await Promise.all([
+        getProject(authToken, activeProjectId, { userDisplayName }),
+        getProjectChats(authToken, activeProjectId, { userDisplayName }),
+        getProjectMemory(authToken, activeProjectId, { userDisplayName }),
+        getProjectFiles(authToken, activeProjectId, { userDisplayName }),
+      ]);
+      setActiveProject(projectData);
+      setProjectChats(nextProjectChats);
+      setProjectMemory(nextProjectMemory);
+      setProjectFiles(nextProjectFiles.files);
+    } catch (error) {
+      setProjectsErrorText(error instanceof Error ? error.message : "Failed to load project workspace.");
+    } finally {
+      setIsProjectWorkspaceLoading(false);
+    }
+  }, [activeProjectId, getToken, userDisplayName, userId]);
+
+  useEffect(() => {
+    void refreshProjects();
+  }, [refreshProjects]);
+
+  useEffect(() => {
+    void refreshActiveProjectWorkspace();
+  }, [refreshActiveProjectWorkspace]);
+
+  useEffect(() => {
+    if (!activeProjectId || !activeProjectChatId || !userId) {
+      return;
+    }
+
+    const projectId = activeProjectId;
+    const projectChatId = activeProjectChatId;
+
+    let cancelled = false;
+    async function loadProjectChat() {
+      try {
+        const authToken = await getToken();
+        if (!authToken) {
+          return;
+        }
+        const messages = await getProjectChatMessages(authToken, projectId, projectChatId, {
+          userDisplayName,
+          sessionTitle: activeProject?.name || "Project chat",
+        });
+        if (!cancelled) {
+          setMessagesByConversation((previous) => ({
+            ...previous,
+            [projectChatId]: messages.map((message, index) => ({
+              ...message,
+              id: message.id || `project-${projectChatId}-${index}`,
+              createdAt: message.createdAt || (message as unknown as Record<string, string>).created_at || new Date().toISOString(),
+              projectId,
+            })),
+          }));
+        }
+      } catch {
+        if (!cancelled) {
+          setMessagesByConversation((previous) => ({ ...previous, [projectChatId]: [] }));
+        }
+      }
+    }
+
+    void loadProjectChat();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.name, activeProjectChatId, activeProjectId, getToken, userDisplayName, userId]);
 
   const loadTodayUsageSummary = useCallback(async () => {
     if (!userId) {
@@ -652,7 +825,7 @@ function ChatShell() {
   }, [input]);
 
   useEffect(() => {
-    if (!activeConversationId || !userId) {
+    if (!activeConversationId || !userId || isProjectOverviewRoute || isProjectChatRoute) {
       return;
     }
 
@@ -702,7 +875,7 @@ function ChatShell() {
     return () => {
       isCancelled = true;
     };
-  }, [activeConversationId, userId, getToken, filesByConversation, activeRequestNaming]);
+  }, [activeConversationId, userId, getToken, filesByConversation, activeRequestNaming, isProjectChatRoute, isProjectOverviewRoute]);
 
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -871,6 +1044,9 @@ function ChatShell() {
   }, [scheduleTypingFlush]);
 
   function handleNewChat() {
+    if (location.pathname !== "/") {
+      navigate("/");
+    }
     const next = buildConversationSummary();
     setConversations((previous) => [next, ...previous]);
     setMessagesByConversation((previous) => ({ ...previous, [next.id]: [] }));
@@ -889,6 +1065,9 @@ function ChatShell() {
     if (isSending) {
       return;
     }
+    if (location.pathname !== "/") {
+      navigate("/");
+    }
     setActiveConversationId(conversationId);
     setActiveShortcutId(isAgentMode ? "codex" : "new");
     setActiveWorkspaceShortcut(null);
@@ -897,6 +1076,7 @@ function ChatShell() {
   }
 
   function handleOpenImages() {
+    navigate("/");
     setActiveShortcutId("images");
     setActiveWorkspaceShortcut("images");
     setIsSettingsOpen(false);
@@ -904,6 +1084,7 @@ function ChatShell() {
   }
 
   function handleOpenApps() {
+    navigate("/");
     setActiveShortcutId("apps");
     setActiveWorkspaceShortcut("apps");
     setIsSettingsOpen(false);
@@ -911,6 +1092,7 @@ function ChatShell() {
   }
 
   function handleOpenResearch() {
+    navigate("/");
     setActiveShortcutId("research");
     setActiveWorkspaceShortcut("research");
     setIsSettingsOpen(false);
@@ -922,6 +1104,7 @@ function ChatShell() {
   }
 
   function handleOpenCodex() {
+    navigate("/");
     setActiveShortcutId("codex");
     setActiveWorkspaceShortcut("codex");
     setIsSettingsOpen(false);
@@ -931,9 +1114,85 @@ function ChatShell() {
 
   function handleOpenProjects() {
     setActiveShortcutId("projects");
-    setActiveWorkspaceShortcut("projects");
+    setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
     setErrorText("");
+    navigate("/projects");
+  }
+
+  function handleOpenProject(projectId: string, sessionId?: string) {
+    setActiveShortcutId("projects");
+    setActiveWorkspaceShortcut(null);
+    setIsSettingsOpen(false);
+    setErrorText("");
+    navigate(sessionId ? `/projects/${encodeURIComponent(projectId)}?chat=${encodeURIComponent(sessionId)}` : `/projects/${encodeURIComponent(projectId)}`);
+  }
+
+  async function handleCreateProjectChat() {
+    if (!activeProjectId) {
+      return;
+    }
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+      const response = await createProjectChat(authToken, activeProjectId, { userDisplayName });
+      await refreshActiveProjectWorkspace();
+      handleOpenProject(activeProjectId, response.session_id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create project chat.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
+  }
+
+  async function handleToggleProjectPin() {
+    if (!activeProject) {
+      return;
+    }
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+      const updatedProject = await updateProject(
+        authToken,
+        activeProject.project_id,
+        { pinned: !activeProject.pinned },
+        { userDisplayName, sessionTitle: activeProject.name }
+      );
+      setActiveProject(updatedProject);
+      await refreshProjects();
+      await refreshActiveProjectWorkspace();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update project.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
+  }
+
+  async function handleDeleteActiveProject() {
+    if (!activeProject) {
+      return;
+    }
+    const confirmed = window.confirm(`Delete project "${activeProject.name}"? This removes project chats, memory, and files.`);
+    if (!confirmed) {
+      return;
+    }
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+      await deleteProject(authToken, activeProject.project_id, { userDisplayName, sessionTitle: activeProject.name });
+      await refreshProjects();
+      navigate("/projects");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete project.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
   }
 
   function pickFallbackConversationId(
@@ -1115,7 +1374,7 @@ function ChatShell() {
 
   async function submitChatPrompt(rawPrompt: string) {
     const trimmed = rawPrompt.trim();
-    if (!trimmed || isSending || !activeConversationId || submitLockRef.current) {
+    if (!trimmed || isSending || !activeSessionId || submitLockRef.current) {
       return;
     }
 
@@ -1126,8 +1385,10 @@ function ChatShell() {
     setTokensEmitted(0);
     setFirstTokenMs(null);
 
-    const conversationId = activeConversationId;
-    const requestSessionTitle = activeConversation?.title === "New chat" || !activeConversation?.title
+    const conversationId = activeSessionId;
+    const requestSessionTitle = isProjectChatRoute
+      ? activeProject?.name?.trim() || buildLocalConversationTitle(trimmed)
+      : activeConversation?.title === "New chat" || !activeConversation?.title
       ? buildLocalConversationTitle(trimmed)
       : activeConversation.title;
     setConversations((previous) =>
@@ -1146,6 +1407,7 @@ function ChatShell() {
       content: trimmed,
       createdAt: new Date().toISOString(),
       model,
+      projectId: activeProjectId ?? undefined,
       attachedFiles: attachedFilesForMessage
     };
 
@@ -1155,14 +1417,17 @@ function ChatShell() {
       role: "assistant",
       content: "",
       createdAt: new Date().toISOString(),
-      model
+      model,
+      projectId: activeProjectId ?? undefined,
     };
 
     setMessagesByConversation((previous) => ({
       ...previous,
       [conversationId]: [...(previous[conversationId] ?? []), userMessage, assistantMessage]
     }));
-    updateConversationSummary(conversationId, trimmed, trimmed);
+    if (!isProjectChatRoute) {
+      updateConversationSummary(conversationId, trimmed, trimmed);
+    }
 
     setActiveStreamingAssistantId(assistantId);
     setInput("");
@@ -1191,7 +1456,8 @@ function ChatShell() {
           message: trimmed,
           model,
           stream: true,
-          force_search: forceWebSearch && searchReady
+          force_search: forceWebSearch && searchReady,
+          project_id: activeProjectId ?? undefined,
         },
         authToken,
         (chunk: StreamChunk) => {
@@ -1250,9 +1516,14 @@ function ChatShell() {
         )
       }));
 
-      updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
-      if (streamedText.trim()) {
+      if (!isProjectChatRoute) {
+        updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
+      }
+      if (!isProjectChatRoute && streamedText.trim()) {
         void refineConversationTitle(conversationId, trimmed, streamedText);
+      }
+      if (isProjectChatRoute) {
+        void refreshActiveProjectWorkspace();
       }
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown error";
@@ -1279,7 +1550,9 @@ function ChatShell() {
       } else {
         finishStreamingDisplay();
       }
-      updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
+      if (!isProjectChatRoute) {
+        updateConversationSummary(conversationId, trimmed, streamedText || trimmed);
+      }
     } finally {
       abortControllerRef.current = null;
       submitLockRef.current = false;
@@ -1289,7 +1562,7 @@ function ChatShell() {
 
   async function submitAgentGoal(rawPrompt: string) {
     const trimmed = rawPrompt.trim();
-    if (!trimmed || isSending || !activeConversationId || submitLockRef.current) {
+    if (!trimmed || isSending || !activeSessionId || submitLockRef.current) {
       return;
     }
 
@@ -1298,8 +1571,10 @@ function ChatShell() {
     setIsSending(true);
     setStreamStatus("planning");
 
-    const conversationId = activeConversationId;
-    const requestSessionTitle = activeConversation?.title === "New chat" || !activeConversation?.title
+    const conversationId = activeSessionId;
+    const requestSessionTitle = isProjectChatRoute
+      ? activeProject?.name?.trim() || buildLocalConversationTitle(trimmed)
+      : activeConversation?.title === "New chat" || !activeConversation?.title
       ? buildLocalConversationTitle(trimmed)
       : activeConversation.title;
     const attachedFilesForMessage = activeFiles.map((fileItem) => ({ ...fileItem }));
@@ -1309,6 +1584,7 @@ function ChatShell() {
       content: trimmed,
       createdAt: new Date().toISOString(),
       model,
+      projectId: activeProjectId ?? undefined,
       attachedFiles: attachedFilesForMessage,
     };
     const assistantId = buildId();
@@ -1323,6 +1599,7 @@ function ChatShell() {
       content: "",
       createdAt: new Date().toISOString(),
       model,
+      projectId: activeProjectId ?? undefined,
       agentTask: buildAgentTaskState(placeholderPlan),
     };
 
@@ -1330,7 +1607,9 @@ function ChatShell() {
       ...previous,
       [conversationId]: [...(previous[conversationId] ?? []), userMessage, assistantMessage],
     }));
-    updateConversationSummary(conversationId, trimmed, trimmed);
+    if (!isProjectChatRoute) {
+      updateConversationSummary(conversationId, trimmed, trimmed);
+    }
     setInput("");
 
     try {
@@ -1344,8 +1623,12 @@ function ChatShell() {
         sessionTitle: requestSessionTitle,
       });
       updateAgentMessageState(conversationId, assistantId, () => buildAgentTaskState(plan));
-      updateConversationSummary(conversationId, trimmed, `Agent plan ready: ${plan.steps.length} steps`);
-      void refineConversationTitle(conversationId, trimmed, plan.steps.map((step) => step.description).join("; "));
+      if (!isProjectChatRoute) {
+        updateConversationSummary(conversationId, trimmed, `Agent plan ready: ${plan.steps.length} steps`);
+        void refineConversationTitle(conversationId, trimmed, plan.steps.map((step) => step.description).join("; "));
+      } else {
+        void refreshActiveProjectWorkspace();
+      }
       setStreamStatus("ready");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create agent plan.";
@@ -1362,12 +1645,14 @@ function ChatShell() {
   }
 
   async function handleRunAgentPlan(messageId: string) {
-    if (!activeConversationId || isSending) {
+    if (!activeSessionId || isSending) {
       return;
     }
 
-    const conversationId = activeConversationId;
-    const requestSessionTitle = activeConversation?.title?.trim() || "New chat";
+    const conversationId = activeSessionId;
+    const requestSessionTitle = isProjectChatRoute
+      ? activeProject?.name?.trim() || "Project chat"
+      : activeConversation?.title?.trim() || "New chat";
     const targetMessage = (messagesByConversation[conversationId] ?? []).find((message) => message.id === messageId);
     const agentTask = targetMessage?.agentTask;
     if (!agentTask) {
@@ -1560,7 +1845,7 @@ function ChatShell() {
   }
 
   async function handleOpenFileUpload() {
-    if (!activeConversationId) {
+    if (!activeSessionId && !activeProjectId) {
       showToast("Start a chat first before adding files.", "info");
       return;
     }
@@ -1607,6 +1892,10 @@ function ChatShell() {
 
   const handleUploadedFilesChange = useCallback(
     (files: UploadedFileItem[]) => {
+      if (isProjectOverviewRoute || isProjectChatRoute) {
+        setProjectFiles(files);
+        return;
+      }
       if (!activeConversationId) {
         return;
       }
@@ -1646,6 +1935,8 @@ function ChatShell() {
         activeConversationId={activeConversationId}
         isMobileOpen={isSidebarOpen}
         isCollapsed={isSidebarCollapsed}
+        projects={projects}
+        activeProjectId={activeProjectId ?? undefined}
         userName={userDisplayName}
         userSubtitle={userSubtitle}
         isWebSearchMode={forceWebSearch}
@@ -1682,6 +1973,7 @@ function ChatShell() {
         onOpenResearch={handleOpenResearch}
         onOpenCodex={handleOpenCodex}
         onOpenProjects={handleOpenProjects}
+        onOpenProject={handleOpenProject}
       />
 
       {isSidebarOpen ? <button className="nc-sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} /> : null}
@@ -1700,6 +1992,12 @@ function ChatShell() {
             <h1>
               {isSettingsOpen
                 ? "Settings"
+                : isProjectChatRoute
+                  ? activeProject?.name ?? "Project chat"
+                  : isProjectOverviewRoute
+                    ? activeProject?.name ?? "Project"
+                    : isProjectsIndexRoute
+                      ? "Projects"
                 : activeWorkspaceShortcut
                   ? SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]
                   : activeConversation?.title ?? "New chat"}
@@ -1829,6 +2127,70 @@ function ChatShell() {
               onUsageStateChange={setTodayUsageSummary}
               onOpenAccountSettings={handleOpenUserSettings}
             />
+          ) : isProjectsIndexRoute ? (
+            <ProjectsPage
+              authToken={sessionAuthToken}
+              naming={{ userDisplayName }}
+              projects={projects}
+              templates={projectTemplates}
+              isLoading={isProjectsLoading}
+              errorText={projectsErrorText}
+              onRefresh={refreshProjects}
+              onOpenProject={handleOpenProject}
+            />
+          ) : isProjectOverviewRoute && activeProject ? (
+            <ProjectWorkspacePage
+              authToken={sessionAuthToken}
+              project={activeProject}
+              templates={projectTemplates}
+              chats={projectChats}
+              memory={projectMemory}
+              files={projectFiles}
+              naming={{ userDisplayName, sessionTitle: activeProject.name }}
+              onBack={() => navigate("/projects")}
+              onOpenChat={(sessionId) => handleOpenProject(activeProject.project_id, sessionId)}
+              onCreateChat={() => void handleCreateProjectChat()}
+              onRefresh={refreshActiveProjectWorkspace}
+              onProjectUpdated={(project) => {
+                setActiveProject(project);
+                void refreshProjects();
+                void refreshActiveProjectWorkspace();
+              }}
+              onDeleteProject={() => void handleDeleteActiveProject()}
+              onTogglePin={() => void handleToggleProjectPin()}
+              onUploadFile={() => void handleOpenFileUpload()}
+            />
+          ) : isProjectOverviewRoute ? (
+            <section className="nc-workspace-view">
+              <div className="nc-workspace-view__card">
+                <p className="nc-workspace-view__eyebrow">Projects</p>
+                <h2>{isProjectWorkspaceLoading ? "Loading project…" : "Project not found"}</h2>
+                <p className="nc-workspace-view__description">
+                  {isProjectWorkspaceLoading ? "Loading project workspace." : "We couldn't find that project."}
+                </p>
+                <div className="nc-workspace-view__actions">
+                  <button type="button" className="nc-empty-chip" onClick={() => navigate("/projects")}>
+                    Back to projects
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : isProjectChatRoute ? (
+            currentMessages.length === 0 && isProjectWorkspaceLoading ? (
+              <section className="nc-workspace-view">
+                <div className="nc-workspace-view__card">
+                  <p className="nc-workspace-view__eyebrow">Projects</p>
+                  <h2>Loading chat…</h2>
+                </div>
+              </section>
+            ) : (
+              <ChatWindow
+                messages={currentMessages}
+                streamingMessageId={activeStreamingAssistantId}
+                onRetryPrompt={handleRetryPrompt}
+                onRunAgentPlan={handleRunAgentPlan}
+              />
+            )
           ) : activeWorkspaceShortcut ? (
             <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
               <div className="nc-workspace-view__card">
@@ -1913,7 +2275,7 @@ function ChatShell() {
           )}
         </div>
 
-        {!isSettingsOpen ? (
+        {!isSettingsOpen && !isProjectsIndexRoute && !isProjectOverviewRoute ? (
           <footer className="nc-input-wrap">
             <form onSubmit={handleSubmit} className="nc-input-shell">
               <textarea
@@ -1958,11 +2320,12 @@ function ChatShell() {
       </section>
 
 
-      {isFileModalOpen && activeConversationId ? (
+      {isFileModalOpen && (activeSessionId || activeProjectId) ? (
         <FileUpload
           open={isFileModalOpen}
           authToken={fileModalAuthToken || fileModalAuthTokenRef.current}
-          sessionId={activeConversationId}
+          sessionId={isProjectOverviewRoute || isProjectChatRoute ? undefined : activeConversationId}
+          projectId={activeProjectId ?? undefined}
           naming={activeRequestNaming}
           onFilesChange={handleUploadedFilesChange}
           onClose={() => {

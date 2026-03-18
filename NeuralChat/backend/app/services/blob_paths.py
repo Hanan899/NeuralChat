@@ -44,6 +44,11 @@ def session_segment(session_id: str, session_title: str | None = None) -> str:
     return named_segment(session_title, session_id, "chat")
 
 
+# This helper builds the canonical project folder segment.
+def project_segment(project_id: str, project_name: str | None = None) -> str:
+    return named_segment(project_name, project_id, "project")
+
+
 # This helper checks whether a segment matches a stable id in either old or new naming formats.
 def segment_matches_id(segment_value: str, stable_id: str) -> bool:
     safe_stable_id = safe_identifier(stable_id)

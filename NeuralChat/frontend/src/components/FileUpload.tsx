@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
 
-import { uploadFileWithProgress } from "../api";
+import { uploadFileWithProgress, uploadProjectFileWithProgress } from "../api";
 import type { RequestNamingContext } from "../api";
 import type { UploadedFileItem } from "../types";
 import { FileList } from "./FileList";
@@ -8,7 +8,8 @@ import { FileList } from "./FileList";
 interface FileUploadProps {
   open: boolean;
   authToken: string;
-  sessionId: string;
+  sessionId?: string;
+  projectId?: string;
   naming?: RequestNamingContext;
   onClose: () => void;
   onFilesChange?: (files: UploadedFileItem[]) => void;
@@ -24,7 +25,7 @@ function CloseIcon() {
   );
 }
 
-export function FileUpload({ open, authToken, sessionId, naming, onClose, onFilesChange }: FileUploadProps) {
+export function FileUpload({ open, authToken, sessionId, projectId, naming, onClose, onFilesChange }: FileUploadProps) {
   const inputReference = useRef<HTMLInputElement | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
@@ -44,7 +45,9 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
     setSuccessText("");
 
     try {
-      const response = await uploadFileWithProgress(authToken, sessionId, file, setUploadProgress, naming);
+      const response = projectId
+        ? await uploadProjectFileWithProgress(authToken, projectId, file, setUploadProgress, naming)
+        : await uploadFileWithProgress(authToken, sessionId as string, file, setUploadProgress, naming);
       setSuccessText(`✓ ${response.message || `${file.name} uploaded successfully`}`);
       setRefreshKey((value) => value + 1);
     } catch (error) {
@@ -124,6 +127,7 @@ export function FileUpload({ open, authToken, sessionId, naming, onClose, onFile
         <FileList
           authToken={authToken}
           sessionId={sessionId}
+          projectId={projectId}
           naming={naming}
           refreshKey={refreshKey}
           onFilesChange={onFilesChange}

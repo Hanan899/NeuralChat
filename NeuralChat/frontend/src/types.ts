@@ -116,6 +116,7 @@ export interface ChatMessage {
   content: string;
   createdAt: string;
   model: ChatModel;
+  projectId?: string;
   attachedFiles?: UploadedFileItem[];
   searchUsed?: boolean;
   fileContextUsed?: boolean;
@@ -129,6 +130,7 @@ export interface ChatRequest {
   model: ChatModel;
   stream: boolean;
   force_search?: boolean;
+  project_id?: string;
 }
 
 export interface StreamChunk {

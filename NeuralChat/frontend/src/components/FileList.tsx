@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 
-import { deleteFile, getFiles } from "../api";
+import { deleteFile, deleteProjectFile, getFiles, getProjectFiles } from "../api";
 import type { RequestNamingContext } from "../api";
 import type { UploadedFileItem } from "../types";
 
 interface FileListProps {
   authToken: string;
-  sessionId: string;
+  sessionId?: string;
+  projectId?: string;
   naming?: RequestNamingContext;
   refreshKey?: number;
   onFilesChange?: (files: UploadedFileItem[]) => void;
@@ -28,26 +29,27 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileList({ authToken, sessionId, naming, refreshKey, onFilesChange }: FileListProps) {
+export function FileList({ authToken, sessionId, projectId, naming, refreshKey, onFilesChange }: FileListProps) {
   const [files, setFiles] = useState<UploadedFileItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
   const [errorText, setErrorText] = useState("");
 
   useEffect(() => {
-    if (!authToken || !sessionId) return;
+    if (!authToken || (!sessionId && !projectId)) return;
 
     setIsLoading(true);
     setErrorText("");
 
-    getFiles(authToken, sessionId, naming)
+    const request = projectId ? getProjectFiles(authToken, projectId, naming) : getFiles(authToken, sessionId as string, naming);
+    request
       .then((response) => {
         setFiles(response.files);
         onFilesChange?.(response.files);
       })
       .catch(() => setErrorText("Could not load files."))
       .finally(() => setIsLoading(false));
-  }, [authToken, sessionId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authToken, sessionId, projectId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDelete(filename: string) {
     if (deletingFilename) return;
@@ -55,7 +57,11 @@ export function FileList({ authToken, sessionId, naming, refreshKey, onFilesChan
     setErrorText("");
 
     try {
-      await deleteFile(authToken, sessionId, filename, naming);
+      if (projectId) {
+        await deleteProjectFile(authToken, projectId, filename, naming);
+      } else {
+        await deleteFile(authToken, sessionId as string, filename, naming);
+      }
       const updated = files.filter((f) => f.filename !== filename);
       setFiles(updated);
       onFilesChange?.(updated);

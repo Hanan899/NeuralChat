@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FileList } from "./FileList";
@@ -56,16 +57,20 @@ const {
   getAgentTaskMock: vi.fn().mockResolvedValue({ plan: { plan_id: "plan-1", goal: "Goal", steps: [] }, log: [] }),
 }));
 
-vi.mock("../api", () => ({
-  checkHealth: vi.fn().mockResolvedValue(true),
-  checkSearchStatus: checkSearchStatusMock,
-  streamChat: streamChatMock,
-  getFiles: getFilesMock,
-  deleteFile: deleteFileMock,
-  deleteConversationSession: deleteConversationSessionMock,
-  uploadFileWithProgress: uploadFileWithProgressMock,
-  generateConversationTitle: generateConversationTitleMock,
-}));
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    checkHealth: vi.fn().mockResolvedValue(true),
+    checkSearchStatus: checkSearchStatusMock,
+    streamChat: streamChatMock,
+    getFiles: getFilesMock,
+    deleteFile: deleteFileMock,
+    deleteConversationSession: deleteConversationSessionMock,
+    uploadFileWithProgress: uploadFileWithProgressMock,
+    generateConversationTitle: generateConversationTitleMock,
+  };
+});
 
 vi.mock("../api/agent", () => ({
   createAgentPlan: createAgentPlanMock,
@@ -91,6 +96,14 @@ vi.mock("@clerk/clerk-react", () => ({
 }));
 
 import App from "../App";
+
+function renderApp() {
+  return render(
+    <MemoryRouter>
+      <App />
+    </MemoryRouter>
+  );
+}
 
 describe("File upload and file context UI", () => {
   beforeEach(() => {
@@ -254,7 +267,7 @@ describe("File upload and file context UI", () => {
       ],
     });
 
-    render(<App />);
+    renderApp();
 
     expect(await screen.findByRole("button", { name: "Add files to this chat" })).toBeInTheDocument();
     expect(screen.queryByText("2 files attached")).not.toBeInTheDocument();

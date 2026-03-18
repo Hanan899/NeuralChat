@@ -31,12 +31,19 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(force_search, bool):
         raise HTTPException(status_code=422, detail="force_search must be boolean true/false.")
 
+    project_id = payload.get("project_id")
+    if project_id is not None:
+        if not isinstance(project_id, str) or not (1 <= len(project_id.strip()) <= 128):
+            raise HTTPException(status_code=422, detail="project_id must be a non-empty string (max 128).")
+        project_id = project_id.strip()
+
     return {
         "session_id": session_id,
         "message": message,
         "model": model,
         "stream": stream,
         "force_search": force_search,
+        "project_id": project_id,
     }
 
 
