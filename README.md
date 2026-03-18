@@ -67,43 +67,43 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  A[User sends message] --> B[Frontend sends auth token + session metadata]
-  B --> C[/api/chat]
-  C --> D[Load memory]
-  D --> E[Optional search]
-  E --> F[Optional file context]
-  F --> G[Azure OpenAI reply]
-  G --> H[Stream NDJSON back to UI]
-  H --> I[Persist conversation]
-  I --> J[Background memory extraction]
-  I --> K[Background usage logging]
+  A["User sends message"] --> B["Frontend sends auth token + session metadata"]
+  B --> C["POST /api/chat"]
+  C --> D["Load memory"]
+  D --> E["Optional search"]
+  E --> F["Optional file context"]
+  F --> G["Azure OpenAI reply"]
+  G --> H["Stream NDJSON back to UI"]
+  H --> I["Persist conversation"]
+  I --> J["Background memory extraction"]
+  I --> K["Background usage logging"]
 ```
 
 ### Project chat
 
 ```mermaid
 flowchart TD
-  A[User opens project chat] --> B[/api/chat with project_id]
-  B --> C[Verify project ownership]
-  C --> D[Load project system prompt]
-  D --> E[Load project memory]
-  E --> F[Load project chat history]
-  F --> G[Optional project file context]
-  G --> H[Azure OpenAI reply]
-  H --> I[Save under project chat path]
-  I --> J[Background project memory update]
+  A["User opens project chat"] --> B["POST /api/chat with project_id"]
+  B --> C["Verify project ownership"]
+  C --> D["Load project system prompt"]
+  D --> E["Load project memory"]
+  E --> F["Load project chat history"]
+  F --> G["Optional project file context"]
+  G --> H["Azure OpenAI reply"]
+  H --> I["Save under project chat path"]
+  I --> J["Background project memory update"]
 ```
 
 ### Cost monitoring
 
 ```mermaid
 flowchart TD
-  A[GPT call completes] --> B[Normalize usage tokens]
-  B --> C[Append daily usage record]
-  C --> D[usage/display_name__user_id/YYYY-MM-DD.json]
-  D --> E[/api/usage/today and /api/usage/summary]
-  E --> F[Settings > Cost monitoring]
-  E --> G[Chat warning banner at 80 percent]
+  A["GPT call completes"] --> B["Normalize usage tokens"]
+  B --> C["Append daily usage record"]
+  C --> D["usage/display_name__user_id/YYYY-MM-DD.json"]
+  D --> E["GET /api/usage/today and /api/usage/summary"]
+  E --> F["Settings > Cost monitoring"]
+  E --> G["Chat warning banner at 80 percent"]
 ```
 
 ## Where To Start

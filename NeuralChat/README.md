@@ -241,28 +241,28 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  A[Open Projects] --> B[Projects page]
-  B --> C{Has projects?}
-  C -- No --> D[Template gallery]
-  C -- Yes --> E[Project grid]
-  D --> F[Create project modal]
-  E --> G[Open project workspace]
-  G --> H[Overview: chats + memory + files]
-  H --> I[Open or create project chat]
-  I --> J[/api/chat with project_id]
-  J --> K[Project-scoped prompt, history, files, memory]
+  A["Open Projects"] --> B["Projects page"]
+  B --> C{"Has projects?"}
+  C -- "No" --> D["Template gallery"]
+  C -- "Yes" --> E["Project grid"]
+  D --> F["Create project modal"]
+  E --> G["Open project workspace"]
+  G --> H["Overview: chats + memory + files"]
+  H --> I["Open or create project chat"]
+  I --> J["POST /api/chat with project_id"]
+  J --> K["Project-scoped prompt, history, files, memory"]
 ```
 
 ### Cost monitoring
 
 ```mermaid
 flowchart LR
-  A[Chat or agent call] --> B[Token usage extracted]
-  B --> C[Daily usage JSON updated]
-  C --> D[/api/usage/today]
-  C --> E[/api/usage/summary]
-  D --> F[Chat warning banner]
-  E --> G[Settings > Cost monitoring]
+  A["Chat or agent call"] --> B["Token usage extracted"]
+  B --> C["Daily usage JSON updated"]
+  C --> D["GET /api/usage/today"]
+  C --> E["GET /api/usage/summary"]
+  D --> F["Chat warning banner"]
+  E --> G["Settings > Cost monitoring"]
 ```
 
 ## Delete Behavior

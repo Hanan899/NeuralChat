@@ -16,14 +16,14 @@ This guide describes the current local setup and Azure deployment model for Neur
 
 ```mermaid
 flowchart LR
-  DEV[Developer machine] --> FE[Vite frontend]
-  DEV --> FUNC[Azure Functions publish]
-  FUNC --> API[FastAPI on Azure Functions]
-  API --> AOAI[Azure OpenAI]
-  API --> TAVILY[Tavily]
-  API --> BLOB[Azure Blob Storage]
+  DEV["Developer machine"] --> FE["Vite frontend"]
+  DEV --> FUNC["Azure Functions publish"]
+  FUNC --> API["FastAPI on Azure Functions"]
+  API --> AOAI["Azure OpenAI"]
+  API --> TAVILY["Tavily"]
+  API --> BLOB["Azure Blob Storage"]
   FE --> API
-  FE --> CLERK[Clerk]
+  FE --> CLERK["Clerk"]
 ```
 
 ## Local Setup
@@ -207,12 +207,12 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  A[Create project] --> B[projects/user_segment/index.json updated]
-  B --> C[meta.json created]
-  C --> D[memory.json initialized]
-  D --> E[Create project chat]
-  E --> F[chats/session_segment.json created]
-  F --> G[Project files uploaded under project subtree]
+  A["Create project"] --> B["projects/user_segment/index.json updated"]
+  B --> C["meta.json created"]
+  C --> D["memory.json initialized"]
+  D --> E["Create project chat"]
+  E --> F["chats/session_segment.json created"]
+  F --> G["Project files uploaded under project subtree"]
 ```
 
 ## Common Failure Cases

@@ -124,86 +124,86 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  A[POST /api/chat] --> B[Validate payload]
-  B --> C[Load global conversation history]
-  C --> D[Build global memory prompt]
-  D --> E[Optional search decision and retrieval]
-  E --> F[Optional session file chunk retrieval]
-  F --> G[Azure OpenAI GPT-5]
-  G --> H[Stream tokens to frontend]
-  H --> I[Save assistant reply]
-  I --> J[Background profile memory extraction]
-  I --> K[Background usage logging]
+  A["POST /api/chat"] --> B["Validate payload"]
+  B --> C["Load global conversation history"]
+  C --> D["Build global memory prompt"]
+  D --> E["Optional search decision and retrieval"]
+  E --> F["Optional session file chunk retrieval"]
+  F --> G["Azure OpenAI GPT-5"]
+  G --> H["Stream tokens to frontend"]
+  H --> I["Save assistant reply"]
+  I --> J["Background profile memory extraction"]
+  I --> K["Background usage logging"]
 ```
 
 ### 3. Project chat flow
 
 ```mermaid
 flowchart TD
-  A[POST /api/chat with project_id] --> B[Verify project belongs to user]
-  B --> C[Load project meta]
-  C --> D[Build project system prompt]
-  D --> E[Load project memory]
-  E --> F[Load project chat history]
-  F --> G[Load project file chunks]
-  G --> H[Azure OpenAI GPT-5]
-  H --> I[Save into project chat path]
-  I --> J[Background project memory extraction]
-  I --> K[Background usage logging]
+  A["POST /api/chat with project_id"] --> B["Verify project belongs to user"]
+  B --> C["Load project meta"]
+  C --> D["Build project system prompt"]
+  D --> E["Load project memory"]
+  E --> F["Load project chat history"]
+  F --> G["Load project file chunks"]
+  G --> H["Azure OpenAI GPT-5"]
+  H --> I["Save into project chat path"]
+  I --> J["Background project memory extraction"]
+  I --> K["Background usage logging"]
 ```
 
 ### 4. Search flow
 
 ```mermaid
 flowchart TD
-  A[Frontend forces or allows search] --> B[Backend decides if search is needed]
-  B --> C{Cached?}
-  C -- Yes --> D[Reuse Blob cache]
-  C -- No --> E[Call Tavily]
-  E --> F[Save normalized results to cache]
-  D --> G[Append search context to prompt]
+  A["Frontend forces or allows search"] --> B["Backend decides if search is needed"]
+  B --> C{"Cached?"}
+  C -- "Yes" --> D["Reuse Blob cache"]
+  C -- "No" --> E["Call Tavily"]
+  E --> F["Save normalized results to cache"]
+  D --> G["Append search context to prompt"]
   F --> G
-  G --> H[Assistant reply includes sources metadata]
+  G --> H["Assistant reply includes sources metadata"]
 ```
 
 ### 5. File flow
 
 ```mermaid
 flowchart TD
-  A[Upload file] --> B[Validate extension and size]
-  B --> C{Project file?}
-  C -- No --> D[Save under session uploads path]
-  C -- Yes --> E[Save under project files path]
-  D --> F[Parse and chunk if needed]
+  A["Upload file"] --> B["Validate extension and size"]
+  B --> C{"Project file?"}
+  C -- "No" --> D["Save under session uploads path"]
+  C -- "Yes" --> E["Save under project files path"]
+  D --> F["Parse and chunk if needed"]
   E --> F
-  F --> G[Save parsed chunks]
-  G --> H[Later chat loads relevant chunks]
+  F --> G["Save parsed chunks"]
+  G --> H["Later chat loads relevant chunks"]
 ```
 
 ### 6. Agent flow
 
 ```mermaid
 flowchart TD
-  A[POST /api/agent/plan] --> B[GPT builds plan]
-  B --> C[Normalize and cap steps]
-  C --> D[Save plan]
-  D --> E[User runs plan]
-  E --> F[LangGraph executes sequential steps]
-  F --> G[Emit step stream events]
-  G --> H[Save logs]
-  H --> I[Return summary + usage]
+  A["POST /api/agent/plan"] --> B["GPT builds plan"]
+  B --> C["Normalize and cap steps"]
+  C --> D["Save plan"]
+  D --> E["User runs plan"]
+  E --> F["LangGraph executes sequential steps"]
+  F --> G["Emit step stream events"]
+  G --> H["Save logs"]
+  H --> I["Return summary + usage"]
 ```
 
 ### 7. Cost monitoring flow
 
 ```mermaid
 flowchart TD
-  A[GPT call returns usage] --> B[Normalize input and output tokens]
-  B --> C[Estimate USD cost]
-  C --> D[Append daily usage record]
-  D --> E[Aggregate summary endpoints]
-  E --> F[Settings cost dashboard]
-  E --> G[Chat warning banner]
+  A["GPT call returns usage"] --> B["Normalize input and output tokens"]
+  B --> C["Estimate USD cost"]
+  C --> D["Append daily usage record"]
+  D --> E["Aggregate summary endpoints"]
+  E --> F["Settings cost dashboard"]
+  E --> G["Chat warning banner"]
 ```
 
 ## Memory Architecture
@@ -254,13 +254,13 @@ Each template provides:
 
 ```mermaid
 flowchart LR
-  A[/projects] --> B{Any projects?}
-  B -- No --> C[Template gallery]
-  B -- Yes --> D[Projects grid]
-  D --> E[/projects/:projectId]
-  E --> F[Workspace overview]
-  F --> G[/projects/:projectId?chat=session_id]
-  G --> H[Project-scoped chat thread]
+  A["/projects"] --> B{"Any projects?"}
+  B -- "No" --> C["Template gallery"]
+  B -- "Yes" --> D["Projects grid"]
+  D --> E["/projects/:projectId"]
+  E --> F["Workspace overview"]
+  F --> G["/projects/:projectId?chat=session_id"]
+  G --> H["Project-scoped chat thread"]
 ```
 
 ### Project workspace composition
