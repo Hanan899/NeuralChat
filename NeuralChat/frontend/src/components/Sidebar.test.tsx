@@ -39,7 +39,8 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     onOpenSettings: vi.fn(),
     onOpenUserSettings: vi.fn(),
     onSignOut: vi.fn(),
-    onCloseMobile: vi.fn()
+    onCloseMobile: vi.fn(),
+    onToggleCollapse: vi.fn()
   };
 
   return render(<Sidebar {...baseProps} {...overrides} />);
@@ -122,5 +123,31 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
 
     expect(onToggleAgentMode).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the recents heading", () => {
+    renderSidebar();
+
+    expect(screen.getByRole("heading", { name: "Recents" })).toBeInTheDocument();
+  });
+
+  it("triggers the codex shortcut and marks it active", async () => {
+    const onOpenCodex = vi.fn();
+    renderSidebar({ onOpenCodex, activeShortcutId: "codex" });
+
+    const codexButton = screen.getByRole("button", { name: "Codex" });
+    await userEvent.click(codexButton);
+
+    expect(onOpenCodex).toHaveBeenCalledTimes(1);
+    expect(codexButton).toHaveAttribute("aria-current", "page");
+  });
+
+  it("toggles the sidebar pane button", async () => {
+    const onToggleCollapse = vi.fn();
+    renderSidebar({ onToggleCollapse });
+
+    await userEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(onToggleCollapse).toHaveBeenCalledTimes(1);
   });
 });

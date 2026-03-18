@@ -12,6 +12,7 @@ import { FileUpload } from "./components/FileUpload";
 import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
+import type { ShortcutId } from "./components/Sidebar";
 import type {
   AgentPlan,
   AgentStepResult,
@@ -34,6 +35,14 @@ const EMPTY_SUGGESTIONS = [
 
 const THEME_STORAGE_KEY = "neuralchat:theme-mode:v1";
 const COST_WARNING_STORAGE_KEY = "neuralchat:cost-warning:dismissed";
+const SIDEBAR_SHORTCUT_LABELS: Record<ShortcutId, string> = {
+  new: "New chat",
+  images: "Images",
+  apps: "Apps",
+  research: "Deep research",
+  codex: "Codex",
+  projects: "Projects",
+};
 type ToastTone = "success" | "info" | "error";
 
 interface ToastItem {
@@ -281,6 +290,22 @@ function buildConversationSummary(title = "New chat"): ConversationSummary {
   };
 }
 
+function buildWorkspaceDescription(shortcutId: Exclude<ShortcutId, "new">): string {
+  if (shortcutId === "images") {
+    return "Image tools are not wired into NeuralChat yet, but this workspace is reserved for visual creation and image-first prompts.";
+  }
+  if (shortcutId === "apps") {
+    return "Apps will become your launcher for connected tools and purpose-built workflows inside NeuralChat.";
+  }
+  if (shortcutId === "research") {
+    return "Deep research prepares the chat for longer, web-assisted and agent-assisted investigation work.";
+  }
+  if (shortcutId === "codex") {
+    return "Codex switches the workspace into a coding-focused flow so you can plan, debug, and iterate with Agent mode.";
+  }
+  return "Projects will become the home for longer-running workstreams and grouped conversations.";
+}
+
 function buildAgentTaskState(plan: AgentPlan): AgentTaskState {
   return {
     plan,
@@ -383,6 +408,8 @@ function ChatShell() {
   const [searchEnabled, setSearchEnabled] = useState<boolean | null>(null);
   const [forceWebSearch, setForceWebSearch] = useState(false);
   const [isAgentMode, setIsAgentMode] = useState(false);
+  const [activeShortcutId, setActiveShortcutId] = useState<ShortcutId>("new");
+  const [activeWorkspaceShortcut, setActiveWorkspaceShortcut] = useState<Exclude<ShortcutId, "new"> | null>(null);
   const [activeStreamingAssistantId, setActiveStreamingAssistantId] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -390,6 +417,7 @@ function ChatShell() {
   const [fileCountsByConversation, setFileCountsByConversation] = useState<Record<string, number>>({});
   const [filesByConversation, setFilesByConversation] = useState<Record<string, UploadedFileItem[]>>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isFileModalOpen, setIsFileModalOpen] = useState(false);
   const [fileModalAuthToken, setFileModalAuthToken] = useState("");
@@ -849,6 +877,8 @@ function ChatShell() {
     setFilesByConversation((previous) => ({ ...previous, [next.id]: [] }));
     setFileCountsByConversation((previous) => ({ ...previous, [next.id]: 0 }));
     setActiveConversationId(next.id);
+    setActiveShortcutId("new");
+    setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
     setInput("");
     setErrorText("");
@@ -860,6 +890,48 @@ function ChatShell() {
       return;
     }
     setActiveConversationId(conversationId);
+    setActiveShortcutId(isAgentMode ? "codex" : "new");
+    setActiveWorkspaceShortcut(null);
+    setIsSettingsOpen(false);
+    setErrorText("");
+  }
+
+  function handleOpenImages() {
+    setActiveShortcutId("images");
+    setActiveWorkspaceShortcut("images");
+    setIsSettingsOpen(false);
+    setErrorText("");
+  }
+
+  function handleOpenApps() {
+    setActiveShortcutId("apps");
+    setActiveWorkspaceShortcut("apps");
+    setIsSettingsOpen(false);
+    setErrorText("");
+  }
+
+  function handleOpenResearch() {
+    setActiveShortcutId("research");
+    setActiveWorkspaceShortcut("research");
+    setIsSettingsOpen(false);
+    setErrorText("");
+    if (searchReady) {
+      setForceWebSearch(true);
+    }
+    setIsAgentMode(true);
+  }
+
+  function handleOpenCodex() {
+    setActiveShortcutId("codex");
+    setActiveWorkspaceShortcut("codex");
+    setIsSettingsOpen(false);
+    setErrorText("");
+    setIsAgentMode(true);
+  }
+
+  function handleOpenProjects() {
+    setActiveShortcutId("projects");
+    setActiveWorkspaceShortcut("projects");
     setIsSettingsOpen(false);
     setErrorText("");
   }
@@ -1438,6 +1510,15 @@ function ChatShell() {
     abortControllerRef.current?.abort();
   }
 
+  function handleToggleSidebarPane() {
+    if (window.matchMedia("(max-width: 1024px)").matches) {
+      setIsSidebarOpen((previous) => !previous);
+      return;
+    }
+
+    setIsSidebarCollapsed((previous) => !previous);
+  }
+
   function handleThemeModeChange(nextThemeMode: ThemeMode) {
     setThemeMode(nextThemeMode);
     const themeLabel = nextThemeMode[0].toUpperCase() + nextThemeMode.slice(1);
@@ -1447,6 +1528,7 @@ function ChatShell() {
 
   function handleOpenSettings() {
     setIsSettingsOpen(true);
+    setActiveWorkspaceShortcut(null);
     setIsSidebarOpen(false);
     setErrorText("");
   }
@@ -1553,7 +1635,9 @@ function ChatShell() {
   }
 
   return (
-    <main className={`nc-shell ${isDiagnosticsOpen ? "nc-shell--with-panel" : ""}`}>
+    <main
+      className={`nc-shell ${isDiagnosticsOpen ? "nc-shell--with-panel" : ""} ${isSidebarCollapsed ? "nc-shell--sidebar-collapsed" : ""}`}
+    >
 
 
       <Sidebar
@@ -1561,11 +1645,13 @@ function ChatShell() {
         archivedHistoryItems={archivedHistoryItems}
         activeConversationId={activeConversationId}
         isMobileOpen={isSidebarOpen}
+        isCollapsed={isSidebarCollapsed}
         userName={userDisplayName}
         userSubtitle={userSubtitle}
         isWebSearchMode={forceWebSearch}
         isWebSearchAvailable={searchReady}
         isAgentMode={isAgentMode}
+        activeShortcutId={activeShortcutId}
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
         onToggleArchiveConversation={handleToggleArchiveConversation}
@@ -1573,16 +1659,29 @@ function ChatShell() {
         onShareConversation={handleShareConversation}
         onToggleWebSearchMode={() => {
           if (searchReady) {
+            setActiveShortcutId("new");
             setForceWebSearch((value) => !value);
           }
         }}
-        onToggleAgentMode={() => setIsAgentMode((value) => !value)}
+        onToggleAgentMode={() =>
+          setIsAgentMode((value) => {
+            const nextValue = !value;
+            setActiveShortcutId(nextValue ? "codex" : "new");
+            return nextValue;
+          })
+        }
         themeMode={themeMode}
         onThemeModeChange={handleThemeModeChange}
         onOpenSettings={handleOpenSettings}
         onOpenUserSettings={handleOpenUserSettings}
         onSignOut={handleSignOut}
         onCloseMobile={() => setIsSidebarOpen(false)}
+        onToggleCollapse={handleToggleSidebarPane}
+        onOpenImages={handleOpenImages}
+        onOpenApps={handleOpenApps}
+        onOpenResearch={handleOpenResearch}
+        onOpenCodex={handleOpenCodex}
+        onOpenProjects={handleOpenProjects}
       />
 
       {isSidebarOpen ? <button className="nc-sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} /> : null}
@@ -1598,7 +1697,13 @@ function ChatShell() {
             >
               <UiIcon kind="menu" className="nc-ui-icon" />
             </button>
-            <h1>{isSettingsOpen ? "Settings" : activeConversation?.title ?? "New chat"}</h1>
+            <h1>
+              {isSettingsOpen
+                ? "Settings"
+                : activeWorkspaceShortcut
+                  ? SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]
+                  : activeConversation?.title ?? "New chat"}
+            </h1>
           </div>
 
           <div className="nc-topbar__right">
@@ -1724,6 +1829,57 @@ function ChatShell() {
               onUsageStateChange={setTodayUsageSummary}
               onOpenAccountSettings={handleOpenUserSettings}
             />
+          ) : activeWorkspaceShortcut ? (
+            <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
+              <div className="nc-workspace-view__card">
+                <div className="nc-workspace-view__mark" aria-hidden="true">
+                  {activeWorkspaceShortcut === "research" ? (
+                    <UiIcon kind="search" className="nc-workspace-view__icon" />
+                  ) : activeWorkspaceShortcut === "codex" ? (
+                    <UiIcon kind="agent" className="nc-workspace-view__icon" />
+                  ) : (
+                    <UiIcon kind="brand" className="nc-workspace-view__icon" />
+                  )}
+                </div>
+                <p className="nc-workspace-view__eyebrow">Workspace</p>
+                <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
+                <p className="nc-workspace-view__description">
+                  {buildWorkspaceDescription(activeWorkspaceShortcut)}
+                </p>
+
+                <div className="nc-workspace-view__actions">
+                  <button
+                    type="button"
+                    className="nc-empty-chip"
+                    onClick={() => {
+                      setActiveWorkspaceShortcut(null);
+                      textareaRef.current?.focus();
+                    }}
+                  >
+                    Open current chat
+                  </button>
+                  <button
+                    type="button"
+                    className="nc-empty-chip"
+                    onClick={handleNewChat}
+                  >
+                    Start new chat
+                  </button>
+                </div>
+
+                {(activeWorkspaceShortcut === "research" || activeWorkspaceShortcut === "codex") ? (
+                  <p className="nc-workspace-view__hint">
+                    {activeWorkspaceShortcut === "research"
+                      ? searchReady
+                        ? "Deep research has turned on Web search and Agent mode for this chat."
+                        : "Deep research has turned on Agent mode. Web search is currently unavailable."
+                      : "Codex has turned on Agent mode for this chat."}
+                  </p>
+                ) : (
+                  <p className="nc-workspace-view__hint">This section is ready for its dedicated experience next.</p>
+                )}
+              </div>
+            </section>
           ) : currentMessages.length === 0 ? (
             <section className="nc-empty-state" data-testid="empty-state">
               {/* Neural network logo replaces the old circle/arc brand mark */}
