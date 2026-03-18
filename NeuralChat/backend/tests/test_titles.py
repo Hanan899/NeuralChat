@@ -25,7 +25,7 @@ def test_sanitize_conversation_title_limits_length():
 
 def test_post_conversation_title_returns_generated_title():
     app.dependency_overrides[require_user_id] = lambda: "user_123"
-    with patch("app.main.generate_conversation_title", return_value="API Latency Debugging"):
+    with patch("app.main.generate_conversation_title_with_usage", return_value=("API Latency Debugging", {"input_tokens": 0, "output_tokens": 0})):
         response = client.post("/api/conversations/title", json={"prompt": "help me debug my API latency", "reply": ""})
     app.dependency_overrides.pop(require_user_id, None)
 

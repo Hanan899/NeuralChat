@@ -1,21 +1,37 @@
 # NeuralChat Deployment
 
-This document describes the current local setup and Azure deployment model for NeuralChat.
+This guide describes the current local setup and Azure deployment model for NeuralChat as it exists in the codebase today.
 
 ## Runtime Shape
 
-- Frontend runs as a Vite app during development.
-- Backend runs as FastAPI mounted through Azure Functions ASGI.
-- Local backend can run either with Azure Functions Core Tools or directly with Uvicorn.
-- The current hosted backend example is:
+- Frontend: Vite + React application
+- Backend: FastAPI mounted through Azure Functions ASGI
+- Local backend options:
+  - Azure Functions Core Tools
+  - direct Uvicorn
+- Hosted backend example:
   - `https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net`
+
+## Deployment Diagram
+
+```mermaid
+flowchart LR
+  DEV[Developer machine] --> FE[Vite frontend]
+  DEV --> FUNC[Azure Functions publish]
+  FUNC --> API[FastAPI on Azure Functions]
+  API --> AOAI[Azure OpenAI]
+  API --> TAVILY[Tavily]
+  API --> BLOB[Azure Blob Storage]
+  FE --> API
+  FE --> CLERK[Clerk]
+```
 
 ## Local Setup
 
 ### Backend
 
 ```bash
-cd backend
+cd NeuralChat/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -31,36 +47,29 @@ uvicorn app.main:app --reload --port 8000
 ### Frontend
 
 ```bash
-cd frontend
+cd NeuralChat/frontend
 npm install
 npm run dev
 ```
 
-## Environment Configuration
+## Configuration
 
 ### Frontend `.env`
 
-Required values:
-
-- `VITE_CLERK_PUBLISHABLE_KEY`
-- `VITE_API_BASE_URL`
-
-Current example from `.env.example`:
+Current required values from `.env.example`:
 
 ```env
 VITE_CLERK_PUBLISHABLE_KEY=pk_test_your_key_here
 VITE_API_BASE_URL=https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net
 ```
 
-Alternate local backend examples:
-
-- `http://localhost:7071` for `func start`
-- `http://localhost:8000` for `uvicorn`
+Alternate local backend values:
+- `http://localhost:7071` for Azure Functions Core Tools
+- `http://localhost:8000` for Uvicorn
 
 ### Backend `local.settings.json`
 
-Required values from `local.settings.example.json`:
-
+Current required values from `backend/local.settings.example.json`:
 - `FUNCTIONS_WORKER_RUNTIME=python`
 - `AzureWebJobsStorage`
 - `AZURE_STORAGE_CONNECTION_STRING`
@@ -79,172 +88,174 @@ Required values from `local.settings.example.json`:
 - `TAVILY_API_KEY`
 - `MOCK_STREAM_DELAY_MS`
 
-## Azure Function App Settings
+## Azure App Settings
 
-Set the same backend settings in Azure Application Settings.
+Mirror the backend settings above into Azure Function App Application Settings.
 
-At minimum:
-
-- `AzureWebJobsStorage`
-- `AZURE_STORAGE_CONNECTION_STRING`
-- `AZURE_BLOB_MEMORY_CONTAINER`
-- `AZURE_BLOB_PROFILES_CONTAINER`
-- `AZURE_BLOB_UPLOADS_CONTAINER`
-- `AZURE_BLOB_PARSED_CONTAINER`
-- `AZURE_BLOB_AGENTS_CONTAINER`
-- `CLERK_JWKS_URL`
-- `CLERK_ISSUER`
-- `CLERK_AUDIENCE`
-- `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_API_KEY`
-- `AZURE_OPENAI_DEPLOYMENT_NAME`
-- `AZURE_OPENAI_API_VERSION`
-- `TAVILY_API_KEY`
+At minimum, production needs:
+- Azure storage settings
+- blob container names
+- Clerk verification settings
+- Azure OpenAI settings
+- Tavily API key
 - `FUNCTIONS_WORKER_RUNTIME=python`
 
-## CORS
-
-When the frontend runs locally and the backend runs on Azure, the backend must allow the frontend origin.
-
-Typical local origins:
-
-- `http://localhost:5173`
-- `http://127.0.0.1:5173`
-
-Backend CORS is configured through `CORS_ALLOW_ORIGINS` and FastAPI CORS middleware.
-
-If the frontend is later hosted elsewhere, add that hosted origin too.
-
-## Azure Deployment Flow
-
-NeuralChat backend is designed for Azure Functions remote build.
-
-Recommended command:
-
-```bash
-cd backend
-func azure functionapp publish Neural-Chat --build remote --verbose
-```
-
-This is the preferred deployment path because it exposes real build and sync-trigger logs, which are more reliable than relying only on the VS Code Azure pane.
-
-## Flex Consumption Notes
-
-The project is compatible with Azure Functions Flex Consumption deployment and Python remote build.
+## Azure Functions Runtime Notes
 
 Key runtime files:
-
 - `backend/function_app.py`
 - `backend/host.json`
 - `backend/requirements.txt`
 
-## Public and Protected Endpoints to Verify
+Important current `host.json` behavior:
+- `routePrefix` is set to `""`
+- public and protected API routes are mounted directly under `/api/...`
 
-### Public
+## CORS
 
-- `GET /api/health`
-- `GET /api/search/status`
+When the frontend runs locally and the backend is hosted on Azure, allow local Vite origins in backend CORS config.
 
-### Protected
+Typical local origins:
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
 
-- `POST /api/conversations/title`
-- `GET /api/me`
-- `PATCH /api/me/memory`
-- `DELETE /api/me/memory`
-- `POST /api/upload`
-- `GET /api/files?session_id=...`
-- `DELETE /api/files/{filename}?session_id=...`
-- `DELETE /api/conversations/{session_id}`
-- `POST /api/agent/plan`
-- `POST /api/agent/run/{plan_id}`
-- `GET /api/agent/history`
-- `GET /api/agent/history/{plan_id}`
-- `POST /api/chat`
+If you later host the frontend separately, add that origin too.
 
-Protected requests can also include:
+## Recommended Backend Publish Flow
 
-- `X-User-Display-Name`
-- `X-Session-Title`
+NeuralChat is set up for Azure Functions remote build.
 
-## Smoke Test Checklist
+Recommended command:
 
-### Public checks
+```bash
+cd NeuralChat/backend
+func azure functionapp publish Neural-Chat --build remote --verbose
+```
+
+This is more reliable than relying only on the VS Code Azure pane because it exposes the real build, sync-trigger, and health logs.
+
+## Flex Consumption Compatibility
+
+The project is compatible with Azure Functions Flex Consumption deployment.
+
+The current backend structure is valid for Flex Consumption because:
+- `function_app.py` is in the backend root
+- `host.json` is in the backend root
+- `requirements.txt` is in the backend root
+- remote build can install Python dependencies correctly
+
+## Verification Checklist
+
+### Public endpoint checks
 
 ```bash
 curl https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net/api/health
 curl https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net/api/search/status
+curl https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net/api/projects/templates
 ```
 
 ### Browser checks
 
-- sign in through Clerk
+- sign in with Clerk
 - send a normal chat message
-- toggle sidebar `Web search` and verify a search-backed answer
-- upload a file and verify file listing
-- ask a file-grounded question and verify file context is used
+- toggle `Web search` and verify a search-backed answer with sources
+- upload a file and verify file list
+- ask a file-grounded question
 - create an agent plan and run it
-- open `Agents` history panel
-- delete a chat and verify the session disappears from UI and backend cleanup succeeds
+- open `Settings > Cost monitoring`
+- create a project from the projects page
+- open a project workspace and create a project chat
+- delete a chat and verify cleanup behavior
 
-### Authenticated API checks
+### Protected endpoint checks
 
-Use a valid Clerk bearer token to test:
-
+Use a valid Clerk token to test:
 - `/api/me`
 - `/api/chat`
 - `/api/upload`
 - `/api/files`
-- `/api/conversations/{session_id}`
+- `/api/projects`
+- `/api/projects/{project_id}`
+- `/api/projects/{project_id}/chats`
+- `/api/usage/*`
 - `/api/agent/*`
 
-## Clerk Testing Notes
+Protected requests may also include:
+- `X-User-Display-Name`
+- `X-Session-Title`
 
-Default Clerk session tokens are short-lived. For terminal smoke testing, create a Clerk JWT template such as `smoke_test` with a longer lifetime, then request a token with:
+## Operational Workflows
 
-```js
-await window.Clerk.session.getToken({
-  template: "smoke_test",
-  skipCache: true,
-})
+### Deploy backend
+
+```mermaid
+sequenceDiagram
+  participant D as Developer
+  participant CLI as func CLI
+  participant AZ as Azure Functions
+  participant K as Remote Build
+
+  D->>CLI: func azure functionapp publish ... --build remote --verbose
+  CLI->>AZ: Upload source zip
+  AZ->>K: Run Oryx remote build
+  K-->>AZ: Package app
+  AZ-->>CLI: Sync triggers + health check
+  CLI-->>D: Deployment result
+```
+
+### Validate project storage
+
+```mermaid
+flowchart TD
+  A[Create project] --> B[projects/user_segment/index.json updated]
+  B --> C[meta.json created]
+  C --> D[memory.json initialized]
+  D --> E[Create project chat]
+  E --> F[chats/session_segment.json created]
+  F --> G[Project files uploaded under project subtree]
 ```
 
 ## Common Failure Cases
 
 ### `401 Invalid authentication token`
 
-Usually caused by one of:
-
+Usually caused by:
 - expired Clerk token
-- incorrect `CLERK_JWKS_URL`
-- incorrect `CLERK_ISSUER`
-- mismatched audience validation
+- wrong `CLERK_JWKS_URL`
+- wrong `CLERK_ISSUER`
+- audience mismatch
 
-### Browser shows offline or blocked requests
+### `404 Not Found` on newer endpoints
 
-Usually caused by one of:
+Usually caused by:
+- frontend pointing to an older backend deployment
+- backend not redeployed after local route changes
+- stale frontend dev server using older env/bundle state
 
-- incorrect `VITE_API_BASE_URL`
-- missing CORS origin in Azure
-- deployed backend URL mismatch
+### Browser blocked requests
 
-### Azure Functions unhealthy storage errors
+Usually caused by:
+- wrong `VITE_API_BASE_URL`
+- missing CORS origin
+- mismatched hosted backend URL
 
-Usually caused by one of:
+### Azure storage failures
 
+Usually caused by:
 - invalid `AzureWebJobsStorage`
-- invalid storage connection string
-- local emulator issues when using development storage locally
+- invalid `AZURE_STORAGE_CONNECTION_STRING`
+- missing blob containers
+- local emulator issues with development storage
 
-### Delete chat returns `Not Found`
+### Settings cost dashboard shows no data
 
-Usually caused by one of:
-
-- frontend still pointing at an older backend deployment
-- frontend dev server using stale environment state
-- backend route not yet redeployed after local changes
+Usually caused by:
+- no GPT usage yet for that user
+- backend missing `/api/usage/*` deployment
+- bad auth token on usage requests
 
 ## Secret Handling
 
-- Keep live secrets out of docs and screenshots.
-- Do not commit real `local.settings.json` or `.env` values.
-- Rotate any real token or key that is pasted into chat, terminal output, or public logs.
+- Do not commit live `.env` or `local.settings.json` values.
+- Do not paste real tokens or API keys into screenshots or logs.
+- Rotate any secret that appears in terminal output, browser devtools, or public messages.

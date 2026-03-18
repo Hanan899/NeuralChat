@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
+import { ProjectTemplateIcon } from "./ProjectTemplateIcon";
 import type { ConversationSummary, ThemeMode } from "../types";
+import type { Project } from "../types/project";
 
 interface SidebarProps {
   historyItems: ConversationSummary[];
@@ -8,6 +10,8 @@ interface SidebarProps {
   activeConversationId: string;
   isMobileOpen: boolean;
   isCollapsed?: boolean;
+  projects?: Project[];
+  activeProjectId?: string;
   userName: string;
   userSubtitle: string;
   themeMode: ThemeMode;
@@ -34,6 +38,7 @@ interface SidebarProps {
   onOpenResearch?: () => void;
   onOpenCodex?: () => void;
   onOpenProjects?: () => void;
+  onOpenProject?: (projectId: string) => void;
 }
 
 export type ShortcutId = "new" | "images" | "apps" | "research" | "codex" | "projects";
@@ -190,6 +195,8 @@ export function Sidebar({
   activeConversationId,
   isMobileOpen,
   isCollapsed = false,
+  projects = [],
+  activeProjectId,
   userName,
   userSubtitle,
   themeMode,
@@ -215,6 +222,7 @@ export function Sidebar({
   onOpenResearch,
   onOpenCodex,
   onOpenProjects,
+  onOpenProject,
 }: SidebarProps) {
   const userInitials = buildInitials(userName);
   const [openMenuConversationId, setOpenMenuConversationId] = useState<string | null>(null);
@@ -357,6 +365,47 @@ export function Sidebar({
     );
   }
 
+  function renderProjectSubitems() {
+    if (isCollapsed || projects.length === 0) {
+      return null;
+    }
+
+    const visibleProjects = projects.slice(0, 3);
+    return (
+      <div className="nc-project-subnav">
+        {visibleProjects.map((project) => (
+          <button
+            key={project.project_id}
+            type="button"
+            className={`nc-project-subnav__item ${activeProjectId === project.project_id ? "nc-project-subnav__item--active" : ""}`}
+            aria-current={activeProjectId === project.project_id ? "page" : undefined}
+            onClick={() => {
+              onOpenProject?.(project.project_id);
+              onCloseMobile();
+            }}
+            title={project.name}
+          >
+            <ProjectTemplateIcon template={project.template} color={project.color} className="nc-project-subnav__icon" />
+            <span className="nc-project-subnav__label">{project.name}</span>
+          </button>
+        ))}
+
+        {projects.length > 3 ? (
+          <button
+            type="button"
+            className="nc-project-subnav__more"
+            onClick={() => {
+              onOpenProjects?.();
+              onCloseMobile();
+            }}
+          >
+            See all projects →
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <aside
       className={`nc-sidebar ${isMobileOpen ? "nc-sidebar--open" : ""} ${isCollapsed ? "nc-sidebar--collapsed" : ""}`}
@@ -448,6 +497,8 @@ export function Sidebar({
                   </span>
                 </button>
               ) : null}
+
+              {shortcut.id === "projects" ? renderProjectSubitems() : null}
             </div>
           ))}
         </nav>

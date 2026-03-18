@@ -78,6 +78,27 @@ from app.services.file_handler import (
     validate_file,
 )
 from app.services.memory import build_memory_prompt, clear_profile, load_profile, process_memory_update, save_profile, upsert_profile_key
+from app.services.projects import (
+    append_project_chat_message,
+    build_project_system_prompt,
+    create_project,
+    create_project_chat,
+    delete_all_project_files,
+    delete_project,
+    delete_project_chat,
+    delete_project_file,
+    get_all_projects,
+    get_project,
+    get_project_chats,
+    get_project_file_context_chunks,
+    get_project_templates,
+    list_project_files,
+    load_project_chat_messages,
+    load_project_memory,
+    process_project_memory_update,
+    process_project_upload,
+    update_project,
+)
 from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web
 from app.services.storage import delete_conversation_session, init_store
 from app.services.titles import generate_conversation_title, generate_conversation_title_with_usage
@@ -123,6 +144,204 @@ def get_health() -> dict[str, str]:
 @app.get("/api/search/status")
 def get_search_status() -> dict[str, bool]:
     return {"search_enabled": bool(os.getenv("TAVILY_API_KEY", "").strip())}
+
+
+@app.get("/api/projects/templates")
+def get_project_templates_endpoint() -> dict[str, Any]:
+    return get_project_templates()
+
+
+@app.get("/api/projects")
+async def get_projects_endpoint(
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, list[dict[str, Any]]]:
+    try:
+        projects = await asyncio.to_thread(get_all_projects, user_id, naming["display_name"])
+    except Exception as project_error:
+        LOGGER.exception("Project list load failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load projects: {project_error}",
+        ) from project_error
+    return {"projects": projects}
+
+
+@app.post("/api/projects")
+async def post_project(
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    project_name = payload.get("name", "")
+    template = payload.get("template", "")
+    if not isinstance(project_name, str) or not project_name.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="name is required.")
+    if not isinstance(template, str) or not template.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="template is required.")
+
+    try:
+        project = await asyncio.to_thread(
+            create_project,
+            user_id,
+            project_name,
+            template,
+            payload.get("description", ""),
+            payload.get("emoji", ""),
+            payload.get("color", ""),
+            payload.get("custom_system_prompt", ""),
+            naming["display_name"],
+        )
+    except ValueError as validation_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(validation_error)) from validation_error
+    except Exception as project_error:
+        LOGGER.exception("Project creation failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to create project: {project_error}",
+        ) from project_error
+    return project
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project_endpoint(
+    project_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    return project
+
+
+@app.get("/api/projects/{project_id}/memory")
+async def get_project_memory_endpoint(
+    project_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    memory = await asyncio.to_thread(load_project_memory, user_id, project_id, naming["display_name"])
+    return {"memory": memory}
+
+
+@app.patch("/api/projects/{project_id}")
+async def patch_project(
+    project_id: str,
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    try:
+        project = await asyncio.to_thread(update_project, user_id, project_id, payload, naming["display_name"])
+    except ValueError as validation_error:
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in str(validation_error).lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(validation_error)) from validation_error
+    except Exception as project_error:
+        LOGGER.exception("Project update failed for user=%s project=%s", user_id, project_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to update project: {project_error}",
+        ) from project_error
+    return project
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project_endpoint(
+    project_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, str]:
+    try:
+        await asyncio.to_thread(delete_project, user_id, project_id, naming["display_name"])
+    except ValueError as validation_error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(validation_error)) from validation_error
+    except Exception as project_error:
+        LOGGER.exception("Project delete failed for user=%s project=%s", user_id, project_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to delete project: {project_error}",
+        ) from project_error
+    return {"message": "Project deleted"}
+
+
+@app.get("/api/projects/{project_id}/chats")
+async def get_project_chats_endpoint(
+    project_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, list[dict[str, Any]]]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    chats = await asyncio.to_thread(get_project_chats, user_id, project_id, naming["display_name"])
+    return {"chats": chats}
+
+
+@app.get("/api/projects/{project_id}/chats/{session_id}")
+async def get_project_chat_endpoint(
+    project_id: str,
+    session_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, list[dict[str, Any]]]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    messages = await asyncio.to_thread(
+        load_project_chat_messages,
+        user_id,
+        project_id,
+        session_id,
+        naming["display_name"],
+        naming["session_title"],
+    )
+    return {"messages": messages}
+
+
+@app.post("/api/projects/{project_id}/chats")
+async def post_project_chat(
+    project_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, str]:
+    try:
+        session_id = await asyncio.to_thread(create_project_chat, user_id, project_id, naming["display_name"])
+    except ValueError as validation_error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(validation_error)) from validation_error
+    except Exception as project_error:
+        LOGGER.exception("Project chat creation failed for user=%s project=%s", user_id, project_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to create project chat: {project_error}",
+        ) from project_error
+    return {"session_id": session_id}
+
+
+@app.delete("/api/projects/{project_id}/chats/{session_id}")
+async def delete_project_chat_endpoint(
+    project_id: str,
+    session_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    try:
+        deleted = await asyncio.to_thread(delete_project_chat, user_id, project_id, session_id, naming["display_name"])
+        agent_delete_counts = await asyncio.to_thread(delete_session_agent_artifacts, user_id, session_id)
+    except Exception as delete_error:
+        LOGGER.exception("Project chat delete failed for user=%s project=%s session=%s", user_id, project_id, session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to delete project chat: {delete_error}",
+        ) from delete_error
+    return {"message": "Project chat deleted successfully", "conversation_deleted": deleted, **agent_delete_counts}
 
 
 @app.post("/api/conversations/title")
@@ -265,13 +484,16 @@ def delete_memory(
 
 @app.post("/api/upload")
 async def post_upload(
-    session_id: str = Form(...),
+    session_id: str | None = Form(default=None),
+    project_id: str | None = Form(default=None),
     file: UploadFile = File(...),
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
-    if not isinstance(session_id, str) or not session_id.strip():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+    clean_session_id = session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
+    clean_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
+    if not clean_session_id and not clean_project_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id or project_id is required.")
 
     filename = file.filename or ""
     file_bytes = await file.read()
@@ -283,68 +505,87 @@ async def post_upload(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(validation_error)) from validation_error
 
     try:
-        blob_path = await asyncio.to_thread(
-            upload_raw_file,
-            user_id,
-            session_id,
-            filename,
-            file_bytes,
-            naming["display_name"],
-            naming["session_title"],
-        )
-        existing_chunks = await asyncio.to_thread(
-            load_parsed_chunks,
-            user_id,
-            session_id,
-            filename,
-            naming["display_name"],
-            naming["session_title"],
-        )
-        if existing_chunks is not None:
-            chunk_count = len(existing_chunks)
-        else:
-            parsed_text = await asyncio.to_thread(parse_file, filename, file_bytes)
-            parsed_chunks = await asyncio.to_thread(chunk_text, parsed_text)
-            await asyncio.to_thread(
-                save_parsed_chunks,
+        if clean_project_id:
+            upload_result = await asyncio.to_thread(
+                process_project_upload,
                 user_id,
-                session_id,
+                clean_project_id,
                 filename,
-                parsed_chunks,
+                file_bytes,
+                naming["display_name"],
+            )
+        else:
+            blob_path = await asyncio.to_thread(
+                upload_raw_file,
+                user_id,
+                clean_session_id,
+                filename,
+                file_bytes,
                 naming["display_name"],
                 naming["session_title"],
             )
-            chunk_count = len(parsed_chunks)
+            existing_chunks = await asyncio.to_thread(
+                load_parsed_chunks,
+                user_id,
+                clean_session_id,
+                filename,
+                naming["display_name"],
+                naming["session_title"],
+            )
+            if existing_chunks is not None:
+                chunk_count = len(existing_chunks)
+            else:
+                parsed_text = await asyncio.to_thread(parse_file, filename, file_bytes)
+                parsed_chunks = await asyncio.to_thread(chunk_text, parsed_text)
+                await asyncio.to_thread(
+                    save_parsed_chunks,
+                    user_id,
+                    clean_session_id,
+                    filename,
+                    parsed_chunks,
+                    naming["display_name"],
+                    naming["session_title"],
+                )
+                chunk_count = len(parsed_chunks)
+            upload_result = {
+                "filename": Path(filename).name,
+                "blob_path": blob_path,
+                "chunk_count": chunk_count,
+                "message": "File uploaded successfully",
+            }
     except HTTPException:
         raise
+    except ValueError as validation_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(validation_error)) from validation_error
     except Exception as upload_error:
-        LOGGER.exception("File upload failed for user=%s session=%s file=%s", user_id, session_id, filename)
+        LOGGER.exception("File upload failed for user=%s session=%s project=%s file=%s", user_id, clean_session_id, clean_project_id, filename)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"File upload failed: {upload_error}",
         ) from upload_error
 
-    return {
-        "filename": Path(filename).name,
-        "blob_path": blob_path,
-        "chunk_count": chunk_count,
-        "message": "File uploaded successfully",
-    }
+    return upload_result
 
 
 @app.get("/api/files")
 async def get_files(
-    session_id: str = Query(...),
+    session_id: str | None = Query(default=None),
+    project_id: str | None = Query(default=None),
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, list[dict[str, str]]]:
-    if not isinstance(session_id, str) or not session_id.strip():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+    clean_session_id = session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
+    clean_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
+    if not clean_session_id and not clean_project_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id or project_id is required.")
 
     try:
-        files = await asyncio.to_thread(list_user_files, user_id, session_id, naming["display_name"], naming["session_title"])
+        if clean_project_id:
+            files = await asyncio.to_thread(list_project_files, user_id, clean_project_id, naming["display_name"])
+        else:
+            files = await asyncio.to_thread(list_user_files, user_id, clean_session_id, naming["display_name"], naming["session_title"])
     except Exception as list_error:
-        LOGGER.exception("File list failed for user=%s session=%s", user_id, session_id)
+        LOGGER.exception("File list failed for user=%s session=%s project=%s", user_id, clean_session_id, clean_project_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to list files: {list_error}",
@@ -355,19 +596,25 @@ async def get_files(
 @app.delete("/api/files/{filename}")
 async def delete_file(
     filename: str,
-    session_id: str = Query(...),
+    session_id: str | None = Query(default=None),
+    project_id: str | None = Query(default=None),
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
-    if not isinstance(session_id, str) or not session_id.strip():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+    clean_session_id = session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
+    clean_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
+    if not clean_session_id and not clean_project_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id or project_id is required.")
 
     try:
-        await asyncio.to_thread(delete_user_file, user_id, session_id, filename, naming["display_name"], naming["session_title"])
+        if clean_project_id:
+            await asyncio.to_thread(delete_project_file, user_id, clean_project_id, filename, naming["display_name"])
+        else:
+            await asyncio.to_thread(delete_user_file, user_id, clean_session_id, filename, naming["display_name"], naming["session_title"])
     except ValueError as not_found_error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(not_found_error)) from not_found_error
     except Exception as delete_error:
-        LOGGER.exception("File delete failed for user=%s session=%s file=%s", user_id, session_id, filename)
+        LOGGER.exception("File delete failed for user=%s session=%s project=%s file=%s", user_id, clean_session_id, clean_project_id, filename)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to delete file: {delete_error}",
@@ -380,35 +627,41 @@ async def delete_file(
 @app.delete("/api/conversations/{session_id}")
 async def delete_conversation(
     session_id: str,
+    project_id: str | None = Query(default=None),
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
     if not isinstance(session_id, str) or not session_id.strip():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+    clean_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
 
     try:
-        conversation_deleted = await asyncio.to_thread(
-            delete_conversation_session,
-            STORE,
-            user_id,
-            session_id,
-            naming["display_name"],
-            naming["session_title"],
-        )
-        file_delete_counts = await asyncio.to_thread(
-            delete_session_files,
-            user_id,
-            session_id,
-            naming["display_name"],
-            naming["session_title"],
-        )
+        if clean_project_id:
+            conversation_deleted = await asyncio.to_thread(delete_project_chat, user_id, clean_project_id, session_id, naming["display_name"])
+            file_delete_counts = {"uploads_deleted": 0, "parsed_deleted": 0}
+        else:
+            conversation_deleted = await asyncio.to_thread(
+                delete_conversation_session,
+                STORE,
+                user_id,
+                session_id,
+                naming["display_name"],
+                naming["session_title"],
+            )
+            file_delete_counts = await asyncio.to_thread(
+                delete_session_files,
+                user_id,
+                session_id,
+                naming["display_name"],
+                naming["session_title"],
+            )
         agent_delete_counts = await asyncio.to_thread(
             delete_session_agent_artifacts,
             user_id,
             session_id,
         )
     except Exception as delete_error:
-        LOGGER.exception("Session delete failed for user=%s session=%s", user_id, session_id)
+        LOGGER.exception("Session delete failed for user=%s session=%s project=%s", user_id, session_id, clean_project_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to delete conversation session: {delete_error}",
@@ -654,16 +907,55 @@ async def post_chat(
     request = validate_chat_request(payload)
     request_id = str(uuid.uuid4())
     start = time.perf_counter()
+    project_data: dict[str, Any] | None = None
+    history_override: list[dict[str, Any]] | None = None
 
-    save_user_message(
-        request=request,
-        request_id=request_id,
-        store=STORE,
-        user_id=user_id,
-        display_name=naming["display_name"],
-        session_title=naming["session_title"],
-    )
-    memory_prompt = build_memory_prompt(user_id=user_id, display_name=naming["display_name"])
+    if request["project_id"]:
+        project_data = await asyncio.to_thread(get_project, user_id, request["project_id"], naming["display_name"])
+        if not project_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+        history_override = await asyncio.to_thread(
+            load_project_chat_messages,
+            user_id,
+            request["project_id"],
+            request["session_id"],
+            naming["display_name"],
+            naming["session_title"],
+        )
+        await asyncio.to_thread(
+            append_project_chat_message,
+            user_id,
+            request["project_id"],
+            request["session_id"],
+            {
+                "role": "user",
+                "content": request["message"],
+                "model": request["model"],
+                "request_id": request_id,
+                "user_id": user_id,
+                "display_name": naming["display_name"] or user_id,
+                "session_id": request["session_id"],
+                "session_title": naming["session_title"] or request["session_id"],
+                "project_id": request["project_id"],
+                "project_name": project_data.get("name"),
+                "created_at": datetime.now(UTC).isoformat(),
+            },
+            naming["display_name"],
+            naming["session_title"],
+        )
+        memory_prompt = await asyncio.to_thread(build_project_system_prompt, user_id, request["project_id"], naming["display_name"])
+    else:
+        save_user_message(
+            request=request,
+            request_id=request_id,
+            store=STORE,
+            user_id=user_id,
+            display_name=naming["display_name"],
+            session_title=naming["session_title"],
+        )
+        memory_prompt = build_memory_prompt(user_id=user_id, display_name=naming["display_name"])
+
     search_used = False
     sources: list[dict[str, str]] = []
     search_prompt = ""
@@ -698,29 +990,38 @@ async def post_chat(
             search_prompt = format_search_context(sources)
 
     try:
-        all_session_chunks: list[str] = []
-        session_files = await asyncio.to_thread(
-            list_user_files,
-            user_id,
-            request["session_id"],
-            naming["display_name"],
-            naming["session_title"],
-        )
-        for session_file in session_files:
-            file_name = str(session_file.get("filename", "")).strip()
-            if not file_name:
-                continue
-            parsed_chunks = await asyncio.to_thread(
-                load_parsed_chunks,
+        if request["project_id"]:
+            relevant_chunks = await asyncio.to_thread(
+                get_project_file_context_chunks,
+                user_id,
+                request["project_id"],
+                request["message"],
+                naming["display_name"],
+            )
+        else:
+            all_session_chunks: list[str] = []
+            session_files = await asyncio.to_thread(
+                list_user_files,
                 user_id,
                 request["session_id"],
-                file_name,
                 naming["display_name"],
                 naming["session_title"],
             )
-            if parsed_chunks:
-                all_session_chunks.extend(parsed_chunks)
-        relevant_chunks = await asyncio.to_thread(get_relevant_chunks, all_session_chunks, request["message"], 3)
+            for session_file in session_files:
+                file_name = str(session_file.get("filename", "")).strip()
+                if not file_name:
+                    continue
+                parsed_chunks = await asyncio.to_thread(
+                    load_parsed_chunks,
+                    user_id,
+                    request["session_id"],
+                    file_name,
+                    naming["display_name"],
+                    naming["session_title"],
+                )
+                if parsed_chunks:
+                    all_session_chunks.extend(parsed_chunks)
+            relevant_chunks = await asyncio.to_thread(get_relevant_chunks, all_session_chunks, request["message"], 3)
         if relevant_chunks:
             file_context_used = True
             file_prompt = "Relevant content from uploaded files:\n" + "\n\n".join(relevant_chunks)
@@ -754,26 +1055,57 @@ async def post_chat(
                 memory_prompt=memory_prompt,
                 search_prompt=search_prompt,
                 file_prompt=file_prompt,
+                history_override=history_override,
             )
         response_ms = int((time.perf_counter() - start) * 1000)
         tokens_emitted = len(tokenize_text(reply))
-        save_assistant_message(
-            session_id=request["session_id"],
-            model=request["model"],
-            request_id=request_id,
-            reply=reply,
-            store=STORE,
-            user_id=user_id,
-            display_name=naming["display_name"],
-            session_title=naming["session_title"],
-            status="completed",
-            response_ms=response_ms,
-            first_token_ms=response_ms,
-            tokens_emitted=tokens_emitted,
-            search_used=search_used,
-            file_context_used=file_context_used,
-            sources=sources,
-        )
+        if request["project_id"]:
+            await asyncio.to_thread(
+                append_project_chat_message,
+                user_id,
+                request["project_id"],
+                request["session_id"],
+                {
+                    "role": "assistant",
+                    "content": reply,
+                    "model": request["model"],
+                    "request_id": request_id,
+                    "status": "completed",
+                    "user_id": user_id,
+                    "display_name": naming["display_name"] or user_id,
+                    "session_id": request["session_id"],
+                    "session_title": naming["session_title"] or request["session_id"],
+                    "project_id": request["project_id"],
+                    "project_name": project_data.get("name") if project_data else None,
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "response_ms": response_ms,
+                    "first_token_ms": response_ms,
+                    "tokens_emitted": tokens_emitted,
+                    "search_used": search_used,
+                    "file_context_used": file_context_used,
+                    "sources": sources,
+                },
+                naming["display_name"],
+                naming["session_title"],
+            )
+        else:
+            save_assistant_message(
+                session_id=request["session_id"],
+                model=request["model"],
+                request_id=request_id,
+                reply=reply,
+                store=STORE,
+                user_id=user_id,
+                display_name=naming["display_name"],
+                session_title=naming["session_title"],
+                status="completed",
+                response_ms=response_ms,
+                first_token_ms=response_ms,
+                tokens_emitted=tokens_emitted,
+                search_used=search_used,
+                file_context_used=file_context_used,
+                sources=sources,
+            )
         response_payload = build_chat_json_response(
             request_id=request_id,
             reply=reply,
@@ -783,14 +1115,26 @@ async def post_chat(
             file_context_used=file_context_used,
             sources=sources,
         )
-        asyncio.create_task(
-            process_memory_update(
-                user_id=user_id,
-                message=request["message"],
-                reply=reply,
-                display_name=naming["display_name"],
+        if request["project_id"] and project_data:
+            asyncio.create_task(
+                process_project_memory_update(
+                    user_id=user_id,
+                    project_id=request["project_id"],
+                    template_key=str(project_data.get("template", "custom")),
+                    message=request["message"],
+                    reply=reply,
+                    display_name=naming["display_name"],
+                )
             )
-        )
+        else:
+            asyncio.create_task(
+                process_memory_update(
+                    user_id=user_id,
+                    message=request["message"],
+                    reply=reply,
+                    display_name=naming["display_name"],
+                )
+            )
         if usage["input_tokens"] or usage["output_tokens"]:
             asyncio.create_task(
                 asyncio.to_thread(
@@ -829,6 +1173,7 @@ async def post_chat(
                     memory_prompt=memory_prompt,
                     search_prompt=search_prompt,
                     file_prompt=file_prompt,
+                    history_override=history_override,
                 )
                 async for event in token_stream:
                     event_type = str(event.get("type", "")).strip()
@@ -894,14 +1239,26 @@ async def post_chat(
             resolved_first_token_ms = first_token_ms if first_token_ms is not None else response_ms_final
 
             if final_reply:
-                asyncio.create_task(
-                    process_memory_update(
-                        user_id=user_id,
-                        message=request["message"],
-                        reply=final_reply,
-                        display_name=naming["display_name"],
+                if request["project_id"] and project_data:
+                    asyncio.create_task(
+                        process_project_memory_update(
+                            user_id=user_id,
+                            project_id=request["project_id"],
+                            template_key=str(project_data.get("template", "custom")),
+                            message=request["message"],
+                            reply=final_reply,
+                            display_name=naming["display_name"],
+                        )
                     )
-                )
+                else:
+                    asyncio.create_task(
+                        process_memory_update(
+                            user_id=user_id,
+                            message=request["message"],
+                            reply=final_reply,
+                            display_name=naming["display_name"],
+                        )
+                    )
             if chat_usage["input_tokens"] or chat_usage["output_tokens"]:
                 asyncio.create_task(
                     asyncio.to_thread(
@@ -915,23 +1272,53 @@ async def post_chat(
                 )
 
             if stream_status == "completed" or final_reply:
-                save_assistant_message(
-                    session_id=request["session_id"],
-                    model=request["model"],
-                    request_id=request_id,
-                    reply=final_reply,
-                    store=STORE,
-                    user_id=user_id,
-                    display_name=naming["display_name"],
-                    session_title=naming["session_title"],
-                    status=stream_status,
-                    response_ms=response_ms_final,
-                    first_token_ms=resolved_first_token_ms,
-                    tokens_emitted=tokens_emitted,
-                    search_used=search_used,
-                    file_context_used=file_context_used,
-                    sources=sources,
-                )
+                if request["project_id"]:
+                    await asyncio.to_thread(
+                        append_project_chat_message,
+                        user_id,
+                        request["project_id"],
+                        request["session_id"],
+                        {
+                            "role": "assistant",
+                            "content": final_reply,
+                            "model": request["model"],
+                            "request_id": request_id,
+                            "status": stream_status,
+                            "user_id": user_id,
+                            "display_name": naming["display_name"] or user_id,
+                            "session_id": request["session_id"],
+                            "session_title": naming["session_title"] or request["session_id"],
+                            "project_id": request["project_id"],
+                            "project_name": project_data.get("name") if project_data else None,
+                            "created_at": datetime.now(UTC).isoformat(),
+                            "response_ms": response_ms_final,
+                            "first_token_ms": resolved_first_token_ms,
+                            "tokens_emitted": tokens_emitted,
+                            "search_used": search_used,
+                            "file_context_used": file_context_used,
+                            "sources": sources,
+                        },
+                        naming["display_name"],
+                        naming["session_title"],
+                    )
+                else:
+                    save_assistant_message(
+                        session_id=request["session_id"],
+                        model=request["model"],
+                        request_id=request_id,
+                        reply=final_reply,
+                        store=STORE,
+                        user_id=user_id,
+                        display_name=naming["display_name"],
+                        session_title=naming["session_title"],
+                        status=stream_status,
+                        response_ms=response_ms_final,
+                        first_token_ms=resolved_first_token_ms,
+                        tokens_emitted=tokens_emitted,
+                        search_used=search_used,
+                        file_context_used=file_context_used,
+                        sources=sources,
+                    )
 
     return StreamingResponse(
         stream(),

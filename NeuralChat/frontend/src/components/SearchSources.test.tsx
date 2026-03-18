@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MessageBubble } from "./MessageBubble";
@@ -47,23 +48,27 @@ const {
   getAgentTaskMock: vi.fn().mockResolvedValue({ plan: { plan_id: "plan-1", goal: "Goal", steps: [] }, log: [] }),
 }));
 
-vi.mock("../api", () => ({
-  checkHealth: vi.fn().mockResolvedValue(true),
-  checkSearchStatus: checkSearchStatusMock,
-  streamChat: streamChatMock,
-  getFiles: getFilesMock,
-  deleteFile: deleteFileMock,
-  deleteConversationSession: vi.fn().mockResolvedValue({
-    message: "Conversation deleted successfully",
-    conversation_deleted: true,
-    uploads_deleted: 0,
-    parsed_deleted: 0,
-    plans_deleted: 0,
-    logs_deleted: 0,
-  }),
-  uploadFileWithProgress: uploadFileWithProgressMock,
-  generateConversationTitle: generateConversationTitleMock
-}));
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    checkHealth: vi.fn().mockResolvedValue(true),
+    checkSearchStatus: checkSearchStatusMock,
+    streamChat: streamChatMock,
+    getFiles: getFilesMock,
+    deleteFile: deleteFileMock,
+    deleteConversationSession: vi.fn().mockResolvedValue({
+      message: "Conversation deleted successfully",
+      conversation_deleted: true,
+      uploads_deleted: 0,
+      parsed_deleted: 0,
+      plans_deleted: 0,
+      logs_deleted: 0,
+    }),
+    uploadFileWithProgress: uploadFileWithProgressMock,
+    generateConversationTitle: generateConversationTitleMock
+  };
+});
 
 vi.mock("../api/agent", () => ({
   createAgentPlan: createAgentPlanMock,
@@ -98,6 +103,14 @@ vi.mock("@clerk/clerk-react", () => ({
 }));
 
 import App from "../App";
+
+function renderApp() {
+  return render(
+    <MemoryRouter>
+      <App />
+    </MemoryRouter>
+  );
+}
 
 describe("SearchSources and MessageBubble", () => {
   const sources = [
@@ -318,7 +331,7 @@ describe("SearchSources and MessageBubble", () => {
 
   it("test_search_status_badge_green_when_enabled", async () => {
     checkSearchStatusMock.mockResolvedValue(true);
-    render(<App />);
+    renderApp();
 
     const webSearchToggle = await screen.findByRole("button", { name: "Toggle Web Search Mode" });
     expect(webSearchToggle).toBeInTheDocument();
@@ -328,7 +341,7 @@ describe("SearchSources and MessageBubble", () => {
 
   it("test_search_status_badge_grey_when_disabled", async () => {
     checkSearchStatusMock.mockResolvedValue(false);
-    render(<App />);
+    renderApp();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Toggle Web Search Mode" })).toBeInTheDocument();

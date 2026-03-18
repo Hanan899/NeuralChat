@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -57,23 +58,27 @@ vi.mock("@clerk/clerk-react", () => ({
   useClerk: () => ({ signOut: vi.fn(), openUserProfile: vi.fn() }),
 }));
 
-vi.mock("../api", () => ({
-  checkHealth: vi.fn().mockResolvedValue(true),
-  checkSearchStatus: vi.fn().mockResolvedValue(true),
-  generateConversationTitle: generateConversationTitleMock,
-  streamChat: vi.fn().mockResolvedValue({ requestId: "req-1", responseMs: 10, firstTokenMs: 5, tokensEmitted: 1, searchUsed: false, fileContextUsed: false, sources: [] }),
-  getFiles: vi.fn().mockResolvedValue({ files: [] }),
-  deleteFile: vi.fn().mockResolvedValue({ message: "deleted" }),
-  deleteConversationSession: vi.fn().mockResolvedValue({
-    message: "Conversation deleted successfully",
-    conversation_deleted: true,
-    uploads_deleted: 0,
-    parsed_deleted: 0,
-    plans_deleted: 0,
-    logs_deleted: 0,
-  }),
-  uploadFileWithProgress: vi.fn().mockResolvedValue({ filename: "doc.txt", blob_path: "path", chunk_count: 1, message: "ok" }),
-}));
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    checkHealth: vi.fn().mockResolvedValue(true),
+    checkSearchStatus: vi.fn().mockResolvedValue(true),
+    generateConversationTitle: generateConversationTitleMock,
+    streamChat: vi.fn().mockResolvedValue({ requestId: "req-1", responseMs: 10, firstTokenMs: 5, tokensEmitted: 1, searchUsed: false, fileContextUsed: false, sources: [] }),
+    getFiles: vi.fn().mockResolvedValue({ files: [] }),
+    deleteFile: vi.fn().mockResolvedValue({ message: "deleted" }),
+    deleteConversationSession: vi.fn().mockResolvedValue({
+      message: "Conversation deleted successfully",
+      conversation_deleted: true,
+      uploads_deleted: 0,
+      parsed_deleted: 0,
+      plans_deleted: 0,
+      logs_deleted: 0,
+    }),
+    uploadFileWithProgress: vi.fn().mockResolvedValue({ filename: "doc.txt", blob_path: "path", chunk_count: 1, message: "ok" }),
+  };
+});
 
 vi.mock("../api/agent", () => ({
   createAgentPlan: createAgentPlanMock,
@@ -83,6 +88,14 @@ vi.mock("../api/agent", () => ({
 }));
 
 import App from "../App";
+
+function renderApp() {
+  return render(
+    <MemoryRouter>
+      <App />
+    </MemoryRouter>
+  );
+}
 
 describe("Agent mode UI", () => {
   beforeEach(() => {
@@ -99,13 +112,13 @@ describe("Agent mode UI", () => {
   });
 
   it("test_agent_toggle_switches_to_agent_mode", async () => {
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
     expect(screen.getByPlaceholderText("Describe a goal for the agent...")).toBeInTheDocument();
   });
 
   it("test_agent_toggle_switches_back_to_normal_chat", async () => {
-    render(<App />);
+    renderApp();
     const toggle = screen.getByRole("button", { name: "Toggle Agent Mode" });
     await userEvent.click(toggle);
     await userEvent.click(toggle);
@@ -113,7 +126,7 @@ describe("Agent mode UI", () => {
   });
 
   it("test_agent_progress_shows_plan_steps_on_load", async () => {
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research top Python AI libraries");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -124,7 +137,7 @@ describe("Agent mode UI", () => {
   });
 
   it("test_agent_progress_step_status_updates_correctly", async () => {
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -140,7 +153,7 @@ describe("Agent mode UI", () => {
       callbacks.onDone?.({ plan_id: "plan-1", steps_completed: 1 });
     });
 
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -150,7 +163,7 @@ describe("Agent mode UI", () => {
   });
 
   it("test_agent_progress_streams_final_summary", async () => {
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -167,7 +180,7 @@ describe("Agent mode UI", () => {
       callbacks.onDone?.({ plan_id: "plan-1", steps_completed: 1 });
     });
 
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -177,7 +190,7 @@ describe("Agent mode UI", () => {
   });
 
   it("test_agent_history_panel_opens_on_robot_icon_click", async () => {
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Open agent history" }));
     expect(await screen.findByTestId("agent-history-panel")).toBeInTheDocument();
   });
@@ -188,7 +201,7 @@ describe("Agent mode UI", () => {
       { plan_id: "2", goal: "Goal two", created_at: "2026-03-12T00:00:00Z", steps_count: 3 },
     ]);
 
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Open agent history" }));
 
     expect(await screen.findByText("Goal one")).toBeInTheDocument();
@@ -202,7 +215,7 @@ describe("Agent mode UI", () => {
       log: [{ step_number: 1, description: "Search", tool: "web_search", tool_input: "AI", result: "done", status: "done", error: null }],
     });
 
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Open agent history" }));
     await userEvent.click(await screen.findByRole("button", { name: /Goal one/i }));
 
@@ -211,7 +224,7 @@ describe("Agent mode UI", () => {
 
   it("test_agent_history_shows_empty_state", async () => {
     getAgentHistoryMock.mockResolvedValueOnce([]);
-    render(<App />);
+    renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Open agent history" }));
     expect(await screen.findByText(/No agent tasks yet/i)).toBeInTheDocument();
   });

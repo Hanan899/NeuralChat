@@ -1,97 +1,115 @@
 # NeuralChat Roadmap
 
-This roadmap reflects the current shipped project state and the next sensible improvements based on the existing codebase.
+This roadmap reflects the current shipped state and the next practical improvements based on the codebase as it exists now.
 
-## Completed Foundations
+## Shipped Foundations
 
-### Core chat
+### Core app
 
 - GPT-5 chat through Azure OpenAI
 - NDJSON streaming responses
+- React + TypeScript frontend shell
 - Azure Functions-hosted FastAPI backend
-- Vite + React + TypeScript frontend shell
+- Browser-routed workspace views
 
 ### Auth and persistence
 
 - Clerk authentication
-- JWT verification in the backend
-- Azure Blob persistence for chats and profile data
-- Readable Blob naming with stable ids
-- Real backend chat deletion for session-scoped cleanup
+- JWT verification in backend
+- Azure Blob persistence across chats, memory, files, agents, projects, and usage
+- readable blob naming with stable ids
+- real backend chat deletion
 
-### Deep Memory
+### Deep memory
 
-- user profile extraction from chat exchanges
-- prompt injection from saved memory
-- memory read, update, and clear endpoints
+- global profile memory extraction
+- prompt injection from stored memory
+- memory read / update / clear APIs
 
 ### Web search
 
 - Tavily integration
 - Blob-backed search cache
 - sidebar `Web search` control
-- source metadata returned with chat responses
+- source metadata returned with answers
 
 ### File retrieval
 
-- upload validation and Blob persistence
-- parsed chunk storage and reuse
-- session-scoped file listing and delete
-- file-context injection into chat answers
+- upload validation and persistence
+- parsed chunk caching and reuse
+- file-context injection into prompts
+- normal session files and project files both supported
 
 ### Agent Mode
 
-- LangChain + LangGraph orchestration
-- plan-first UX
+- plan-first workflow
 - explicit run step
-- streamed progress and final summary
-- stored plan and execution log history
-- loop guard, step cap, and timeout safety rules
+- streamed progress and summary
+- stored plan and log history
+- step cap, loop guard, and timeout rules
 
-### Conversation naming
+### Cost monitoring
 
-- local summary title generation in the frontend
-- backend title refinement endpoint
-- readable session naming reused in Blob storage
+- per-user usage logging for GPT calls
+- daily usage JSON in Blob
+- usage summary APIs
+- editable daily budget limit
+- settings dashboard and chat warning banner
+
+### Projects
+
+- project templates
+- project CRUD
+- project-scoped chats
+- project-scoped memory
+- project-scoped files
+- routed projects page and project workspace
+- sidebar project sub-items
 
 ## Next Recommended Work
 
-### 1. Retrieval quality upgrade
+### 1. Project workspace polish
 
-- replace keyword-only chunk selection with embeddings-based ranking
-- keep a simple fallback path for resilience
-- expose better retrieval debug information in the UI
+- richer project chat cards and project overview surfaces
+- stronger project file actions and previews
+- inline rename / metadata editing in the workspace header
+- better project-specific empty states and onboarding hints
 
-### 2. Stronger file attribution
+### 2. Retrieval quality upgrade
 
-- track exactly which file and chunk were used in each answer
-- return file citations in response metadata
-- render file citations in assistant responses
+- move from keyword-heavy chunk selection toward embeddings-based ranking
+- preserve a simple fallback path for resilience
+- expose better retrieval debugging in the UI
 
-### 3. Better image understanding
+### 3. Richer citations and attribution
 
-- add OCR or multimodal extraction for image uploads
-- distinguish image-derived context from text-derived context
-- keep existing document parsing path intact
+- file chunk attribution in responses
+- clearer source provenance for mixed search + file answers
+- better renderers for citations in chat and projects
 
-### 4. Deployment hardening
+### 4. Image and multimodal understanding
 
-- move secrets fully into managed secret storage
-- add repeatable release and smoke-test checklists
-- tighten CORS and environment validation guidance
+- OCR or multimodal extraction for image uploads
+- distinct treatment for image-derived context versus text-derived context
+- preserve current document parsing path as fallback
 
-### 5. Product polish
+### 5. Performance and bundle shaping
 
-- manual chat title rename
-- richer conversation sharing flow
-- more complete agent-history filtering and organization
-- reduce frontend bundle size through code splitting
+- split the large frontend bundle
+- lazy-load heavy route surfaces such as project pages and settings charts
+- reduce duplicated vendor cost in the browser
 
-## Guiding Principle
+### 6. Deployment hardening
 
-Near-term roadmap work should improve reliability, retrieval quality, and product polish without breaking the current separation between:
+- more repeatable release process
+- tighter secret handling and validation
+- improved smoke-test automation for hosted backend changes
 
-- user-level memory
-- session-level chat/file/agent artifacts
-- normal chat mode
-- Agent Mode
+## Guiding Principles
+
+Near-term roadmap work should keep these boundaries intact:
+- user-level memory stays separate from project memory
+- global chat stays separate from project chat
+- normal chat stays separate from Agent Mode
+- cost visibility remains available without cluttering core navigation
+- new polish should not weaken the current backend cleanup and storage guarantees
