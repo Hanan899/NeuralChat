@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { RequestNamingContext } from "../api";
 import { CreateProjectModal } from "../components/CreateProjectModal";
@@ -7,7 +7,11 @@ import type { Project, ProjectTemplate } from "../types/project";
 
 interface ProjectsPageProps {
   authToken: string;
+  getAuthToken?: () => Promise<string | null>;
   naming?: RequestNamingContext;
+  autoOpenCreateModal?: boolean;
+  requestedTemplate?: string;
+  onCreateRequestHandled?: () => void;
   projects: Project[];
   templates: Record<string, ProjectTemplate>;
   isLoading: boolean;
@@ -34,9 +38,25 @@ function formatUpdatedAt(updatedAt: string): string {
   return `Updated ${dateValue.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
 
+function summarizeMemoryKeys(memoryKeys: string[]): string {
+  if (memoryKeys.length === 0) {
+    return "Learns the structure of your custom workspace as you go.";
+  }
+
+  if (memoryKeys.length <= 3) {
+    return `Tracks ${memoryKeys.join(", ")}.`;
+  }
+
+  return `Tracks ${memoryKeys.slice(0, 3).join(", ")}, and more.`;
+}
+
 export function ProjectsPage({
   authToken,
+  getAuthToken,
   naming,
+  autoOpenCreateModal = false,
+  requestedTemplate = "startup",
+  onCreateRequestHandled,
   projects,
   templates,
   isLoading,
@@ -56,6 +76,15 @@ export function ProjectsPage({
     setInitialTemplate(templateKey);
     setIsCreateModalOpen(true);
   }
+
+  useEffect(() => {
+    if (!autoOpenCreateModal) {
+      return;
+    }
+
+    handleOpenCreateModal(requestedTemplate);
+    onCreateRequestHandled?.();
+  }, [autoOpenCreateModal, onCreateRequestHandled, requestedTemplate]);
 
   return (
     <section className="nc-projects-page" data-testid="projects-page">
@@ -83,10 +112,35 @@ export function ProjectsPage({
       ) : projects.length === 0 ? (
         <div className="nc-projects-empty">
           <div className="nc-projects-empty__hero">
-            <ProjectTemplateIcon template="custom" className="nc-projects-empty__icon" />
+            <div className="nc-projects-empty__hero-main">
+              <div className="nc-projects-empty__eyebrow">First workspace</div>
+              <div className="nc-projects-empty__hero-copy">
+                <ProjectTemplateIcon template="custom" className="nc-projects-empty__icon" />
+                <div className="nc-projects-empty__hero-copy-text">
+                  <h3>Welcome to Projects</h3>
+                  <p>Choose a template to create your first dedicated workspace. Each project keeps its own context, memory, and files so your work stays focused.</p>
+                </div>
+              </div>
+            </div>
+            <div className="nc-projects-empty__benefits">
+              <div className="nc-projects-empty__benefit">
+                <strong>Scoped memory</strong>
+                <span>Keep project facts separate from your global NeuralChat profile.</span>
+              </div>
+              <div className="nc-projects-empty__benefit">
+                <strong>Focused files</strong>
+                <span>Upload documents once and reuse them across every chat inside the project.</span>
+              </div>
+              <div className="nc-projects-empty__benefit">
+                <strong>Cleaner context</strong>
+                <span>Use template-specific prompts so the assistant stays on-task for that workspace.</span>
+              </div>
+            </div>
+          </div>
+          <div className="nc-projects-empty__section-heading">
             <div>
-              <h3>Welcome to Projects</h3>
-              <p>Choose a template to create your first dedicated workspace.</p>
+              <h3>Start with a template</h3>
+              <p>Pick a workspace type and we will preconfigure the assistant for that job.</p>
             </div>
           </div>
           <div className="nc-projects-grid nc-projects-grid--templates">
@@ -102,8 +156,17 @@ export function ProjectsPage({
                   <ProjectTemplateIcon template={template.key} color={template.color} className="nc-project-card__icon" />
                   <span className="nc-project-card__badge">Template</span>
                 </div>
-                <strong>{template.label}</strong>
-                <span>{template.description}</span>
+                <div className="nc-project-card__meta">
+                  <strong className="nc-project-card__title">{template.label}</strong>
+                  <p className="nc-project-card__description">{template.description}</p>
+                </div>
+                <div className="nc-project-card__template-notes">
+                  <span className="nc-project-card__template-kicker">AI will remember</span>
+                  <span className="nc-project-card__template-memory">{summarizeMemoryKeys(template.memory_keys)}</span>
+                </div>
+                <div className="nc-project-card__footer">
+                  <span className="nc-project-card__action">Use template</span>
+                </div>
               </button>
             ))}
           </div>
@@ -123,12 +186,15 @@ export function ProjectsPage({
                 {project.pinned ? <span className="nc-project-card__pin">Pinned</span> : null}
               </div>
               <div className="nc-project-card__meta">
-                <strong>{project.name}</strong>
-                <span className="nc-project-card__description">{project.description || templates[project.template]?.description || "Dedicated project workspace"}</span>
+                <strong className="nc-project-card__title">{project.name}</strong>
+                <p className="nc-project-card__description">{project.description || templates[project.template]?.description || "Dedicated project workspace"}</p>
                 <div className="nc-project-card__stats">
                   <span>{formatChatCount(project.chat_count)}</span>
                   <span>{formatUpdatedAt(project.updated_at)}</span>
                 </div>
+              </div>
+              <div className="nc-project-card__footer">
+                <span className="nc-project-card__action">Open workspace</span>
               </div>
             </button>
           ))}
@@ -137,8 +203,11 @@ export function ProjectsPage({
             <span className="nc-project-card__add-icon" aria-hidden="true">
               ＋
             </span>
-            <strong>New Project</strong>
-            <span>Create another dedicated workspace</span>
+            <strong className="nc-project-card__title">New Project</strong>
+            <p className="nc-project-card__description">Create another dedicated workspace</p>
+            <div className="nc-project-card__footer">
+              <span className="nc-project-card__action">Start from a template</span>
+            </div>
           </button>
         </div>
       )}
@@ -146,6 +215,7 @@ export function ProjectsPage({
       <CreateProjectModal
         open={isCreateModalOpen}
         authToken={authToken}
+        getAuthToken={getAuthToken}
         templates={templates}
         naming={naming}
         initialTemplate={initialTemplate}

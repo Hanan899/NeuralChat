@@ -7,6 +7,7 @@ import type { RequestNamingContext } from "./api";
 import { createAgentPlan, runAgent } from "./api/agent";
 import {
   createProjectChat,
+  deleteProjectChat,
   deleteProject,
   getAllProjects,
   getProject,
@@ -481,6 +482,8 @@ function ChatShell() {
   const activeProjectChatId = activeProjectId ? searchParams.get("chat") : null;
   const isProjectOverviewRoute = Boolean(activeProjectId && !activeProjectChatId);
   const isProjectChatRoute = Boolean(activeProjectId && activeProjectChatId);
+  const requestedProjectTemplate = searchParams.get("template") || "custom";
+  const isProjectCreateRequested = isProjectsIndexRoute && searchParams.get("create") === "1";
   const activeSessionId = isProjectChatRoute ? (activeProjectChatId ?? "") : activeConversationId;
   const sortedConversations = useMemo(
     () => [...conversations].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()),
@@ -497,6 +500,7 @@ function ChatShell() {
 
   const currentMessages = activeSessionId ? messagesByConversation[activeSessionId] ?? [] : [];
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
+  const activeProjectChat = activeProjectChatId ? projectChats.find((chat) => chat.session_id === activeProjectChatId) ?? null : null;
   const activeFiles = isProjectOverviewRoute || isProjectChatRoute ? projectFiles : (activeConversationId ? filesByConversation[activeConversationId] ?? [] : []);
   const activeRequestNaming = useMemo<RequestNamingContext>(
     () => ({
@@ -507,6 +511,11 @@ function ChatShell() {
     }),
     [activeConversation?.title, activeProject?.name, isProjectChatRoute, isProjectOverviewRoute, userDisplayName]
   );
+  const isScrollableWorkspaceRoute =
+    isSettingsOpen ||
+    isProjectsIndexRoute ||
+    isProjectOverviewRoute ||
+    activeWorkspaceShortcut !== null;
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
     checkSearchStatus()
@@ -1120,6 +1129,14 @@ function ChatShell() {
     navigate("/projects");
   }
 
+  function handleRequestCreateProject() {
+    setActiveShortcutId("projects");
+    setActiveWorkspaceShortcut(null);
+    setIsSettingsOpen(false);
+    setErrorText("");
+    navigate("/projects?create=1&template=custom");
+  }
+
   function handleOpenProject(projectId: string, sessionId?: string) {
     setActiveShortcutId("projects");
     setActiveWorkspaceShortcut(null);
@@ -1142,6 +1159,43 @@ function ChatShell() {
       handleOpenProject(activeProjectId, response.session_id);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create project chat.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
+  }
+
+  async function handleDeleteProjectChat(sessionId: string) {
+    if (!activeProjectId || !activeProject) {
+      return;
+    }
+
+    const targetChat = projectChats.find((chat) => chat.session_id === sessionId);
+    const targetChatLabel = targetChat?.last_message_preview || "this chat";
+    const confirmed = window.confirm(`Delete "${targetChatLabel}" from ${activeProject.name}?`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+
+      await deleteProjectChat(authToken, activeProjectId, sessionId, { userDisplayName, sessionTitle: activeProject.name });
+      setMessagesByConversation((previous) => {
+        const nextMessages = { ...previous };
+        delete nextMessages[sessionId];
+        return nextMessages;
+      });
+      await refreshActiveProjectWorkspace();
+
+      if (activeProjectChatId === sessionId) {
+        handleOpenProject(activeProjectId);
+      }
+      showToast("Project chat deleted.", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete project chat.";
       setErrorText(message);
       showToast(message, "error");
     }
@@ -1972,9 +2026,10 @@ function ChatShell() {
         onOpenApps={handleOpenApps}
         onOpenResearch={handleOpenResearch}
         onOpenCodex={handleOpenCodex}
-        onOpenProjects={handleOpenProjects}
-        onOpenProject={handleOpenProject}
-      />
+            onOpenProjects={handleOpenProjects}
+            onCreateProject={handleRequestCreateProject}
+            onOpenProject={handleOpenProject}
+          />
 
       {isSidebarOpen ? <button className="nc-sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} /> : null}
 
@@ -2114,7 +2169,11 @@ function ChatShell() {
           </div>
         </header>
 
-        <div className={`nc-message-area ${isSettingsOpen ? "nc-message-area--settings" : ""}`}>
+        <div
+          className={`nc-message-area ${
+            isSettingsOpen ? "nc-message-area--settings" : ""
+          } ${isScrollableWorkspaceRoute ? "nc-message-area--scrollable" : ""}`}
+        >
           {!isSettingsOpen && todayUsageSummary && !isCostWarningDismissed ? (
             <CostWarningBanner summary={todayUsageSummary} onDismiss={handleDismissCostWarning} />
           ) : null}
@@ -2130,7 +2189,16 @@ function ChatShell() {
           ) : isProjectsIndexRoute ? (
             <ProjectsPage
               authToken={sessionAuthToken}
+              getAuthToken={getToken}
               naming={{ userDisplayName }}
+              autoOpenCreateModal={isProjectCreateRequested}
+              requestedTemplate={requestedProjectTemplate}
+              onCreateRequestHandled={() => {
+                const nextSearchParams = new URLSearchParams(searchParams);
+                nextSearchParams.delete("create");
+                nextSearchParams.delete("template");
+                setSearchParams(nextSearchParams, { replace: true });
+              }}
               projects={projects}
               templates={projectTemplates}
               isLoading={isProjectsLoading}
@@ -2149,6 +2217,7 @@ function ChatShell() {
               naming={{ userDisplayName, sessionTitle: activeProject.name }}
               onBack={() => navigate("/projects")}
               onOpenChat={(sessionId) => handleOpenProject(activeProject.project_id, sessionId)}
+              onDeleteChat={(sessionId) => void handleDeleteProjectChat(sessionId)}
               onCreateChat={() => void handleCreateProjectChat()}
               onRefresh={refreshActiveProjectWorkspace}
               onProjectUpdated={(project) => {
@@ -2184,12 +2253,36 @@ function ChatShell() {
                 </div>
               </section>
             ) : (
-              <ChatWindow
-                messages={currentMessages}
-                streamingMessageId={activeStreamingAssistantId}
-                onRetryPrompt={handleRetryPrompt}
-                onRunAgentPlan={handleRunAgentPlan}
-              />
+              <section className="nc-project-chat-shell">
+                <div className="nc-project-chat-shell__header">
+                  <div className="nc-project-chat-shell__header-main">
+                    <button
+                      type="button"
+                      className="nc-button nc-button--ghost"
+                      onClick={() => handleOpenProject(activeProjectId!)}
+                    >
+                      ← Back to project
+                    </button>
+                    <div className="nc-project-chat-shell__title-wrap">
+                      <h2>{activeProjectChat?.last_message_preview || "Project chat"}</h2>
+                      <p>{activeProject?.name || "Project workspace"}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="nc-button nc-button--ghost nc-button--danger"
+                    onClick={() => void handleDeleteProjectChat(activeProjectChatId!)}
+                  >
+                    Delete chat
+                  </button>
+                </div>
+                <ChatWindow
+                  messages={currentMessages}
+                  streamingMessageId={activeStreamingAssistantId}
+                  onRetryPrompt={handleRetryPrompt}
+                  onRunAgentPlan={handleRunAgentPlan}
+                />
+              </section>
             )
           ) : activeWorkspaceShortcut ? (
             <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
