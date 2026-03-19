@@ -8,6 +8,10 @@ vi.mock("../api/projects", () => ({
   updateProject: vi.fn(),
 }));
 
+vi.mock("../components/ProjectBrainPanel", () => ({
+  ProjectBrainPanel: () => <div>Project Brain</div>,
+}));
+
 const baseProject = {
   project_id: "proj-1",
   name: "My Startup",
@@ -27,7 +31,7 @@ describe("ProjectWorkspacePage", () => {
     cleanup();
   });
 
-  it("shows project name, chats, memory facts, and files", () => {
+  it("shows project name, chats, Project Brain, and files", () => {
     render(
       <ProjectWorkspacePage
         authToken="token"
@@ -37,7 +41,10 @@ describe("ProjectWorkspacePage", () => {
           { session_id: "chat-1", created_at: "2026-03-17T10:00:00Z", message_count: 3, last_message_preview: "PRD discussion" },
           { session_id: "chat-2", created_at: "2026-03-17T11:00:00Z", message_count: 1, last_message_preview: "Investor pitch" },
         ]}
-        memory={{ startup_name: "NeuralChat", tech_stack: "FastAPI" }}
+        brainData={{
+          memory: { startup_name: "NeuralChat", tech_stack: "FastAPI" },
+          completeness: { percentage: 40, filled_keys: ["startup_name", "tech_stack"], missing_keys: ["target_users"], suggestion: "Tell me about your target users." },
+        }}
         files={[{ filename: "pitch-deck.pdf", blob_path: "blob", uploaded_at: "2026-03-17T12:00:00Z" }]}
         onBack={vi.fn()}
         onOpenChat={vi.fn()}
@@ -53,8 +60,7 @@ describe("ProjectWorkspacePage", () => {
 
     expect(screen.getByText("My Startup")).toBeInTheDocument();
     expect(screen.getByText("PRD discussion")).toBeInTheDocument();
-    expect(screen.getByText("startup_name")).toBeInTheDocument();
-    expect(screen.getByText("NeuralChat")).toBeInTheDocument();
+    expect(screen.getByText("Project Brain")).toBeInTheDocument();
     expect(screen.getByText("pitch-deck.pdf")).toBeInTheDocument();
   });
 
@@ -69,7 +75,7 @@ describe("ProjectWorkspacePage", () => {
         project={baseProject}
         templates={{}}
         chats={[{ session_id: "chat-1", created_at: "2026-03-17T10:00:00Z", message_count: 3, last_message_preview: "PRD discussion" }]}
-        memory={{}}
+        brainData={null}
         files={[]}
         onBack={vi.fn()}
         onOpenChat={onOpenChat}
@@ -101,7 +107,7 @@ describe("ProjectWorkspacePage", () => {
         project={baseProject}
         templates={{}}
         chats={[]}
-        memory={{}}
+        brainData={null}
         files={[]}
         onBack={onBack}
         onOpenChat={vi.fn()}

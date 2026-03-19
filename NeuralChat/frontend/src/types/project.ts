@@ -37,3 +37,22 @@ export type CreateProjectInput = {
   color?: string;
   custom_system_prompt?: string;
 };
+
+export type ProjectMemoryCompleteness = {
+  percentage: number;
+  filled_keys: string[];
+  missing_keys: string[];
+  suggestion: string;
+};
+
+export type ProjectBrainLogEntry = {
+  timestamp: string;
+  session_id: string;
+  extracted_facts: Record<string, string>;
+  tokens_used: number;
+};
+
+export type ProjectMemoryResponse = {
+  memory: Record<string, string>;
+  completeness: ProjectMemoryCompleteness;
+};

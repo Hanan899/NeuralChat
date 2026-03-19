@@ -109,8 +109,15 @@ The app is split into:
 - Each project has isolated:
   - metadata
   - chats
-  - project memory
+  - Project Brain memory
   - files and parsed file chunks
+- Each project chat can teach the Project Brain new template-specific facts in the background.
+- The project workspace now exposes:
+  - Project Brain completeness
+  - friendly suggestions for missing context
+  - inline memory editing
+  - Project Brain reset
+  - recent learning activity
 - Public template endpoint:
   - `GET /api/projects/templates`
 - Authenticated project endpoints:
@@ -120,6 +127,9 @@ The app is split into:
   - `PATCH /api/projects/{project_id}`
   - `DELETE /api/projects/{project_id}`
   - `GET /api/projects/{project_id}/memory`
+  - `PATCH /api/projects/{project_id}/memory`
+  - `DELETE /api/projects/{project_id}/memory`
+  - `GET /api/projects/{project_id}/brain-log`
   - `GET /api/projects/{project_id}/chats`
   - `GET /api/projects/{project_id}/chats/{session_id}`
   - `POST /api/projects/{project_id}/chats`
@@ -201,6 +211,7 @@ Projects:
 - `projects/{display_name__user_id}/index.json`
 - `projects/{display_name__user_id}/{project_name__project_id}/meta.json`
 - `projects/{display_name__user_id}/{project_name__project_id}/memory.json`
+- `projects/{display_name__user_id}/{project_name__project_id}/brain_log.json`
 - `projects/{display_name__user_id}/{project_name__project_id}/chats/{session_title__session_id}.json`
 - `projects/{display_name__user_id}/{project_name__project_id}/files/{filename}`
 - `projects/{display_name__user_id}/{project_name__project_id}/files_parsed/{filename}.json`
@@ -250,8 +261,48 @@ flowchart TD
   G --> H["Overview: chats + memory + files"]
   H --> I["Open or create project chat"]
   I --> J["POST /api/chat with project_id"]
-  J --> K["Project-scoped prompt, history, files, memory"]
+  J --> K["Project-scoped prompt, history, files, and Project Brain memory"]
+  K --> L["Background Project Brain extraction"]
+  L --> M["memory.json + brain_log.json updated when new facts are learned"]
 ```
+
+### Project Brain
+
+```mermaid
+flowchart TD
+  A["Project chat reply completes"] --> B["run_project_brain(...)"]
+  B --> C["Load existing project memory"]
+  C --> D["Extract template-specific new facts"]
+  D --> E{"Any new facts?"}
+  E -- "No" --> F["No write, no brain-log entry"]
+  E -- "Yes" --> G["Merge facts into memory.json"]
+  G --> H["Append audit trail in _raw_facts"]
+  H --> I["Append learning event to brain_log.json"]
+  I --> J["Next project chat gets enriched system prompt"]
+```
+
+### Project Brain memory shape
+
+`GET /api/projects/{project_id}/memory` returns:
+
+```json
+{
+  "memory": {
+    "startup_name": "NeuralChat",
+    "tech_stack": "FastAPI + React + Azure"
+  },
+  "completeness": {
+    "percentage": 60,
+    "filled_keys": ["startup_name", "tech_stack", "target_users"],
+    "missing_keys": ["business_model", "stage"],
+    "suggestion": "Tell me about your business model and current stage."
+  }
+}
+```
+
+Persisted project memory also carries:
+- `last_updated`
+- `_raw_facts` audit entries for learned facts
 
 ### Cost monitoring
 

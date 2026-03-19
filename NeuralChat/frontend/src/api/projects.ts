@@ -1,6 +1,13 @@
 import { buildProtectedHeaders, getApiBaseUrl, readErrorMessage, type RequestNamingContext } from "../api";
 import type { ChatMessage } from "../types";
-import type { CreateProjectInput, Project, ProjectChat, ProjectTemplate } from "../types/project";
+import type {
+  CreateProjectInput,
+  Project,
+  ProjectBrainLogEntry,
+  ProjectChat,
+  ProjectMemoryResponse,
+  ProjectTemplate,
+} from "../types/project";
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -138,13 +145,69 @@ export async function getProjectMemory(
   authToken: string,
   projectId: string,
   naming?: RequestNamingContext
-): Promise<Record<string, unknown>> {
+): Promise<ProjectMemoryResponse> {
   const response = await fetch(`${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/memory`, {
     headers: buildProtectedHeaders(authToken, naming),
   });
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, "Failed to load project memory."));
   }
-  const payload = (await response.json()) as { memory?: Record<string, unknown> };
-  return payload.memory && typeof payload.memory === "object" ? payload.memory : {};
+  const payload = (await response.json()) as Partial<ProjectMemoryResponse>;
+  return {
+    memory: payload.memory && typeof payload.memory === "object" ? payload.memory : {},
+    completeness: payload.completeness ?? {
+      percentage: 0,
+      filled_keys: [],
+      missing_keys: [],
+      suggestion: "",
+    },
+  };
+}
+
+export async function updateProjectMemoryFact(
+  authToken: string,
+  projectId: string,
+  key: string,
+  value: string,
+  naming?: RequestNamingContext
+): Promise<{ memory: Record<string, string> }> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/memory`, {
+    method: "PATCH",
+    headers: buildProtectedHeaders(authToken, naming, true),
+    body: JSON.stringify({ key, value }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, "Failed to update project memory."));
+  }
+  const payload = (await response.json()) as { memory?: Record<string, string> };
+  return { memory: payload.memory && typeof payload.memory === "object" ? payload.memory : {} };
+}
+
+export async function resetProjectBrain(
+  authToken: string,
+  projectId: string,
+  naming?: RequestNamingContext
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/memory`, {
+    method: "DELETE",
+    headers: buildProtectedHeaders(authToken, naming),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, "Failed to reset Project Brain."));
+  }
+}
+
+export async function getBrainLog(
+  authToken: string,
+  projectId: string,
+  naming?: RequestNamingContext
+): Promise<{ log: ProjectBrainLogEntry[] }> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/brain-log`, {
+    headers: buildProtectedHeaders(authToken, naming),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, "Failed to load Project Brain activity."));
+  }
+  const payload = (await response.json()) as { log?: ProjectBrainLogEntry[] };
+  return { log: Array.isArray(payload.log) ? payload.log : [] };
 }

@@ -165,6 +165,8 @@ curl https://neural-chat-emg6cva3befyayd4.eastus-01.azurewebsites.net/api/projec
 - open `Settings > Cost monitoring`
 - create a project from the projects page
 - open a project workspace and create a project chat
+- confirm Project Brain loads without auth errors
+- send a project chat message and verify Project Brain updates after refresh
 - delete a chat and verify cleanup behavior
 
 ### Protected endpoint checks
@@ -176,6 +178,8 @@ Use a valid Clerk token to test:
 - `/api/files`
 - `/api/projects`
 - `/api/projects/{project_id}`
+- `/api/projects/{project_id}/memory`
+- `/api/projects/{project_id}/brain-log`
 - `/api/projects/{project_id}/chats`
 - `/api/usage/*`
 - `/api/agent/*`

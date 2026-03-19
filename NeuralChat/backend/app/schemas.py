@@ -97,6 +97,19 @@ def validate_usage_limit_request(payload: dict[str, Any]) -> dict[str, float]:
     return {"daily_limit_usd": round(daily_limit_usd, 2)}
 
 
+def validate_project_memory_update_request(payload: dict[str, Any]) -> dict[str, str]:
+    """Validate and normalize PATCH /api/projects/{project_id}/memory payload."""
+    key = payload.get("key", "")
+    if not isinstance(key, str) or not key.strip():
+        raise HTTPException(status_code=400, detail="key must be a non-empty string.")
+
+    value = payload.get("value", "")
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=400, detail="value must be a non-empty string.")
+
+    return {"key": key.strip(), "value": value.strip()}
+
+
 def build_health_response(timestamp: str, version: str) -> dict[str, str]:
     return {"status": "ok", "timestamp": timestamp, "version": version}
 

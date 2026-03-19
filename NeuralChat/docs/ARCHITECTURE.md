@@ -73,6 +73,7 @@ Projects:
 - `projects/{user_segment}/index.json`
 - `projects/{user_segment}/{project_segment}/meta.json`
 - `projects/{user_segment}/{project_segment}/memory.json`
+- `projects/{user_segment}/{project_segment}/brain_log.json`
 - `projects/{user_segment}/{project_segment}/chats/{session_segment}.json`
 
 ### `neurarchat-profiles`
@@ -148,8 +149,10 @@ flowchart TD
   F --> G["Load project file chunks"]
   G --> H["Azure OpenAI GPT-5"]
   H --> I["Save into project chat path"]
-  I --> J["Background project memory extraction"]
+  I --> J["Background Project Brain extraction"]
   I --> K["Background usage logging"]
+  J --> L["Merge learned facts into project memory"]
+  L --> M["Append Project Brain activity log"]
 ```
 
 ### 4. Search flow
@@ -226,7 +229,25 @@ It supports:
 - template-aware fact extraction
 - memory keys constrained by the selected project template
 - project-specific prompt building
+- completeness analysis for the workspace UI
+- manual editing of template-defined facts only
+- reset and recent-learning inspection
 - no mixing with global memory
+
+### Project Brain internals
+
+Each project can accumulate:
+- top-level visible facts such as `startup_name` or `tech_stack`
+- `last_updated`
+- `_raw_facts` audit trail entries
+
+Each successful learning pass also appends a lightweight activity entry to `brain_log.json`:
+- `timestamp`
+- `session_id`
+- `extracted_facts`
+- `tokens_used`
+
+The backend trims persisted brain activity to the last 100 entries and returns the latest 20 entries to the frontend.
 
 ## Projects Architecture
 

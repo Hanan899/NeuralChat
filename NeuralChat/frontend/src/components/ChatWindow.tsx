@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { ReactNode, useEffect, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import type { ChatMessage } from "../types";
@@ -9,6 +9,7 @@ interface ChatWindowProps {
   streamingMessageId?: string | null;
   onRetryPrompt?: (prompt: string) => void;
   onRunAgentPlan?: (messageId: string) => void;
+  footer?: ReactNode;
 }
 
 function findPreviousUserPrompt(messages: ChatMessage[], assistantIndex: number): string | null {
@@ -20,7 +21,7 @@ function findPreviousUserPrompt(messages: ChatMessage[], assistantIndex: number)
   return null;
 }
 
-export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunAgentPlan }: ChatWindowProps) {
+export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunAgentPlan, footer }: ChatWindowProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
 
@@ -85,6 +86,7 @@ export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunA
             </motion.div>
           ))}
         </AnimatePresence>
+        {footer}
         <div ref={endRef} />
       </div>
     </section>
