@@ -30,6 +30,7 @@ from app.schemas import (
     validate_agent_plan_request,
     validate_agent_run_request,
     validate_chat_request,
+    validate_project_memory_update_request,
     validate_title_request,
     validate_usage_limit_request,
 )
@@ -81,6 +82,7 @@ from app.services.memory import build_memory_prompt, clear_profile, load_profile
 from app.services.projects import (
     append_project_chat_message,
     build_project_system_prompt,
+    clear_project_memory,
     create_project,
     create_project_chat,
     delete_all_project_files,
@@ -88,15 +90,20 @@ from app.services.projects import (
     delete_project_chat,
     delete_project_file,
     get_all_projects,
+    get_brain_log,
+    get_memory_completeness,
     get_project,
     get_project_chats,
     get_project_file_context_chunks,
+    get_template_memory_keys,
     get_project_templates,
     list_project_files,
     load_project_chat_messages,
     load_project_memory,
-    process_project_memory_update,
+    extract_project_facts_with_usage,
+    log_brain_extraction,
     process_project_upload,
+    save_project_memory,
     update_project,
 )
 from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web
@@ -134,6 +141,54 @@ def get_request_naming(
         "display_name": normalized_display_name or None,
         "session_title": normalized_session_title or None,
     }
+
+
+def _visible_project_memory_payload(project: dict[str, Any], memory: dict[str, Any]) -> dict[str, str]:
+    visible_memory: dict[str, str] = {}
+    for memory_key in get_template_memory_keys(str(project.get("template", "custom"))):
+        raw_value = memory.get(memory_key)
+        if raw_value in (None, ""):
+            continue
+        text_value = str(raw_value).strip()
+        if text_value:
+            visible_memory[memory_key] = text_value
+    return visible_memory
+
+
+async def run_project_brain(
+    user_id: str,
+    project_id: str,
+    session_id: str,
+    user_message: str,
+    assistant_reply: str,
+    template: str,
+    display_name: str | None = None,
+) -> None:
+    try:
+        existing_memory = await asyncio.to_thread(load_project_memory, user_id, project_id, display_name)
+        extracted_facts, usage = await asyncio.to_thread(
+            extract_project_facts_with_usage,
+            user_message,
+            assistant_reply,
+            template,
+            existing_memory,
+        )
+        if usage["input_tokens"] or usage["output_tokens"]:
+            await asyncio.to_thread(log_usage, user_id, "memory", usage["input_tokens"], usage["output_tokens"], display_name)
+        if not extracted_facts:
+            return
+        await asyncio.to_thread(save_project_memory, user_id, project_id, extracted_facts, display_name)
+        await asyncio.to_thread(
+            log_brain_extraction,
+            user_id,
+            project_id,
+            session_id,
+            extracted_facts,
+            usage["input_tokens"] + usage["output_tokens"],
+            display_name,
+        )
+    except Exception:
+        LOGGER.exception("Project Brain update failed for user=%s project=%s session=%s", user_id, project_id, session_id)
 
 
 @app.get("/api/health")
@@ -225,7 +280,67 @@ async def get_project_memory_endpoint(
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
     memory = await asyncio.to_thread(load_project_memory, user_id, project_id, naming["display_name"])
-    return {"memory": memory}
+    visible_memory = _visible_project_memory_payload(project, memory)
+    completeness = await asyncio.to_thread(get_memory_completeness, memory, str(project.get("template", "custom")))
+    return {"memory": visible_memory, "completeness": completeness}
+
+
+@app.patch("/api/projects/{project_id}/memory")
+async def patch_project_memory_endpoint(
+    project_id: str,
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    normalized_payload = validate_project_memory_update_request(payload)
+    allowed_memory_keys = get_template_memory_keys(str(project.get("template", "custom")))
+    if normalized_payload["key"] not in allowed_memory_keys:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="key must match one of this project's template memory fields.")
+
+    await asyncio.to_thread(
+        save_project_memory,
+        user_id,
+        project_id,
+        {normalized_payload["key"]: normalized_payload["value"]},
+        naming["display_name"],
+    )
+    updated_memory = await asyncio.to_thread(load_project_memory, user_id, project_id, naming["display_name"])
+    return {
+        "message": "Memory updated",
+        "memory": _visible_project_memory_payload(project, updated_memory),
+    }
+
+
+@app.delete("/api/projects/{project_id}/memory")
+async def delete_project_memory_endpoint(
+    project_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, str]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    await asyncio.to_thread(clear_project_memory, user_id, project_id, naming["display_name"])
+    return {"message": "Project Brain reset"}
+
+
+@app.get("/api/projects/{project_id}/brain-log")
+async def get_project_brain_log_endpoint(
+    project_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, list[dict[str, Any]]]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    brain_log = await asyncio.to_thread(get_brain_log, user_id, project_id, naming["display_name"])
+    return {"log": brain_log[-20:][::-1]}
 
 
 @app.patch("/api/projects/{project_id}")
@@ -1117,12 +1232,13 @@ async def post_chat(
         )
         if request["project_id"] and project_data:
             asyncio.create_task(
-                process_project_memory_update(
+                run_project_brain(
                     user_id=user_id,
                     project_id=request["project_id"],
-                    template_key=str(project_data.get("template", "custom")),
-                    message=request["message"],
-                    reply=reply,
+                    session_id=request["session_id"],
+                    user_message=request["message"],
+                    assistant_reply=reply,
+                    template=str(project_data.get("template", "custom")),
                     display_name=naming["display_name"],
                 )
             )
@@ -1241,12 +1357,13 @@ async def post_chat(
             if final_reply:
                 if request["project_id"] and project_data:
                     asyncio.create_task(
-                        process_project_memory_update(
+                        run_project_brain(
                             user_id=user_id,
                             project_id=request["project_id"],
-                            template_key=str(project_data.get("template", "custom")),
-                            message=request["message"],
-                            reply=final_reply,
+                            session_id=request["session_id"],
+                            user_message=request["message"],
+                            assistant_reply=final_reply,
+                            template=str(project_data.get("template", "custom")),
                             display_name=naming["display_name"],
                         )
                     )

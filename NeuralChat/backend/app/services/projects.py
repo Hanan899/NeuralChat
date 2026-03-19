@@ -39,7 +39,8 @@ from app.services.file_handler import (
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 ALLOWED_PROJECT_UPDATE_FIELDS = {"name", "description", "emoji", "color", "pinned", "system_prompt"}
-PROJECT_HIDDEN_MEMORY_FIELDS = {"updated_at"}
+PROJECT_HIDDEN_MEMORY_FIELDS = {"updated_at", "last_updated", "_raw_facts"}
+BRAIN_LOG_MAX_ENTRIES = 100
 
 PROJECT_TEMPLATES: dict[str, dict[str, Any]] = {
     "startup": {
@@ -178,6 +179,11 @@ def _project_meta_blob_name(user_id: str, project_id: str, project_name: str | N
 # This helper builds the project memory blob name for one project.
 def _project_memory_blob_name(user_id: str, project_id: str, project_name: str | None, display_name: str | None = None) -> str:
     return f"{_project_prefix(user_id, project_id, project_name, display_name)}/memory.json"
+
+
+# This helper builds the project brain log blob name for one project.
+def _project_brain_log_blob_name(user_id: str, project_id: str, project_name: str | None, display_name: str | None = None) -> str:
+    return f"{_project_prefix(user_id, project_id, project_name, display_name)}/brain_log.json"
 
 
 # This helper builds the canonical project chat blob name.
@@ -350,6 +356,41 @@ def _timestamp_text() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+# This helper turns one memory key into a readable label for prompts and suggestions.
+def _memory_key_label(memory_key: str) -> str:
+    return memory_key.replace("_", " ").strip()
+
+
+# This helper normalizes one fact value into a compact string for storage and prompts.
+def _normalize_fact_value(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        normalized_value = raw_value.strip()
+        return normalized_value or None
+    if isinstance(raw_value, bool):
+        return "true" if raw_value else "false"
+    if isinstance(raw_value, (int, float)):
+        return str(raw_value)
+    if isinstance(raw_value, (list, dict)):
+        try:
+            serialized_value = json.dumps(raw_value, ensure_ascii=True)
+        except TypeError:
+            return None
+        return serialized_value.strip() or None
+    return str(raw_value).strip() or None
+
+
+# This helper returns only the visible template-relevant memory facts.
+def _visible_project_memory(memory: dict[str, Any], template: str) -> dict[str, str]:
+    visible_memory: dict[str, str] = {}
+    for memory_key in get_template_memory_keys(template):
+        normalized_value = _normalize_fact_value(memory.get(memory_key))
+        if normalized_value is not None:
+            visible_memory[memory_key] = normalized_value
+    return visible_memory
+
+
 # This helper validates a requested template key and returns its template payload.
 def _get_template(template_key: str) -> dict[str, Any]:
     template = PROJECT_TEMPLATES.get(str(template_key).strip())
@@ -442,6 +483,17 @@ def _update_project_chat_count(user_id: str, project_id: str, delta: int, displa
 # This helper returns a copy of the predefined project templates for public API use.
 def get_project_templates() -> dict[str, dict[str, Any]]:
     return {template_key: dict(template_value) for template_key, template_value in PROJECT_TEMPLATES.items()}
+
+
+# This function returns the relevant memory keys for one template and never raises.
+def get_template_memory_keys(template: str) -> list[str]:
+    template_payload = PROJECT_TEMPLATES.get(str(template).strip())
+    if not isinstance(template_payload, dict):
+        return []
+    memory_keys = template_payload.get("memory_keys", [])
+    if not isinstance(memory_keys, list):
+        return []
+    return [str(memory_key).strip() for memory_key in memory_keys if str(memory_key).strip()]
 
 
 # This function creates a brand new project for this user and stores both meta and index entries.
@@ -765,7 +817,81 @@ def load_project_memory(user_id: str, project_id: str, display_name: str | None 
     return parsed_payload
 
 
-# This function merges new project facts into the project's memory blob.
+# This function loads the recent Project Brain log and keeps blob naming migrated.
+def get_brain_log(user_id: str, project_id: str, display_name: str | None = None) -> list[dict[str, Any]]:
+    project_data = get_project(user_id, project_id, display_name)
+    if project_data is None:
+        return []
+
+    memory_container = _get_memory_container()
+    existing_project_segment = _find_existing_project_segment(memory_container, user_id, project_id)
+    existing_user_segment = _find_existing_user_segment(memory_container, user_id)
+    existing_blob_name = None
+    if existing_user_segment and existing_project_segment:
+        existing_blob_name = f"projects/{existing_user_segment}/{existing_project_segment}/brain_log.json"
+    if existing_blob_name is None:
+        return []
+
+    raw_payload = read_blob_text(memory_container, existing_blob_name)
+    if raw_payload is None:
+        return []
+
+    try:
+        parsed_payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed_payload, list):
+        return []
+
+    canonical_blob_name = _project_brain_log_blob_name(user_id, project_id, str(project_data.get("name", "")), display_name)
+    if existing_blob_name != canonical_blob_name:
+        write_json_with_migration(memory_container, canonical_blob_name, parsed_payload, old_blob_name=existing_blob_name)
+    return [entry for entry in parsed_payload if isinstance(entry, dict)]
+
+
+# This function records one successful Project Brain learning event.
+def log_brain_extraction(
+    user_id: str,
+    project_id: str,
+    session_id: str,
+    extracted_facts: dict[str, Any],
+    tokens_used: int,
+    display_name: str | None = None,
+) -> None:
+    project_data = get_project(user_id, project_id, display_name)
+    if project_data is None:
+        raise ValueError("Project not found.")
+
+    if not extracted_facts:
+        return
+
+    memory_container = _get_memory_container()
+    existing_log = get_brain_log(user_id, project_id, display_name)
+    existing_log.append(
+        {
+            "timestamp": _timestamp_text(),
+            "session_id": session_id,
+            "extracted_facts": extracted_facts,
+            "tokens_used": int(tokens_used),
+        }
+    )
+    trimmed_log = existing_log[-BRAIN_LOG_MAX_ENTRIES:]
+
+    existing_project_segment = _find_existing_project_segment(memory_container, user_id, project_id)
+    existing_user_segment = _find_existing_user_segment(memory_container, user_id)
+    old_blob_name = None
+    if existing_user_segment and existing_project_segment:
+        old_blob_name = f"projects/{existing_user_segment}/{existing_project_segment}/brain_log.json"
+
+    write_json_with_migration(
+        memory_container,
+        _project_brain_log_blob_name(user_id, project_id, str(project_data.get("name", "")), display_name),
+        trimmed_log,
+        old_blob_name=old_blob_name,
+    )
+
+
+# This function merges new project facts into the project's memory blob and appends an audit trail.
 def save_project_memory(user_id: str, project_id: str, facts: dict[str, Any], display_name: str | None = None) -> None:
     project_data = get_project(user_id, project_id, display_name)
     if project_data is None:
@@ -774,11 +900,32 @@ def save_project_memory(user_id: str, project_id: str, facts: dict[str, Any], di
     memory_container = _get_memory_container()
     existing_memory = load_project_memory(user_id, project_id, display_name)
     merged_memory = dict(existing_memory)
+    raw_facts = existing_memory.get("_raw_facts", [])
+    if not isinstance(raw_facts, list):
+        raw_facts = []
+
+    timestamp_text = _timestamp_text()
+    normalized_facts: dict[str, str] = {}
     for field_name, field_value in facts.items():
-        if field_value in (None, ""):
+        normalized_value = _normalize_fact_value(field_value)
+        if normalized_value is None:
             continue
-        merged_memory[field_name] = field_value
-    merged_memory["updated_at"] = _timestamp_text()
+        normalized_facts[field_name] = normalized_value
+        merged_memory[field_name] = normalized_value
+        raw_facts.append(
+            {
+                "extracted_at": timestamp_text,
+                "fact_key": field_name,
+                "fact_value": normalized_value,
+                "confidence": "high",
+            }
+        )
+
+    if not normalized_facts:
+        return
+
+    merged_memory["last_updated"] = timestamp_text
+    merged_memory["_raw_facts"] = raw_facts
 
     existing_project_segment = _find_existing_project_segment(memory_container, user_id, project_id)
     existing_user_segment = _find_existing_user_segment(memory_container, user_id)
@@ -794,6 +941,35 @@ def save_project_memory(user_id: str, project_id: str, facts: dict[str, Any], di
     )
 
 
+# This function clears the project's stored memory facts and brain log history.
+def clear_project_memory(user_id: str, project_id: str, display_name: str | None = None) -> None:
+    project_data = get_project(user_id, project_id, display_name)
+    if project_data is None:
+        raise ValueError("Project not found.")
+
+    memory_container = _get_memory_container()
+    existing_project_segment = _find_existing_project_segment(memory_container, user_id, project_id)
+    existing_user_segment = _find_existing_user_segment(memory_container, user_id)
+    old_memory_blob_name = None
+    old_brain_log_blob_name = None
+    if existing_user_segment and existing_project_segment:
+        old_memory_blob_name = f"projects/{existing_user_segment}/{existing_project_segment}/memory.json"
+        old_brain_log_blob_name = f"projects/{existing_user_segment}/{existing_project_segment}/brain_log.json"
+
+    write_json_with_migration(
+        memory_container,
+        _project_memory_blob_name(user_id, project_id, str(project_data.get("name", "")), display_name),
+        {},
+        old_blob_name=old_memory_blob_name,
+    )
+    write_json_with_migration(
+        memory_container,
+        _project_brain_log_blob_name(user_id, project_id, str(project_data.get("name", "")), display_name),
+        [],
+        old_blob_name=old_brain_log_blob_name,
+    )
+
+
 # This function builds the project system prompt from the template prompt plus known project facts.
 def build_project_system_prompt(user_id: str, project_id: str, display_name: str | None = None) -> str:
     project_data = get_project(user_id, project_id, display_name)
@@ -802,14 +978,40 @@ def build_project_system_prompt(user_id: str, project_id: str, display_name: str
 
     base_system_prompt = str(project_data.get("system_prompt", "")).strip()
     memory_facts = load_project_memory(user_id, project_id, display_name)
-    visible_facts = [
-        f"{field_name}: {field_value}"
-        for field_name, field_value in memory_facts.items()
-        if field_name not in PROJECT_HIDDEN_MEMORY_FIELDS and field_value not in (None, "")
-    ]
-    if not visible_facts:
+    visible_memory = _visible_project_memory(memory_facts, str(project_data.get("template", "custom")))
+    if not visible_memory:
         return base_system_prompt
-    return f"{base_system_prompt}\n\nWhat I know about this project:\n" + "\n".join(visible_facts)
+    memory_lines = [f"- {field_name}: {field_value}" for field_name, field_value in visible_memory.items()]
+    return f"{base_system_prompt}\n\nWhat I know about this project:\n" + "\n".join(memory_lines)
+
+
+# This function calculates how complete the current project memory is for one template.
+def get_memory_completeness(memory: dict[str, Any], template: str) -> dict[str, Any]:
+    memory_keys = get_template_memory_keys(template)
+    if template == "custom":
+        return {"percentage": 100, "filled_keys": [], "missing_keys": [], "suggestion": ""}
+    if not memory_keys:
+        return {"percentage": 0, "filled_keys": [], "missing_keys": [], "suggestion": ""}
+
+    visible_memory = _visible_project_memory(memory, template)
+    filled_keys = [memory_key for memory_key in memory_keys if memory_key in visible_memory]
+    missing_keys = [memory_key for memory_key in memory_keys if memory_key not in visible_memory]
+    percentage = int(round((len(filled_keys) / len(memory_keys)) * 100)) if memory_keys else 0
+
+    suggestion = ""
+    if missing_keys:
+        readable_missing = [_memory_key_label(memory_key) for memory_key in missing_keys[:2]]
+        if len(readable_missing) == 1:
+            suggestion = f"Tell me about your {readable_missing[0]}."
+        else:
+            suggestion = f"Tell me about your {readable_missing[0]} and {readable_missing[1]}."
+
+    return {
+        "percentage": percentage,
+        "filled_keys": filled_keys,
+        "missing_keys": missing_keys,
+        "suggestion": suggestion,
+    }
 
 
 # This helper extracts plain text from Azure OpenAI message payloads.
@@ -828,10 +1030,26 @@ def _extract_message_text(message_object: dict[str, Any]) -> str:
     return ""
 
 
+# This function extracts template-specific project facts from one exchange.
+def extract_project_facts(
+    message: str,
+    reply: str,
+    template: str,
+    existing_memory: dict[str, Any],
+) -> dict[str, Any]:
+    extracted_facts, _ = extract_project_facts_with_usage(message, reply, template, existing_memory)
+    return extracted_facts
+
+
 # This function extracts template-specific project facts from one exchange and returns usage data too.
-def extract_project_facts_with_usage(template_key: str, message: str, reply: str) -> tuple[dict[str, Any], TokenUsage]:
-    template_config = _get_template(template_key)
-    memory_keys = list(template_config.get("memory_keys", []))
+def extract_project_facts_with_usage(
+    message: str,
+    reply: str,
+    template: str,
+    existing_memory: dict[str, Any],
+) -> tuple[dict[str, Any], TokenUsage]:
+    template_config = _get_template(template)
+    memory_keys = get_template_memory_keys(template)
     if not memory_keys:
         return {}, {"input_tokens": 0, "output_tokens": 0}
 
@@ -849,9 +1067,13 @@ def extract_project_facts_with_usage(template_key: str, message: str, reply: str
             {
                 "role": "system",
                 "content": (
-                    "Extract project facts as JSON only. "
-                    f"Only use these keys: {', '.join(memory_keys)}. "
-                    "Return {} if nothing useful is present."
+                    f"Extract facts about this {template} project from the conversation.\n"
+                    f"Look only for these fields: {', '.join(memory_keys)}.\n"
+                    "Return JSON only.\n"
+                    "Only include fields where you found clear information.\n"
+                    "Return {} if nothing relevant was found.\n"
+                    f"Current known facts: {json.dumps(_visible_project_memory(existing_memory, template), ensure_ascii=True)}\n"
+                    "Only return new or updated facts. Do not repeat facts that are already known."
                 ),
             },
             {
@@ -865,7 +1087,7 @@ def extract_project_facts_with_usage(template_key: str, message: str, reply: str
             },
         ],
         "temperature": 0,
-        "max_tokens": 220,
+        "max_tokens": 300,
     }
 
     try:
@@ -894,12 +1116,19 @@ def extract_project_facts_with_usage(template_key: str, message: str, reply: str
 
     normalized_facts: dict[str, Any] = {}
     for memory_key in memory_keys:
-        if memory_key in parsed_facts and parsed_facts[memory_key] not in (None, ""):
-            normalized_facts[memory_key] = parsed_facts[memory_key]
+        if memory_key not in parsed_facts:
+            continue
+        normalized_value = _normalize_fact_value(parsed_facts[memory_key])
+        if normalized_value is None:
+            continue
+        existing_value = _normalize_fact_value(existing_memory.get(memory_key))
+        if existing_value == normalized_value:
+            continue
+        normalized_facts[memory_key] = normalized_value
     return normalized_facts, usage
 
 
-# This async wrapper keeps project memory extraction off the main response path.
+# This async wrapper keeps backward compatibility for callers still using the older helper name.
 async def process_project_memory_update(
     user_id: str,
     project_id: str,
@@ -908,7 +1137,14 @@ async def process_project_memory_update(
     reply: str,
     display_name: str | None = None,
 ) -> None:
-    extracted_facts, usage = await asyncio.to_thread(extract_project_facts_with_usage, template_key, message, reply)
+    existing_memory = await asyncio.to_thread(load_project_memory, user_id, project_id, display_name)
+    extracted_facts, usage = await asyncio.to_thread(
+        extract_project_facts_with_usage,
+        message,
+        reply,
+        template_key,
+        existing_memory,
+    )
     if usage["input_tokens"] or usage["output_tokens"]:
         await asyncio.to_thread(log_usage, user_id, "memory", usage["input_tokens"], usage["output_tokens"], display_name)
     if not extracted_facts:

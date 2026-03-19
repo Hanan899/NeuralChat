@@ -2,15 +2,17 @@ import { useState } from "react";
 
 import type { UploadedFileItem } from "../types";
 import { EditSystemPromptModal } from "../components/EditSystemPromptModal";
+import { ProjectBrainPanel } from "../components/ProjectBrainPanel";
 import { ProjectTemplateIcon } from "../components/ProjectTemplateIcon";
-import type { Project, ProjectChat, ProjectTemplate } from "../types/project";
+import type { Project, ProjectChat, ProjectMemoryResponse, ProjectTemplate } from "../types/project";
 
 interface ProjectWorkspacePageProps {
   authToken: string;
+  getAuthToken?: () => Promise<string | null>;
   project: Project;
   templates: Record<string, ProjectTemplate>;
   chats: ProjectChat[];
-  memory: Record<string, unknown>;
+  brainData?: ProjectMemoryResponse | null;
   files: UploadedFileItem[];
   naming?: { userDisplayName?: string; sessionTitle?: string };
   onBack: () => void;
@@ -26,10 +28,11 @@ interface ProjectWorkspacePageProps {
 
 export function ProjectWorkspacePage({
   authToken,
+  getAuthToken,
   project,
   templates,
   chats,
-  memory,
+  brainData,
   files,
   naming,
   onBack,
@@ -44,8 +47,6 @@ export function ProjectWorkspacePage({
 }: ProjectWorkspacePageProps) {
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
-
-  const visibleMemoryEntries = Object.entries(memory).filter(([, value]) => value !== null && value !== "");
   const templateLabel = templates[project.template]?.label ?? "Custom Project";
 
   return (
@@ -129,31 +130,14 @@ export function ProjectWorkspacePage({
           )}
         </section>
 
-        <section className="nc-project-panel">
-          <div className="nc-project-panel__header">
-            <h3>
-              <span className="nc-project-panel__title-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M9 8.5C9 6.57 10.57 5 12.5 5C14.43 5 16 6.57 16 8.5C17.66 9.18 18.8 10.81 18.8 12.7C18.8 15.21 16.76 17.25 14.25 17.25H10.6C8.61 17.25 7 15.64 7 13.65C7 12.07 8.02 10.73 9.44 10.26C9.15 9.76 9 9.15 9 8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-                </svg>
-              </span>
-              Project Memory
-            </h3>
-            <button type="button" className="nc-button nc-button--ghost" onClick={() => void onRefresh()}>Refresh</button>
-          </div>
-          {visibleMemoryEntries.length === 0 ? (
-            <div className="nc-project-panel__empty">Project memory is empty for now. Chatting inside this project will teach the AI over time.</div>
-          ) : (
-            <div className="nc-project-memory-list">
-              {visibleMemoryEntries.map(([fieldName, fieldValue]) => (
-                <div key={fieldName} className="nc-project-memory-row">
-                  <strong>{fieldName}</strong>
-                  <span>{String(fieldValue)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+        <ProjectBrainPanel
+          authToken={authToken}
+          getAuthToken={getAuthToken}
+          projectId={project.project_id}
+          template={project.template}
+          naming={naming}
+          initialData={brainData}
+        />
 
         <section className="nc-project-panel nc-project-panel--files">
           <div className="nc-project-panel__header">

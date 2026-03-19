@@ -61,7 +61,8 @@ This roadmap reflects the current shipped state and the next practical improveme
 - project templates
 - project CRUD
 - project-scoped chats
-- project-scoped memory
+- Project Brain memory and background learning
+- Project Brain completeness, reset, and recent-learning log
 - project-scoped files
 - routed projects page and project workspace
 - sidebar project sub-items

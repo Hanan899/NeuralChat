@@ -295,7 +295,7 @@ def test_chat_with_project_id_uses_project_system_prompt_and_project_storage():
         patch("app.main.append_project_chat_message") as append_project_chat_message_mock,
         patch("app.main.build_project_system_prompt", return_value="Project prompt") as build_project_system_prompt_mock,
         patch("app.main.generate_reply_with_usage", new=AsyncMock(return_value=("Project reply", {"input_tokens": 10, "output_tokens": 20}))) as generate_reply_with_usage_mock,
-        patch("app.main.process_project_memory_update", new=AsyncMock()) as process_project_memory_update_mock,
+        patch("app.main.run_project_brain", new=AsyncMock()) as run_project_brain_mock,
         patch("app.main.asyncio.create_task", side_effect=create_task_mock),
         patch("app.main.build_memory_prompt") as build_memory_prompt_mock,
         patch("app.main.save_user_message") as save_user_message_mock,
@@ -322,7 +322,7 @@ def test_chat_with_project_id_uses_project_system_prompt_and_project_storage():
     build_memory_prompt_mock.assert_not_called()
     save_user_message_mock.assert_not_called()
     save_assistant_message_mock.assert_not_called()
-    process_project_memory_update_mock.assert_called_once()
+    run_project_brain_mock.assert_called_once()
     generate_reply_with_usage_mock.assert_awaited_once()
 
 

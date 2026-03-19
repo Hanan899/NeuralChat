@@ -19,6 +19,7 @@ import {
 } from "./api/projects";
 import { getTodayUsage } from "./api/usage";
 import { AgentHistory } from "./components/AgentHistory";
+import { BrainActivityIndicator } from "./components/BrainActivityIndicator";
 import { ChatWindow } from "./components/ChatWindow";
 import { CostWarningBanner } from "./components/CostWarningBanner";
 import { FileUpload } from "./components/FileUpload";
@@ -40,7 +41,7 @@ import type {
   ThemeMode,
   UploadedFileItem,
 } from "./types";
-import type { Project, ProjectChat, ProjectTemplate } from "./types/project";
+import type { Project, ProjectChat, ProjectMemoryResponse, ProjectTemplate } from "./types/project";
 
 const EMPTY_SUGGESTIONS = [
   "Summarize this project architecture in simple terms",
@@ -468,9 +469,10 @@ function ChatShell() {
   const [projectsErrorText, setProjectsErrorText] = useState("");
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [projectChats, setProjectChats] = useState<ProjectChat[]>([]);
-  const [projectMemory, setProjectMemory] = useState<Record<string, unknown>>({});
+  const [projectMemory, setProjectMemory] = useState<ProjectMemoryResponse | null>(null);
   const [projectFiles, setProjectFiles] = useState<UploadedFileItem[]>([]);
   const [isProjectWorkspaceLoading, setIsProjectWorkspaceLoading] = useState(false);
+  const [projectBrainActivityToken, setProjectBrainActivityToken] = useState(0);
   const [todayUsageSummary, setTodayUsageSummary] = useState<DailyLimitSummary | null>(null);
   const [isCostWarningDismissed, setIsCostWarningDismissed] = useState(false);
   const [activeUsageDate, setActiveUsageDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -577,6 +579,10 @@ function ChatShell() {
     }
   }, [isProjectChatRoute, isProjectOverviewRoute, isProjectsIndexRoute]);
 
+  useEffect(() => {
+    setProjectBrainActivityToken(0);
+  }, [activeProjectChatId, activeProjectId]);
+
   const refreshProjects = useCallback(async () => {
     if (!userId) {
       setProjects([]);
@@ -603,7 +609,7 @@ function ChatShell() {
     if (!userId || !activeProjectId) {
       setActiveProject(null);
       setProjectChats([]);
-      setProjectMemory({});
+      setProjectMemory(null);
       setProjectFiles([]);
       return;
     }
@@ -1095,12 +1101,18 @@ function ChatShell() {
       setActiveConversationId(next.id);
     }
 
+    resetChatModes();
     setActiveShortcutId("new");
     setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
     setInput("");
     setErrorText("");
     setIsSidebarOpen(false);
+  }
+
+  function resetChatModes() {
+    setForceWebSearch(false);
+    setIsAgentMode(false);
   }
 
   function handleSelectConversation(conversationId: string) {
@@ -1110,8 +1122,9 @@ function ChatShell() {
     if (location.pathname !== "/") {
       navigate("/");
     }
+    resetChatModes();
     setActiveConversationId(conversationId);
-    setActiveShortcutId(isAgentMode ? "codex" : "new");
+    setActiveShortcutId("new");
     setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
     setErrorText("");
@@ -1119,6 +1132,7 @@ function ChatShell() {
 
   function handleOpenImages() {
     navigate("/");
+    resetChatModes();
     setActiveShortcutId("images");
     setActiveWorkspaceShortcut("images");
     setIsSettingsOpen(false);
@@ -1127,6 +1141,7 @@ function ChatShell() {
 
   function handleOpenApps() {
     navigate("/");
+    resetChatModes();
     setActiveShortcutId("apps");
     setActiveWorkspaceShortcut("apps");
     setIsSettingsOpen(false);
@@ -1141,12 +1156,15 @@ function ChatShell() {
     setErrorText("");
     if (searchReady) {
       setForceWebSearch(true);
+    } else {
+      setForceWebSearch(false);
     }
     setIsAgentMode(true);
   }
 
   function handleOpenCodex() {
     navigate("/");
+    setForceWebSearch(false);
     setActiveShortcutId("codex");
     setActiveWorkspaceShortcut("codex");
     setIsSettingsOpen(false);
@@ -1155,6 +1173,7 @@ function ChatShell() {
   }
 
   function handleOpenProjects() {
+    resetChatModes();
     setActiveShortcutId("projects");
     setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
@@ -1163,6 +1182,7 @@ function ChatShell() {
   }
 
   function handleRequestCreateProject() {
+    resetChatModes();
     setActiveShortcutId("projects");
     setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
@@ -1171,6 +1191,7 @@ function ChatShell() {
   }
 
   function handleOpenProject(projectId: string, sessionId?: string) {
+    resetChatModes();
     setActiveShortcutId("projects");
     setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
@@ -1610,6 +1631,9 @@ function ChatShell() {
         void refineConversationTitle(conversationId, trimmed, streamedText);
       }
       if (isProjectChatRoute) {
+        if (streamedText.trim()) {
+          setProjectBrainActivityToken((value) => value + 1);
+        }
         void refreshActiveProjectWorkspace();
       }
     } catch (error) {
@@ -1899,6 +1923,7 @@ function ChatShell() {
   }
 
   function handleOpenSettings() {
+    resetChatModes();
     setIsSettingsOpen(true);
     setActiveWorkspaceShortcut(null);
     setIsSidebarOpen(false);
@@ -2243,10 +2268,11 @@ function ChatShell() {
           ) : isProjectOverviewRoute && activeProject ? (
             <ProjectWorkspacePage
               authToken={sessionAuthToken}
+              getAuthToken={getToken}
               project={activeProject}
               templates={projectTemplates}
               chats={projectChats}
-              memory={projectMemory}
+              brainData={projectMemory}
               files={projectFiles}
               naming={{ userDisplayName, sessionTitle: activeProject.name }}
               onBack={() => navigate("/projects")}
@@ -2302,19 +2328,29 @@ function ChatShell() {
                       <p>{activeProject?.name || "Project workspace"}</p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="nc-button nc-button--ghost nc-button--danger"
-                    onClick={() => void handleDeleteProjectChat(activeProjectChatId!)}
-                  >
-                    Delete chat
-                  </button>
+                  <div className="nc-project-chat-shell__actions">
+                    <button
+                      type="button"
+                      className="nc-button nc-button--ghost"
+                      onClick={() => handleOpenProject(activeProjectId!)}
+                    >
+                      🧠 Project Brain
+                    </button>
+                    <button
+                      type="button"
+                      className="nc-button nc-button--ghost nc-button--danger"
+                      onClick={() => void handleDeleteProjectChat(activeProjectChatId!)}
+                    >
+                      Delete chat
+                    </button>
+                  </div>
                 </div>
                 <ChatWindow
                   messages={currentMessages}
                   streamingMessageId={activeStreamingAssistantId}
                   onRetryPrompt={handleRetryPrompt}
                   onRunAgentPlan={handleRunAgentPlan}
+                  footer={<BrainActivityIndicator activityToken={projectBrainActivityToken} enabled={isProjectChatRoute} />}
                 />
               </section>
             )
