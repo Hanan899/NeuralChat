@@ -166,69 +166,56 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPan
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-[1px] transition-opacity"
+      <button
+        type="button"
+        className="nc-memory-panel__backdrop"
         onClick={onClose}
-        aria-hidden={false}
+        aria-label="Close memory panel"
       />
-      <aside
-        className="fixed right-0 top-0 z-50 h-full w-full max-w-md translate-x-0 transform border-l border-slate-300 bg-white/95 p-4 shadow-2xl transition-transform"
-        aria-hidden={false}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <p className="metric-code text-xs uppercase tracking-[0.14em] text-slate-500">Profile Memory</p>
-            <h2 className="text-lg font-semibold text-slate-900">What NeuralChat knows about you</h2>
+      <aside className="nc-memory-panel" aria-hidden={false} aria-label="Profile memory panel">
+        <div className="nc-memory-panel__header">
+          <div className="nc-memory-panel__header-copy">
+            <p className="nc-memory-panel__eyebrow">Profile Memory</p>
+            <h2>What NeuralChat knows about you</h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-          >
+          <button type="button" onClick={onClose} className="nc-memory-panel__close">
             Close
           </button>
         </div>
 
         {errorText ? (
-          <p className="mb-3 rounded-xl border border-red-300 bg-red-50 p-2 text-sm text-red-700">
-            {errorText}
-          </p>
+          <p className="nc-memory-panel__error">{errorText}</p>
         ) : null}
 
-        <div className="space-y-2 overflow-y-auto pr-1">
+        <div className="nc-memory-panel__body">
           {isLoading ? (
             <>
-              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-xl bg-slate-200" />
-              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-xl bg-slate-200" />
-              <div data-testid="memory-skeleton" className="h-10 animate-pulse rounded-xl bg-slate-200" />
+              <div data-testid="memory-skeleton" className="nc-memory-panel__skeleton" />
+              <div data-testid="memory-skeleton" className="nc-memory-panel__skeleton" />
+              <div data-testid="memory-skeleton" className="nc-memory-panel__skeleton" />
             </>
           ) : factEntries.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-slate-300 p-3 text-sm text-slate-600">
-              No memory yet — start chatting!
-            </p>
+            <p className="nc-memory-panel__empty">No memory yet — start chatting!</p>
           ) : (
             factEntries.map(([key, value]) => (
-              <div
-                key={key}
-                className="rounded-xl border border-slate-200 bg-white p-3"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="metric-code text-xs uppercase tracking-[0.12em] text-slate-500">{key}</p>
-                  <div className="flex items-center gap-2">
+              <div key={key} className="nc-memory-panel__fact">
+                <div className="nc-memory-panel__fact-header">
+                  <p className="nc-memory-panel__fact-key">{key}</p>
+                  <div className="nc-memory-panel__fact-actions">
                     <button
                       type="button"
                       onClick={() => {
                         setEditingKey(key);
                         setEditingValue(value);
                       }}
-                      className="text-xs font-medium text-blue-700 hover:underline"
+                      className="nc-memory-panel__action"
                     >
                       Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteKey(key)}
-                      className="text-xs font-medium text-red-700 hover:underline"
+                      className="nc-memory-panel__action nc-memory-panel__action--danger"
                     >
                       Delete
                     </button>
@@ -249,21 +236,21 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPan
                         setEditingValue("");
                       }
                     }}
-                    className="mt-2 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-200"
+                    className="nc-memory-panel__input"
                   />
                 ) : (
-                  <p className="mt-2 text-sm leading-relaxed text-slate-800">{formatFactForDisplay(value)}</p>
+                  <p className="nc-memory-panel__fact-value">{formatFactForDisplay(value)}</p>
                 )}
               </div>
             ))
           )}
         </div>
 
-        <div className="mt-6 border-t border-slate-200 pt-4">
+        <div className="nc-memory-panel__footer">
           <button
             type="button"
             onClick={handleClearAll}
-            className="w-full rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700"
+            className="nc-memory-panel__clear"
           >
             Clear All Memory
           </button>

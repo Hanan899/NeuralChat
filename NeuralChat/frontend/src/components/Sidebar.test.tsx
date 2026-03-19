@@ -97,6 +97,16 @@ describe("Sidebar", () => {
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the user menu from the avatar in collapsed mode", async () => {
+    const onOpenSettings = vi.fn();
+    renderSidebar({ isCollapsed: true, onOpenSettings });
+
+    await userEvent.click(screen.getByRole("button", { name: /open user menu/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
+
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
   it("changes theme from the user menu", async () => {
     const onThemeModeChange = vi.fn();
     renderSidebar({ themeMode: "system", onThemeModeChange });

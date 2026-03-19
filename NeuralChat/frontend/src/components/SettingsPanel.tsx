@@ -12,6 +12,7 @@ interface SettingsPanelProps {
   onShowToast: (message: string, tone?: "success" | "info" | "error") => void;
   onUsageStateChange?: (summary: DailyLimitSummary) => void;
   onOpenAccountSettings: () => void;
+  onCloseSettings?: () => void;
 }
 
 interface SettingsNavItem {
@@ -66,8 +67,9 @@ export function SettingsPanel({
   onShowToast,
   onUsageStateChange,
   onOpenAccountSettings,
+  onCloseSettings,
 }: SettingsPanelProps) {
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("cost");
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
 
   const activeSectionMeta = useMemo(
     () => SETTINGS_NAV_ITEMS.find((item) => item.id === activeSection) ?? SETTINGS_NAV_ITEMS[0],
@@ -123,6 +125,22 @@ export function SettingsPanel({
                   <span>Web search and Agent mode stay in the sidebar so they remain close to chat workflows.</span>
                 </div>
               </div>
+              <div className="nc-settings-card__actions">
+                <button
+                  type="button"
+                  className="nc-settings-card__action"
+                  onClick={() => {
+                    onShowToast("Theme is available in the top bar.", "info");
+                  }}
+                >
+                  Where is theme?
+                </button>
+                {onCloseSettings ? (
+                  <button type="button" className="nc-settings-card__action" onClick={onCloseSettings}>
+                    Return to chat
+                  </button>
+                ) : null}
+              </div>
             </section>
           ) : null}
 
@@ -141,9 +159,16 @@ export function SettingsPanel({
             <section className="nc-settings-card">
               <h4>Account</h4>
               <p>Manage your profile, authentication session, and Clerk-hosted account details.</p>
-              <button type="button" className="nc-settings-card__action" onClick={onOpenAccountSettings}>
-                Open account settings
-              </button>
+              <div className="nc-settings-card__actions">
+                <button type="button" className="nc-settings-card__action" onClick={onOpenAccountSettings}>
+                  Open account settings
+                </button>
+                {onCloseSettings ? (
+                  <button type="button" className="nc-settings-card__action" onClick={onCloseSettings}>
+                    Done
+                  </button>
+                ) : null}
+              </div>
             </section>
           ) : null}
         </div>

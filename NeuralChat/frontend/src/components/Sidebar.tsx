@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type { ConversationSummary, ThemeMode } from "../types";
 import type { Project } from "../types/project";
@@ -266,6 +267,92 @@ export function Sidebar({
     };
   }, []);
 
+  function toggleUserMenu() {
+    setOpenMenuConversationId(null);
+    setIsUserMenuOpen((previous) => !previous);
+  }
+
+  function handleCollapsedUserChipKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!isCollapsed) {
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleUserMenu();
+    }
+  }
+
+  function renderUserMenu() {
+    return (
+      <div className={`nc-user-menu ${isCollapsed ? "nc-user-menu--collapsed" : ""}`} role="menu" aria-label="User settings menu">
+        <div className="nc-user-menu__section" role="none">
+          <p className="nc-user-menu__section-title">Theme</p>
+          <div className="nc-user-menu__theme-group" role="none">
+            {(
+              [
+                { value: "system", label: "System" },
+                { value: "dark", label: "Dark" },
+                { value: "light", label: "Light" }
+              ] as const
+            ).map((themeOption) => {
+              const isThemeActive = themeMode === themeOption.value;
+
+              return (
+                <button
+                  key={themeOption.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={isThemeActive}
+                  className={`nc-user-menu__theme-item ${isThemeActive ? "nc-user-menu__theme-item--active" : ""}`}
+                  onClick={() => {
+                    onThemeModeChange(themeOption.value);
+                    setIsUserMenuOpen(false);
+                  }}
+                >
+                  <span>{themeOption.label}</span>
+                  {isThemeActive ? <span aria-hidden="true">✓</span> : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onOpenSettings();
+            setIsUserMenuOpen(false);
+          }}
+        >
+          Settings
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onOpenUserSettings();
+            setIsUserMenuOpen(false);
+          }}
+        >
+          Manage account
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="nc-user-menu__danger"
+          onClick={() => {
+            onSignOut();
+            setIsUserMenuOpen(false);
+          }}
+        >
+          Sign out
+        </button>
+      </div>
+    );
+  }
+
   function handleShortcutClick(id: ShortcutId) {
     onCloseMobile();
 
@@ -431,14 +518,14 @@ export function Sidebar({
     >
       <div className="nc-sidebar__top">
         <div className="nc-brand-row">
-          <div className="nc-brand-lockup" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div className="nc-brand-lockup">
             {/* Neural network logo */}
-            <span className="nc-brand-mark" aria-hidden="true" style={{ flexShrink: 0 }}>
+            <span className="nc-brand-mark" aria-hidden="true">
               <NeuralNetworkLogo />
             </span>
-            <span className="nc-brand-copy" style={{ display: "flex", flexDirection: "column", gap: "2px", lineHeight: 1 }}>
-              <span className="nc-brand-name" style={{ fontWeight: 600, fontSize: "15px", whiteSpace: "nowrap" }}>NeuralChat</span>
-              <span className="nc-brand-subtitle" style={{ fontSize: "11px", opacity: 0.5, whiteSpace: "nowrap" }}>AI Chat Assistant</span>
+            <span className="nc-brand-copy">
+              <span className="nc-brand-name">NeuralChat</span>
+              <span className="nc-brand-subtitle">AI Chat Assistant</span>
             </span>
           </div>
           <button
@@ -539,96 +626,44 @@ export function Sidebar({
       </div>
 
       <div className="nc-sidebar__bottom">
-        <div className="nc-user-chip" title={`${userName} (${userSubtitle})`}>
+        <div
+          className={`nc-user-chip ${isCollapsed ? "nc-user-chip--collapsed-trigger" : ""}`}
+          title={isCollapsed ? undefined : `${userName} (${userSubtitle})`}
+          onClick={isCollapsed ? toggleUserMenu : undefined}
+          onKeyDown={handleCollapsedUserChipKeyDown}
+          role={isCollapsed ? "button" : undefined}
+          tabIndex={isCollapsed ? 0 : undefined}
+          aria-haspopup={isCollapsed ? "menu" : undefined}
+          aria-expanded={isCollapsed ? isUserMenuOpen : undefined}
+          aria-label={isCollapsed ? `Open user menu for ${userName}` : undefined}
+          ref={isUserMenuOpen && isCollapsed ? userMenuReference : null}
+        >
           <span className="nc-user-avatar">{userInitials}</span>
           <span className="nc-user-meta">
             <span className="nc-user-name">{userName}</span>
             <span className="nc-user-subtitle">{userSubtitle}</span>
           </span>
-          <div className="nc-user-menu-wrap" ref={isUserMenuOpen ? userMenuReference : null}>
-            <button
-              type="button"
-              className={`nc-user-settings ${isUserMenuOpen ? "nc-user-settings--open" : ""}`}
-              aria-label="More options"
-              aria-haspopup="menu"
-              aria-expanded={isUserMenuOpen}
-              onClick={(event) => {
-                event.stopPropagation();
-                setOpenMenuConversationId(null);
-                setIsUserMenuOpen((previous) => !previous);
-              }}
-            >
-              ⋯
-            </button>
-
-            {isUserMenuOpen ? (
-              <div className="nc-user-menu" role="menu" aria-label="User settings menu">
-                <div className="nc-user-menu__section" role="none">
-                  <p className="nc-user-menu__section-title">Theme</p>
-                  <div className="nc-user-menu__theme-group" role="none">
-                    {(
-                      [
-                        { value: "system", label: "System" },
-                        { value: "dark", label: "Dark" },
-                        { value: "light", label: "Light" }
-                      ] as const
-                    ).map((themeOption) => {
-                      const isThemeActive = themeMode === themeOption.value;
-
-                      return (
-                        <button
-                          key={themeOption.value}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={isThemeActive}
-                          className={`nc-user-menu__theme-item ${isThemeActive ? "nc-user-menu__theme-item--active" : ""}`}
-                          onClick={() => {
-                            onThemeModeChange(themeOption.value);
-                            setIsUserMenuOpen(false);
-                          }}
-                        >
-                          <span>{themeOption.label}</span>
-                          {isThemeActive ? <span aria-hidden="true">✓</span> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onOpenSettings();
-                    setIsUserMenuOpen(false);
-                  }}
-                >
-                  Settings
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onOpenUserSettings();
-                    setIsUserMenuOpen(false);
-                  }}
-                >
-                  Manage account
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="nc-user-menu__danger"
-                  onClick={() => {
-                    onSignOut();
-                    setIsUserMenuOpen(false);
-                  }}
-                >
-                  Sign out
-                </button>
-              </div>
+          <div className="nc-user-menu-wrap" ref={isUserMenuOpen && !isCollapsed ? userMenuReference : null}>
+            {!isCollapsed ? (
+              <button
+                type="button"
+                className={`nc-user-settings ${isUserMenuOpen ? "nc-user-settings--open" : ""}`}
+                aria-label="More options"
+                aria-haspopup="menu"
+                aria-expanded={isUserMenuOpen}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleUserMenu();
+                }}
+              >
+                ⋯
+              </button>
             ) : null}
+
+            {isUserMenuOpen && !isCollapsed ? renderUserMenu() : null}
           </div>
+
+          {isUserMenuOpen && isCollapsed ? renderUserMenu() : null}
         </div>
       </div>
     </aside>

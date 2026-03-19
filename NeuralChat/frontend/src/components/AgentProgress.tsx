@@ -31,7 +31,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors select-none"
+      className="nc-agent-md__copy-btn"
     >
       {copied ? "✓ Copied" : "Copy"}
     </button>
@@ -91,103 +91,59 @@ function ToolBadge({ tool }: { tool: string | null | undefined }) {
   );
 }
 
-// Renders markdown with Tailwind styling + VS Code-style syntax highlighted code blocks.
+// Renders markdown using the shared NeuralChat CSS system so it stays theme-aware and responsive.
 function MarkdownContent({ content, className = "" }: { content: string; className?: string }) {
   return (
     <ReactMarkdown
-      className={className}
+      className={`nc-agent-md ${className}`.trim()}
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
       components={{
         h1: ({ children }) => (
-          <h1 className="text-xl font-bold mt-4 mb-2">{children}</h1>
+          <h1 className="nc-agent-md__h1">{children}</h1>
         ),
         h2: ({ children }) => (
-          <h2 className="text-lg font-semibold mt-3 mb-2">{children}</h2>
+          <h2 className="nc-agent-md__h2">{children}</h2>
         ),
         h3: ({ children }) => (
-          <h3 className="text-base font-semibold mt-3 mb-1">{children}</h3>
+          <h3 className="nc-agent-md__h3">{children}</h3>
         ),
         p: ({ children }) => (
-          <p className="mb-2 leading-relaxed">{children}</p>
+          <p className="nc-agent-md__p">{children}</p>
         ),
         ul: ({ children }) => (
-          <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>
+          <ul className="nc-agent-md__list nc-agent-md__list--unordered">{children}</ul>
         ),
         ol: ({ children }) => (
-          <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>
+          <ol className="nc-agent-md__list nc-agent-md__list--ordered">{children}</ol>
         ),
         li: ({ children }) => (
-          <li className="ml-2">{children}</li>
+          <li className="nc-agent-md__list-item">{children}</li>
         ),
         strong: ({ children }) => (
-          <strong className="font-semibold">{children}</strong>
+          <strong className="nc-agent-md__strong">{children}</strong>
         ),
         em: ({ children }) => (
-          <em className="italic">{children}</em>
+          <em className="nc-agent-md__em">{children}</em>
         ),
-
-        // Tables — fully CSS-variable driven, no hardcoded dark colors
         table: ({ children }) => (
-          <div style={{
-            overflowX: "auto",
-            marginBottom: "16px",
-            borderRadius: "12px",
-            border: "1px solid var(--border-subtle)",
-            background: "var(--bg-input)",
-          }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
-              {children}
-            </table>
+          <div className="nc-agent-md__table-wrap">
+            <table className="nc-agent-md__table">{children}</table>
           </div>
         ),
         thead: ({ children }) => (
-          <thead style={{ background: "rgba(108, 99, 212, 0.08)" }}>
-            {children}
-          </thead>
+          <thead className="nc-agent-md__thead">{children}</thead>
         ),
         th: ({ children }) => (
-          <th style={{
-            padding: "10px 14px",
-            textAlign: "left",
-            fontSize: "11px",
-            fontWeight: 700,
-            letterSpacing: "0.06em",
-            textTransform: "uppercase",
-            color: "var(--accent-primary)",
-            borderBottom: "1px solid rgba(108, 99, 212, 0.15)",
-            whiteSpace: "nowrap",
-            background: "transparent",
-          }}>
-            {children}
-          </th>
+          <th className="nc-agent-md__th">{children}</th>
         ),
         tbody: ({ children }) => <tbody>{children}</tbody>,
-        tr: ({ children, ...props }) => (
-          <tr style={{
-            borderBottom: "1px solid var(--border-soft)",
-            transition: "background 120ms ease",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-          {...props}>
-            {children}
-          </tr>
+        tr: ({ children }) => (
+          <tr className="nc-agent-md__tr">{children}</tr>
         ),
         td: ({ children }) => (
-          <td style={{
-            padding: "9px 14px",
-            color: "var(--text-primary)",
-            verticalAlign: "top",
-            lineHeight: "1.5",
-            fontSize: "13px",
-          }}>
-            {children}
-          </td>
+          <td className="nc-agent-md__td">{children}</td>
         ),
-
-        // Fenced code blocks → react-syntax-highlighter with vscDarkPlus theme.
-        // Inline code → subtle rose highlight.
         code: ({ children, className: codeClass }) => {
           const language = codeClass?.replace("language-", "") ?? "";
           const isBlock = Boolean(codeClass?.startsWith("language-"));
@@ -195,16 +151,11 @@ function MarkdownContent({ content, className = "" }: { content: string; classNa
 
           if (isBlock) {
             return (
-              <div className="mb-3 rounded-lg overflow-hidden border border-gray-700">
-                {/* Top bar: language label + copy button */}
-                <div className="flex items-center justify-between bg-[#1e1e1e] px-4 py-2 border-b border-gray-700">
-                  <span className="text-xs text-gray-400 font-mono tracking-wide">
-                    {language || "code"}
-                  </span>
+              <div className="nc-agent-md__code-block">
+                <div className="nc-agent-md__code-head">
+                  <span className="nc-agent-md__code-lang">{language || "code"}</span>
                   <CopyButton text={codeText} />
                 </div>
-
-                {/* Syntax-highlighted code body */}
                 <SyntaxHighlighter
                   language={language || "text"}
                   style={vscDarkPlus}
@@ -236,29 +187,23 @@ function MarkdownContent({ content, className = "" }: { content: string; classNa
             );
           }
 
-          // Inline code
           return (
-            <code className="bg-gray-100 dark:bg-gray-700 text-rose-600 dark:text-rose-400 rounded px-1.5 py-0.5 text-sm font-mono">
+            <code className="nc-agent-md__inline-code">
               {children}
             </code>
           );
         },
-
-        // Suppress default <pre> wrapper — handled inside <code> above.
         pre: ({ children }) => <>{children}</>,
-
         blockquote: ({ children }) => (
-          <blockquote className="border-l-4 border-gray-300 dark:border-gray-600 pl-3 italic text-gray-600 dark:text-gray-400 mb-2">
-            {children}
-          </blockquote>
+          <blockquote className="nc-agent-md__blockquote">{children}</blockquote>
         ),
-        hr: () => <hr className="my-3" style={{ borderColor: "var(--border-subtle)" }} />,
+        hr: () => <hr className="nc-agent-md__hr" />,
         a: ({ href, children }) => (
           <a
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-500 hover:underline"
+            className="nc-agent-md__link"
           >
             {children}
           </a>

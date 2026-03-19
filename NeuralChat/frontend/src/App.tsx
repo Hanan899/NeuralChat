@@ -306,6 +306,24 @@ function buildConversationSummary(title = "New chat"): ConversationSummary {
   };
 }
 
+function isConversationDraft(
+  conversation: ConversationSummary,
+  messagesByConversation: Record<string, ChatMessage[]>,
+  fileCountsByConversation: Record<string, number>
+): boolean {
+  const messageCount = messagesByConversation[conversation.id]?.length ?? 0;
+  const fileCount = fileCountsByConversation[conversation.id] ?? 0;
+  const hasPreview = conversation.preview.trim().length > 0;
+
+  return (
+    conversation.archived !== true &&
+    conversation.title === "New chat" &&
+    !hasPreview &&
+    messageCount === 0 &&
+    fileCount === 0
+  );
+}
+
 function buildWorkspaceDescription(shortcutId: Exclude<ShortcutId, "new">): string {
   if (shortcutId === "images") {
     return "Image tools are not wired into NeuralChat yet, but this workspace is reserved for visual creation and image-first prompts.";
@@ -490,8 +508,13 @@ function ChatShell() {
     [conversations]
   );
   const historyItems = useMemo(
-    () => sortedConversations.filter((conversation) => conversation.archived !== true),
-    [sortedConversations]
+    () =>
+      sortedConversations.filter(
+        (conversation) =>
+          conversation.archived !== true &&
+          !isConversationDraft(conversation, messagesByConversation, fileCountsByConversation)
+      ),
+    [fileCountsByConversation, messagesByConversation, sortedConversations]
   );
   const archivedHistoryItems = useMemo(
     () => sortedConversations.filter((conversation) => conversation.archived === true),
@@ -1056,12 +1079,22 @@ function ChatShell() {
     if (location.pathname !== "/") {
       navigate("/");
     }
-    const next = buildConversationSummary();
-    setConversations((previous) => [next, ...previous]);
-    setMessagesByConversation((previous) => ({ ...previous, [next.id]: [] }));
-    setFilesByConversation((previous) => ({ ...previous, [next.id]: [] }));
-    setFileCountsByConversation((previous) => ({ ...previous, [next.id]: 0 }));
-    setActiveConversationId(next.id);
+
+    const reusableDraftConversation = conversations.find((conversation) =>
+      isConversationDraft(conversation, messagesByConversation, fileCountsByConversation)
+    );
+
+    if (reusableDraftConversation) {
+      setActiveConversationId(reusableDraftConversation.id);
+    } else {
+      const next = buildConversationSummary();
+      setConversations((previous) => [next, ...previous]);
+      setMessagesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+      setFilesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+      setFileCountsByConversation((previous) => ({ ...previous, [next.id]: 0 }));
+      setActiveConversationId(next.id);
+    }
+
     setActiveShortcutId("new");
     setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
@@ -2185,6 +2218,7 @@ function ChatShell() {
               onShowToast={showToast}
               onUsageStateChange={setTodayUsageSummary}
               onOpenAccountSettings={handleOpenUserSettings}
+              onCloseSettings={() => setIsSettingsOpen(false)}
             />
           ) : isProjectsIndexRoute ? (
             <ProjectsPage
