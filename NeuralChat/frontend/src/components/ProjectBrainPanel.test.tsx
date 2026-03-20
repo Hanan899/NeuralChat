@@ -144,7 +144,56 @@ describe("ProjectBrainPanel", () => {
     );
 
     await waitFor(() => {
+      expect(getAuthToken).toHaveBeenCalled();
       expect(getProjectMemoryMock).toHaveBeenCalledWith("fresh-token", "proj1", undefined);
     });
   });
+
+  it("retries once with a fresh token after an invalid token error", async () => {
+    const getAuthToken = vi.fn().mockResolvedValue("fresh-token");
+    getProjectMemoryMock
+      .mockRejectedValueOnce(new Error("Invalid authentication token."))
+      .mockResolvedValueOnce({
+        memory: { startup_name: "NeuralChat", tech_stack: "FastAPI" },
+        completeness: {
+          percentage: 60,
+          filled_keys: ["startup_name", "tech_stack"],
+          missing_keys: ["business_model", "stage"],
+          suggestion: "Tell me about your business model and stage.",
+        },
+      });
+
+    render(
+      <ProjectBrainPanel
+        authToken="stale-token"
+        getAuthToken={getAuthToken}
+        projectId="proj1"
+        template="startup"
+      />
+    );
+
+    await waitFor(() => {
+      expect(getProjectMemoryMock).toHaveBeenCalledTimes(2);
+      expect(getProjectMemoryMock).toHaveBeenNthCalledWith(1, "fresh-token", "proj1", undefined);
+      expect(getProjectMemoryMock).toHaveBeenNthCalledWith(2, "fresh-token", "proj1", undefined);
+    });
+  });
+
+  it("shows a calm fallback message when auth never becomes available", async () => {
+    const getAuthToken = vi.fn().mockResolvedValue(null);
+
+    render(
+      <ProjectBrainPanel
+        authToken=""
+        getAuthToken={getAuthToken}
+        projectId="proj1"
+        template="startup"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("We couldn't refresh Project Brain right now. Please try again.")).toBeInTheDocument();
+    }, { timeout: 6500 });
+    expect(screen.queryByText(/confirm your session yet/i)).not.toBeInTheDocument();
+  }, 7000);
 });

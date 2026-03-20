@@ -3,6 +3,7 @@ import { KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react"
 import type { RequestNamingContext } from "../api";
 import { getBrainLog, getProjectMemory, resetProjectBrain, updateProjectMemoryFact } from "../api/projects";
 import type { ProjectBrainLogEntry, ProjectMemoryResponse } from "../types/project";
+import { isProjectAuthTimeoutError, runWithProjectAuthToken } from "../utils/projectAuth";
 
 type ProjectBrainPanelProps = {
   authToken: string;
@@ -38,10 +39,6 @@ function formatLearnedKeys(extractedFacts: Record<string, string>) {
   return factKeys.map(formatLabel).join(", ");
 }
 
-function isInvalidAuthError(error: unknown) {
-  return error instanceof Error && error.message.trim().toLowerCase().includes("invalid authentication token");
-}
-
 export function ProjectBrainPanel({
   authToken,
   getAuthToken,
@@ -61,55 +58,26 @@ export function ProjectBrainPanel({
   const [editingValue, setEditingValue] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const [isRetryingAuth, setIsRetryingAuth] = useState(false);
-
-  const resolveAuthToken = useCallback(async (forceFresh = false) => {
-    if (getAuthToken) {
-      for (let attemptNumber = 0; attemptNumber < 3; attemptNumber += 1) {
-        const nextToken = ((await getAuthToken()) ?? "").trim();
-        if (nextToken) {
-          return nextToken;
-        }
-        if (attemptNumber < 2) {
-          await new Promise((resolve) => window.setTimeout(resolve, 200));
-        }
-      }
-    }
-
-    if (!forceFresh && authToken.trim()) {
-      return authToken.trim();
-    }
-
-    return "";
-  }, [authToken, getAuthToken]);
 
   const runWithProjectToken = useCallback(async <T,>(
     task: (resolvedAuthToken: string) => Promise<T>
   ): Promise<T> => {
-    const firstToken = await resolveAuthToken();
-    if (!firstToken) {
-      throw new Error("We couldn't confirm your session yet. Please wait a second and try again.");
-    }
+    return await runWithProjectAuthToken(
+      { authToken, getAuthToken },
+      task,
+      { preferFresh: true }
+    );
+  }, [authToken, getAuthToken]);
 
-    try {
-      return await task(firstToken);
-    } catch (error) {
-      if (!isInvalidAuthError(error) || !getAuthToken) {
-        throw error;
-      }
-
-      setIsRetryingAuth(true);
-      try {
-        const refreshedToken = await resolveAuthToken(true);
-        if (!refreshedToken) {
-          throw new Error("We couldn't refresh your session. Please reopen the project and try again.");
-        }
-        return await task(refreshedToken);
-      } finally {
-        setIsRetryingAuth(false);
-      }
+  function buildProjectBrainErrorMessage(error: unknown): string {
+    if (isProjectAuthTimeoutError(error)) {
+      return "We couldn't refresh Project Brain right now. Please try again.";
     }
-  }, [getAuthToken, resolveAuthToken]);
+    if (error instanceof Error && error.message.trim().toLowerCase().includes("authentication")) {
+      return "We couldn't refresh Project Brain right now. Please try again.";
+    }
+    return error instanceof Error ? error.message : "Failed to load Project Brain.";
+  }
 
   const loadProjectBrain = useCallback(async () => {
     setIsLoading(true);
@@ -124,9 +92,7 @@ export function ProjectBrainPanel({
       setBrainState(memoryPayload);
       setBrainLog(brainLogPayload.log);
     } catch (error) {
-      setErrorText(
-        error instanceof Error ? error.message : "Failed to load Project Brain."
-      );
+      setErrorText(buildProjectBrainErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -187,7 +153,7 @@ export function ProjectBrainPanel({
       setEditingValue("");
       await loadProjectBrain();
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to update Project Brain.");
+      setErrorText(buildProjectBrainErrorMessage(error));
     } finally {
       setIsSaving(false);
     }
@@ -211,7 +177,7 @@ export function ProjectBrainPanel({
       setEditingValue("");
       await loadProjectBrain();
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to reset Project Brain.");
+      setErrorText(buildProjectBrainErrorMessage(error));
     } finally {
       setIsResetting(false);
     }
@@ -247,8 +213,8 @@ export function ProjectBrainPanel({
           </span>
           Project Brain
         </h3>
-        <button type="button" className="nc-button nc-button--ghost" onClick={() => void loadProjectBrain()} disabled={isLoading || isRetryingAuth}>
-          {isRetryingAuth ? "Reconnecting…" : "Refresh"}
+        <button type="button" className="nc-button nc-button--ghost" onClick={() => void loadProjectBrain()} disabled={isLoading}>
+          Refresh
         </button>
       </div>
 
