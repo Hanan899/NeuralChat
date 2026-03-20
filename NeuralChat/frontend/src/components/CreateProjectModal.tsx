@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { RequestNamingContext } from "../api";
 import { createProject } from "../api/projects";
+import { isInvalidAuthError, isProjectAuthTimeoutError, runWithProjectAuthToken } from "../utils/projectAuth";
 import { ProjectTemplateIcon } from "./ProjectTemplateIcon";
 import type { CreateProjectInput, Project, ProjectTemplate } from "../types/project";
 
@@ -60,16 +61,16 @@ export function CreateProjectModal({
 
   function buildProjectErrorMessage(error: unknown): string {
     if (!(error instanceof Error)) {
-      return "Failed to create project.";
+      return "We couldn't finish creating the project right now. Please try again.";
+    }
+
+    if (isProjectAuthTimeoutError(error) || isInvalidAuthError(error)) {
+      return "We couldn't finish creating the project right now. Please try again.";
     }
 
     const normalizedMessage = error.message.trim().toLowerCase();
-    if (normalizedMessage.includes("invalid authentication token")) {
-      return "Your session is not ready yet. Please wait a moment and try again.";
-    }
-
     if (normalizedMessage.includes("authentication")) {
-      return "We couldn't verify your session. Please refresh and try again.";
+      return "We couldn't finish creating the project right now. Please try again.";
     }
 
     return error.message;
@@ -88,27 +89,16 @@ export function CreateProjectModal({
     setErrorText("");
 
     try {
-      let resolvedAuthToken = authToken.trim();
-      if (!resolvedAuthToken && getAuthToken) {
-        for (let attemptNumber = 0; attemptNumber < 3 && !resolvedAuthToken; attemptNumber += 1) {
-          resolvedAuthToken = (await getAuthToken())?.trim() || "";
-          if (!resolvedAuthToken && attemptNumber < 2) {
-            await new Promise((resolve) => window.setTimeout(resolve, 250));
-          }
-        }
-      }
-
-      if (!resolvedAuthToken) {
-        setErrorText("We couldn't confirm your session yet. Please wait a second and try again.");
-        return;
-      }
-
       const payload: CreateProjectInput = {
         name: projectName.trim(),
         template: selectedTemplate,
         description: projectDescription.trim(),
       };
-      const project = await createProject(resolvedAuthToken, payload, naming);
+      const project = await runWithProjectAuthToken(
+        { authToken, getAuthToken },
+        async (resolvedAuthToken) => createProject(resolvedAuthToken, payload, naming),
+        { preferFresh: true }
+      );
       onCreated(project);
     } catch (error) {
       setErrorText(buildProjectErrorMessage(error));

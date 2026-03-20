@@ -77,6 +77,7 @@ describe("CreateProjectModal", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
   });
 
@@ -169,9 +170,13 @@ describe("CreateProjectModal", () => {
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "proj-1" }));
   });
 
-  it("can create a project by resolving a fresh auth token at submit time", async () => {
+  it("waits silently for a fresh auth token at submit time and keeps the create action visible", async () => {
     const onCreated = vi.fn();
-    const getAuthToken = vi.fn().mockResolvedValue("fresh-token");
+    const getAuthToken = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("fresh-token");
     createProjectMock.mockResolvedValue({
       project_id: "proj-2",
       name: "ChatAssist AI",
@@ -191,21 +196,26 @@ describe("CreateProjectModal", () => {
       />
     );
 
-    await userEvent.type(screen.getByRole("textbox", { name: /name your project/i }), "ChatAssist AI");
-    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: /name your project/i }), "ChatAssist AI");
+    await user.click(screen.getByRole("button", { name: /create project/i }));
 
+    expect(screen.getByRole("button", { name: /creating/i })).toBeDisabled();
     await waitFor(() => {
-      expect(getAuthToken).toHaveBeenCalled();
+      expect(getAuthToken).toHaveBeenCalledTimes(3);
       expect(createProjectMock).toHaveBeenCalledWith(
         "fresh-token",
         expect.objectContaining({ name: "ChatAssist AI", template: "startup" }),
         undefined
       );
     });
-    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "proj-2" }));
+    expect(screen.queryByText(/session is not ready/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "proj-2" }));
+    });
   });
 
-  it("shows a friendly error when a fresh auth token still cannot be resolved", async () => {
+  it("shows a calm fallback error when a fresh auth token still cannot be resolved", async () => {
     const getAuthToken = vi.fn().mockResolvedValue(null);
 
     render(
@@ -219,12 +229,13 @@ describe("CreateProjectModal", () => {
       />
     );
 
-    await userEvent.type(screen.getByRole("textbox", { name: /name your project/i }), "ChatAssist AI");
-    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: /name your project/i }), "ChatAssist AI");
+    await user.click(screen.getByRole("button", { name: /create project/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("We couldn't confirm your session yet. Please wait a second and try again.")).toBeInTheDocument();
-    });
+      expect(screen.getByText("We couldn't finish creating the project right now. Please try again.")).toBeInTheDocument();
+    }, { timeout: 6500 });
     expect(createProjectMock).not.toHaveBeenCalled();
-  });
+  }, 7000);
 });
