@@ -324,7 +324,42 @@ def test_get_usage_limit_returns_current_limit(load_profile_mock):
     app.dependency_overrides.pop(require_user_id, None)
 
     assert response.status_code == 200
-    assert response.json() == {"daily_limit_usd": 2.5}
+    assert response.json() == {"daily_limit_usd": 2.5, "monthly_limit_usd": 30.0}
+
+
+@patch("app.main._get_usage_status_for_feature")
+def test_get_usage_status_endpoint_returns_combined_status(get_usage_status_mock):
+    app.dependency_overrides[require_user_id] = lambda: "user_123"
+    get_usage_status_mock.return_value = {
+        "daily": {
+            "spent_usd": 0.4,
+            "limit_usd": 1.0,
+            "remaining_usd": 0.6,
+            "percentage_used": 40.0,
+            "warning_triggered": False,
+            "limit_exceeded": False,
+        },
+        "monthly": {
+            "spent_usd": 5.0,
+            "limit_usd": 30.0,
+            "remaining_usd": 25.0,
+            "percentage_used": 16.67,
+            "warning_triggered": False,
+            "limit_exceeded": False,
+        },
+        "blocked": False,
+        "blocking_period": None,
+        "blocking_message": "",
+    }
+
+    response = client.get("/api/usage/status")
+    app.dependency_overrides.pop(require_user_id, None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["daily"]["limit_usd"] == 1.0
+    assert payload["monthly"]["limit_usd"] == 30.0
+    assert payload["blocked"] is False
 
 
 @patch("app.main.save_profile")
@@ -337,6 +372,38 @@ def test_patch_limit_updates_user_profile(save_profile_mock):
     assert response.status_code == 200
     save_profile_mock.assert_called_once()
     assert response.json()["message"] == "Daily limit updated to $2.00"
+
+
+@patch("app.main.load_profile")
+@patch("app.main.save_profile")
+def test_patch_limit_updates_monthly_only(save_profile_mock, load_profile_mock):
+    app.dependency_overrides[require_user_id] = lambda: "user_123"
+    load_profile_mock.return_value = {"daily_limit_usd": 1.5, "monthly_limit_usd": 40.0}
+
+    response = client.patch("/api/usage/limit", json={"monthly_limit_usd": 40.0})
+    app.dependency_overrides.pop(require_user_id, None)
+
+    assert response.status_code == 200
+    save_profile_mock.assert_called_once()
+    assert response.json()["message"] == "Monthly limit updated to $40.00"
+    assert response.json()["daily_limit_usd"] == 1.5
+    assert response.json()["monthly_limit_usd"] == 40.0
+
+
+@patch("app.main.load_profile")
+@patch("app.main.save_profile")
+def test_patch_limit_updates_both_limits(save_profile_mock, load_profile_mock):
+    app.dependency_overrides[require_user_id] = lambda: "user_123"
+    load_profile_mock.return_value = {"daily_limit_usd": 2.0, "monthly_limit_usd": 45.0}
+
+    response = client.patch("/api/usage/limit", json={"daily_limit_usd": 2.0, "monthly_limit_usd": 45.0})
+    app.dependency_overrides.pop(require_user_id, None)
+
+    assert response.status_code == 200
+    save_profile_mock.assert_called_once()
+    assert response.json()["message"] == "Usage limits updated"
+    assert response.json()["daily_limit_usd"] == 2.0
+    assert response.json()["monthly_limit_usd"] == 45.0
 
 
 def test_patch_limit_rejects_negative_value():
@@ -362,6 +429,16 @@ async def test_log_usage_called_after_chat_completes():
     log_usage_mock = MagicMock()
 
     with (
+        patch(
+            "app.main._get_usage_status_for_feature",
+            return_value={
+                "daily": {"spent_usd": 0.1, "limit_usd": 1.0, "remaining_usd": 0.9, "percentage_used": 10.0, "warning_triggered": False, "limit_exceeded": False},
+                "monthly": {"spent_usd": 1.0, "limit_usd": 30.0, "remaining_usd": 29.0, "percentage_used": 3.33, "warning_triggered": False, "limit_exceeded": False},
+                "blocked": False,
+                "blocking_period": None,
+                "blocking_message": "",
+            },
+        ),
         patch("app.main.save_user_message"),
         patch("app.main.save_assistant_message"),
         patch("app.main.build_memory_prompt", return_value=""),
@@ -385,11 +462,44 @@ async def test_log_usage_called_after_chat_completes():
 
 
 @pytest.mark.asyncio
+async def test_chat_returns_429_when_daily_limit_blocked():
+    with patch(
+        "app.main._get_usage_status_for_feature",
+        return_value={
+            "daily": {"spent_usd": 1.0, "limit_usd": 1.0, "remaining_usd": 0.0, "percentage_used": 100.0, "warning_triggered": True, "limit_exceeded": True},
+            "monthly": {"spent_usd": 5.0, "limit_usd": 30.0, "remaining_usd": 25.0, "percentage_used": 16.67, "warning_triggered": False, "limit_exceeded": False},
+            "blocked": True,
+            "blocking_period": "daily",
+            "blocking_message": cost_tracker.DAILY_LIMIT_BLOCK_MESSAGE,
+        },
+    ):
+        with pytest.raises(Exception) as error_info:
+            await post_chat(
+                payload={"session_id": "session-1", "message": "hello", "model": "gpt-5", "stream": False, "force_search": False},
+                user_id="user_123",
+                naming={"display_name": "Abdul Hanan", "session_title": "Hello"},
+            )
+
+    assert getattr(error_info.value, "status_code", None) == 429
+    assert getattr(error_info.value, "detail", None) == cost_tracker.DAILY_LIMIT_BLOCK_MESSAGE
+
+
+@pytest.mark.asyncio
 async def test_log_usage_called_for_title_generation():
     created_tasks: list[asyncio.Task] = []
     log_usage_mock = MagicMock()
 
     with (
+        patch(
+            "app.main._get_usage_status_for_feature",
+            return_value={
+                "daily": {"spent_usd": 0.1, "limit_usd": 1.0, "remaining_usd": 0.9, "percentage_used": 10.0, "warning_triggered": False, "limit_exceeded": False},
+                "monthly": {"spent_usd": 1.0, "limit_usd": 30.0, "remaining_usd": 29.0, "percentage_used": 3.33, "warning_triggered": False, "limit_exceeded": False},
+                "blocked": False,
+                "blocking_period": None,
+                "blocking_message": "",
+            },
+        ),
         patch("app.main.generate_conversation_title_with_usage", MagicMock(return_value=("API Debugging", {"input_tokens": 120, "output_tokens": 20}))),
         patch("app.main.log_usage", log_usage_mock),
         patch("app.main.asyncio.to_thread", side_effect=run_immediately),
@@ -408,10 +518,44 @@ async def test_log_usage_called_for_title_generation():
 
 
 @pytest.mark.asyncio
+async def test_title_generation_returns_429_when_monthly_limit_blocked():
+    with patch(
+        "app.main._get_usage_status_for_feature",
+        return_value={
+            "daily": {"spent_usd": 0.2, "limit_usd": 1.0, "remaining_usd": 0.8, "percentage_used": 20.0, "warning_triggered": False, "limit_exceeded": False},
+            "monthly": {"spent_usd": 30.0, "limit_usd": 30.0, "remaining_usd": 0.0, "percentage_used": 100.0, "warning_triggered": True, "limit_exceeded": True},
+            "blocked": True,
+            "blocking_period": "monthly",
+            "blocking_message": cost_tracker.MONTHLY_LIMIT_BLOCK_MESSAGE,
+        },
+    ):
+        with pytest.raises(Exception) as error_info:
+            await post_conversation_title(
+                payload={"prompt": "help me debug", "reply": ""},
+                user_id="user_123",
+                naming={"display_name": "Abdul Hanan", "session_title": "API Debugging"},
+            )
+
+    assert getattr(error_info.value, "status_code", None) == 429
+    assert getattr(error_info.value, "detail", None) == cost_tracker.MONTHLY_LIMIT_BLOCK_MESSAGE
+
+
+@pytest.mark.asyncio
 async def test_log_usage_called_for_memory_extraction():
     log_usage_mock = MagicMock()
 
     with (
+        patch("app.services.memory.load_profile", return_value={"daily_limit_usd": 1.0, "monthly_limit_usd": 30.0}),
+        patch(
+            "app.services.memory.get_usage_status",
+            return_value={
+                "daily": {"spent_usd": 0.1, "limit_usd": 1.0, "remaining_usd": 0.9, "percentage_used": 10.0, "warning_triggered": False, "limit_exceeded": False},
+                "monthly": {"spent_usd": 1.0, "limit_usd": 30.0, "remaining_usd": 29.0, "percentage_used": 3.33, "warning_triggered": False, "limit_exceeded": False},
+                "blocked": False,
+                "blocking_period": None,
+                "blocking_message": "",
+            },
+        ),
         patch("app.services.memory.extract_facts_with_usage", return_value=({"name": "Ali"}, {"input_tokens": 100, "output_tokens": 50})),
         patch("app.services.memory.save_profile"),
         patch("app.services.memory.log_usage", log_usage_mock),
@@ -423,11 +567,43 @@ async def test_log_usage_called_for_memory_extraction():
 
 
 @pytest.mark.asyncio
+async def test_memory_extraction_skips_when_usage_blocked():
+    with (
+        patch("app.services.memory.load_profile", return_value={"daily_limit_usd": 1.0, "monthly_limit_usd": 30.0}),
+        patch(
+            "app.services.memory.get_usage_status",
+            return_value={
+                "daily": {"spent_usd": 1.0, "limit_usd": 1.0, "remaining_usd": 0.0, "percentage_used": 100.0, "warning_triggered": True, "limit_exceeded": True},
+                "monthly": {"spent_usd": 10.0, "limit_usd": 30.0, "remaining_usd": 20.0, "percentage_used": 33.33, "warning_triggered": False, "limit_exceeded": False},
+                "blocked": True,
+                "blocking_period": "daily",
+                "blocking_message": cost_tracker.DAILY_LIMIT_BLOCK_MESSAGE,
+            },
+        ),
+        patch("app.services.memory.extract_facts_with_usage") as extract_mock,
+        patch("app.services.memory.asyncio.to_thread", side_effect=run_immediately),
+    ):
+        await memory.process_memory_update("user_123", "message", "reply", "Abdul Hanan")
+
+    extract_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_log_usage_called_for_agent_plan():
     created_tasks: list[asyncio.Task] = []
     log_usage_mock = MagicMock()
 
     with (
+        patch(
+            "app.main._get_usage_status_for_feature",
+            return_value={
+                "daily": {"spent_usd": 0.1, "limit_usd": 1.0, "remaining_usd": 0.9, "percentage_used": 10.0, "warning_triggered": False, "limit_exceeded": False},
+                "monthly": {"spent_usd": 1.0, "limit_usd": 30.0, "remaining_usd": 29.0, "percentage_used": 3.33, "warning_triggered": False, "limit_exceeded": False},
+                "blocked": False,
+                "blocking_period": None,
+                "blocking_message": "",
+            },
+        ),
         patch("app.main.create_task_plan_with_usage", AsyncMock(return_value=({"plan_id": "plan-1", "goal": "Goal", "steps": []}, {"input_tokens": 250, "output_tokens": 120}))),
         patch("app.main.save_task_plan"),
         patch("app.main.log_usage", log_usage_mock),
@@ -474,6 +650,16 @@ async def test_log_usage_called_for_agent_step_and_summary():
         }
 
     with (
+        patch(
+            "app.main._get_usage_status_for_feature",
+            return_value={
+                "daily": {"spent_usd": 0.1, "limit_usd": 1.0, "remaining_usd": 0.9, "percentage_used": 10.0, "warning_triggered": False, "limit_exceeded": False},
+                "monthly": {"spent_usd": 1.0, "limit_usd": 30.0, "remaining_usd": 29.0, "percentage_used": 3.33, "warning_triggered": False, "limit_exceeded": False},
+                "blocked": False,
+                "blocking_period": None,
+                "blocking_message": "",
+            },
+        ),
         patch("app.main.load_task_plan", return_value={"plan_id": "plan-1", "goal": "Goal", "steps": [{"step_number": 1, "description": "Think", "tool": None, "tool_input": None}]}),
         patch("app.main.stream_agent_execution", fake_stream_agent_execution),
         patch("app.main.save_execution_log"),

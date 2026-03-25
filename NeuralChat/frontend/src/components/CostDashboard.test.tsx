@@ -7,21 +7,18 @@ import { CostDashboard } from "./CostDashboard";
 import { CostWarningBanner } from "./CostWarningBanner";
 
 const {
-  getTodayUsageMock,
+  getUsageStatusMock,
   getUsageSummaryMock,
-  getUsageLimitMock,
   updateUsageLimitMock,
 } = vi.hoisted(() => ({
-  getTodayUsageMock: vi.fn(),
+  getUsageStatusMock: vi.fn(),
   getUsageSummaryMock: vi.fn(),
-  getUsageLimitMock: vi.fn(),
   updateUsageLimitMock: vi.fn(),
 }));
 
 vi.mock("../api/usage", () => ({
-  getTodayUsage: getTodayUsageMock,
+  getUsageStatus: getUsageStatusMock,
   getUsageSummary: getUsageSummaryMock,
-  getUsageLimit: getUsageLimitMock,
   updateUsageLimit: updateUsageLimitMock,
 }));
 
@@ -37,14 +34,26 @@ vi.mock("recharts", () => ({
   YAxis: () => null,
 }));
 
-const todayResponse = {
-  records: [],
-  summary: {
-    today_cost_usd: 0.23,
-    daily_limit_usd: 1.0,
+const usageStatusResponse = {
+  daily: {
+    spent_usd: 0.23,
+    limit_usd: 1.0,
+    remaining_usd: 0.77,
+    warning_triggered: false,
     limit_exceeded: false,
     percentage_used: 23,
   },
+  monthly: {
+    spent_usd: 4.2,
+    limit_usd: 30.0,
+    remaining_usd: 25.8,
+    warning_triggered: false,
+    limit_exceeded: false,
+    percentage_used: 14,
+  },
+  blocked: false,
+  blocking_period: null,
+  blocking_message: "",
 };
 
 const summaryResponse = {
@@ -87,10 +96,13 @@ function renderDashboard() {
 describe("CostDashboard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getTodayUsageMock.mockResolvedValue(todayResponse);
+    getUsageStatusMock.mockResolvedValue(usageStatusResponse);
     getUsageSummaryMock.mockResolvedValue(summaryResponse);
-    getUsageLimitMock.mockResolvedValue({ daily_limit_usd: 1.0 });
-    updateUsageLimitMock.mockResolvedValue({ message: "Daily limit updated to $2.00", daily_limit_usd: 2.0 });
+    updateUsageLimitMock.mockResolvedValue({
+      message: "Daily limit updated to $2.00",
+      daily_limit_usd: 2.0,
+      monthly_limit_usd: 30.0,
+    });
   });
 
   afterEach(() => {
@@ -104,9 +116,9 @@ describe("CostDashboard", () => {
   });
 
   it("test_cost_dashboard_renders_progress_bar", async () => {
-    getTodayUsageMock.mockResolvedValueOnce({
-      records: [],
-      summary: { today_cost_usd: 0.5, daily_limit_usd: 1.0, limit_exceeded: false, percentage_used: 50 },
+    getUsageStatusMock.mockResolvedValueOnce({
+      ...usageStatusResponse,
+      daily: { ...usageStatusResponse.daily, spent_usd: 0.5, remaining_usd: 0.5, percentage_used: 50 },
     });
 
     renderDashboard();
@@ -127,25 +139,49 @@ describe("CostDashboard", () => {
   });
 
   it("test_cost_warning_banner_hidden_below_80_percent", () => {
-    render(
-      <CostWarningBanner
-        summary={{ today_cost_usd: 0.5, daily_limit_usd: 1.0, percentage_used: 50, limit_exceeded: false }}
-        onDismiss={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByText(/Usage warning/i)).not.toBeInTheDocument();
+    render(<CostWarningBanner status={usageStatusResponse} onDismiss={vi.fn()} />);
+    expect(screen.queryByText(/budget warning/i)).not.toBeInTheDocument();
   });
 
-  it("test_cost_warning_banner_shows_at_80_percent", () => {
+  it("test_cost_warning_banner_shows_daily_warning_at_80_percent", () => {
     render(
       <CostWarningBanner
-        summary={{ today_cost_usd: 0.8, daily_limit_usd: 1.0, percentage_used: 80, limit_exceeded: false }}
+        status={{
+          ...usageStatusResponse,
+          daily: {
+            ...usageStatusResponse.daily,
+            spent_usd: 0.8,
+            remaining_usd: 0.2,
+            percentage_used: 80,
+            warning_triggered: true,
+          },
+        }}
         onDismiss={vi.fn()}
       />
     );
 
-    expect(screen.getByText(/You've used 80% of your daily budget/i)).toBeInTheDocument();
+    expect(screen.getByText(/Daily budget warning/i)).toBeInTheDocument();
+    expect(screen.getByText(/80% of your daily budget/i)).toBeInTheDocument();
+  });
+
+  it("test_cost_warning_banner_shows_monthly_warning", () => {
+    render(
+      <CostWarningBanner
+        status={{
+          ...usageStatusResponse,
+          monthly: {
+            ...usageStatusResponse.monthly,
+            spent_usd: 24,
+            remaining_usd: 6,
+            percentage_used: 80,
+            warning_triggered: true,
+          },
+        }}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/Monthly budget warning/i)).toBeInTheDocument();
   });
 
   it("test_cost_warning_banner_dismissable", async () => {
@@ -153,7 +189,16 @@ describe("CostDashboard", () => {
       const [visible, setVisible] = useState(true);
       return visible ? (
         <CostWarningBanner
-          summary={{ today_cost_usd: 0.8, daily_limit_usd: 1.0, percentage_used: 80, limit_exceeded: false }}
+          status={{
+            ...usageStatusResponse,
+            daily: {
+              ...usageStatusResponse.daily,
+              spent_usd: 0.8,
+              remaining_usd: 0.2,
+              percentage_used: 80,
+              warning_triggered: true,
+            },
+          }}
           onDismiss={() => setVisible(false)}
         />
       ) : null;
@@ -162,30 +207,32 @@ describe("CostDashboard", () => {
     render(<BannerHarness />);
     await userEvent.click(screen.getByRole("button", { name: "Dismiss cost warning" }));
     await waitFor(() => {
-      expect(screen.queryByText(/Usage warning/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Daily budget warning/i)).not.toBeInTheDocument();
     });
   });
 
-  it("test_limit_setter_shows_current_limit", async () => {
+  it("test_limit_setter_shows_current_limits", async () => {
     renderDashboard();
-    expect(await screen.findByText("$1.00")).toBeInTheDocument();
+    expect((await screen.findAllByText("$1.00")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$30.00").length).toBeGreaterThan(0);
   });
 
-  it("test_limit_setter_saves_new_limit", async () => {
+  it("test_limit_setter_saves_new_daily_limit", async () => {
     renderDashboard();
     const panel = await screen.findByTestId("cost-dashboard-panel");
 
-    await userEvent.click(within(panel).getByRole("button", { name: "Edit" }));
+    await userEvent.click(within(panel).getAllByRole("button", { name: "Edit" })[0]);
     const input = within(panel).getByLabelText("Daily limit");
     await userEvent.clear(input);
     await userEvent.type(input, "2.00");
     await userEvent.click(within(panel).getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(updateUsageLimitMock).toHaveBeenCalledWith("token", 2, {
-        userDisplayName: "Abdul Hanan",
-        sessionTitle: "Chat",
-      });
+      expect(updateUsageLimitMock).toHaveBeenCalledWith(
+        "token",
+        { daily_limit_usd: 2 },
+        { userDisplayName: "Abdul Hanan", sessionTitle: "Chat" }
+      );
     });
   });
 
@@ -203,7 +250,7 @@ describe("CostDashboard", () => {
     );
     const panel = await screen.findByTestId("cost-dashboard-panel");
 
-    await userEvent.click(within(panel).getByRole("button", { name: "Edit" }));
+    await userEvent.click(within(panel).getAllByRole("button", { name: "Edit" })[0]);
     const input = within(panel).getByLabelText("Daily limit");
     await userEvent.clear(input);
     await userEvent.type(input, "2.00");
@@ -222,7 +269,7 @@ describe("CostDashboard", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(getTodayUsageMock).toHaveBeenCalledTimes(1);
+    expect(getUsageStatusMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
@@ -230,6 +277,6 @@ describe("CostDashboard", () => {
       await Promise.resolve();
     });
 
-    expect(getTodayUsageMock).toHaveBeenCalledTimes(2);
+    expect(getUsageStatusMock).toHaveBeenCalledTimes(2);
   });
 });

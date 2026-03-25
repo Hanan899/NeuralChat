@@ -117,8 +117,7 @@ export async function streamChat(
   }
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || "Backend request failed.");
+    throw new Error(await readErrorMessage(response, "Backend request failed."));
   }
 
   const reader = response.body?.getReader();
@@ -237,8 +236,8 @@ export async function generateConversationTitle(
     body: JSON.stringify({ prompt, reply })
   });
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Failed to generate conversation title.");
+    const errorText = await readErrorMessage(response, "Failed to generate conversation title.");
+    throw new Error(errorText);
   }
   return (await response.json()) as ConversationTitleResponse;
 }

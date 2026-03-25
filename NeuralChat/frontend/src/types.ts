@@ -86,6 +86,8 @@ export interface UsageSummary {
 export interface DailyLimitSummary {
   today_cost_usd: number;
   daily_limit_usd: number;
+  remaining_usd: number;
+  warning_triggered: boolean;
   limit_exceeded: boolean;
   percentage_used: number;
 }
@@ -97,6 +99,24 @@ export interface TodayUsageResponse {
 
 export interface UsageLimitResponse {
   daily_limit_usd: number;
+  monthly_limit_usd: number;
+}
+
+export interface MonthlyLimitSummary {
+  spent_usd: number;
+  limit_usd: number;
+  remaining_usd: number;
+  warning_triggered: boolean;
+  limit_exceeded: boolean;
+  percentage_used: number;
+}
+
+export interface UsageStatusResponse {
+  daily: MonthlyLimitSummary;
+  monthly: MonthlyLimitSummary;
+  blocked: boolean;
+  blocking_period: "daily" | "monthly" | null;
+  blocking_message: string;
 }
 
 export interface AgentTaskState {

@@ -27,7 +27,15 @@ from app.services.blob_paths import (
     user_segment,
     write_json_with_migration,
 )
-from app.services.cost_tracker import TokenUsage, normalize_usage
+from app.services.cost_tracker import (
+    DAILY_LIMIT_BLOCK_MESSAGE,
+    MONTHLY_LIMIT_BLOCK_MESSAGE,
+    TokenUsage,
+    get_usage_status,
+    normalize_usage,
+    resolve_daily_limit,
+    resolve_monthly_limit,
+)
 from app.services.file_handler import get_relevant_chunks, list_user_files, load_parsed_chunks
 from app.services.memory import load_profile
 from app.services.search import search_web
@@ -60,6 +68,24 @@ SUMMARY_SYSTEM_PROMPT = (
     "You are NeuralChat Agent. Write a clear final answer for the user based on the goal and step results. "
     "Be concise, factual, and structured when useful."
 )
+
+
+def _is_usage_limit_message(message: str | None) -> bool:
+    return str(message or "").strip() in {DAILY_LIMIT_BLOCK_MESSAGE, MONTHLY_LIMIT_BLOCK_MESSAGE}
+
+
+async def _enforce_agent_budget(user_id: str, feature: str, display_name: str | None = None) -> None:
+    profile = await asyncio.to_thread(load_profile, user_id, display_name)
+    usage_status = await asyncio.to_thread(
+        get_usage_status,
+        user_id,
+        resolve_daily_limit(profile),
+        resolve_monthly_limit(profile),
+        feature,
+        display_name,
+    )
+    if usage_status["blocked"]:
+        raise RuntimeError(str(usage_status["blocking_message"]))
 
 
 # AgentState TypedDict — defines all keys carried through the LangGraph state machine.
@@ -337,7 +363,10 @@ async def _run_reasoning_step_with_usage(
     goal: str,
     step: dict[str, Any],
     execution_log: list[dict[str, Any]],
+    user_id: str,
+    display_name: str | None = None,
 ) -> tuple[str, TokenUsage]:
+    await _enforce_agent_budget(user_id, "agent_step", display_name)
     model = _get_agent_model(temperature=0.1, max_tokens=500)
     previous_results = execution_log[-4:]
     prompt_text = (
@@ -359,8 +388,8 @@ async def _run_reasoning_step_with_usage(
 
 
 # This helper keeps the older reasoning-step interface for call sites that do not need usage details.
-async def _run_reasoning_step(goal: str, step: dict[str, Any], execution_log: list[dict[str, Any]]) -> str:
-    result_text, _usage = await _run_reasoning_step_with_usage(goal, step, execution_log)
+async def _run_reasoning_step(goal: str, step: dict[str, Any], execution_log: list[dict[str, Any]], user_id: str, display_name: str | None = None) -> str:
+    result_text, _usage = await _run_reasoning_step_with_usage(goal, step, execution_log, user_id, display_name)
     return result_text
 
 
@@ -518,6 +547,8 @@ async def execute_step(
                     goal=goal,
                     step=step,
                     execution_log=execution_log,
+                    user_id=user_id,
+                    display_name=display_name,
                 )
                 return {
                     "step_number": step_number,
@@ -547,6 +578,8 @@ async def execute_step(
             goal=goal,
             step=step,
             execution_log=execution_log,
+            user_id=user_id,
+            display_name=display_name,
         )
         return {
             "step_number": step_number,
@@ -733,7 +766,13 @@ def check_for_loop(execution_log: list[dict[str, Any]], max_repeated_tool_calls:
 
 
 # This function builds the final user-facing summary from the goal and all step results.
-async def build_final_summary_with_usage(goal: str, execution_log: list[dict[str, Any]]) -> tuple[str, TokenUsage]:
+async def build_final_summary_with_usage(
+    goal: str,
+    execution_log: list[dict[str, Any]],
+    user_id: str,
+    display_name: str | None = None,
+) -> tuple[str, TokenUsage]:
+    await _enforce_agent_budget(user_id, "agent_summary", display_name)
     model = _get_agent_model(temperature=0.1, max_tokens=1000)
     prompt_text = (
         f"Goal: {goal}\n"
@@ -752,8 +791,8 @@ async def build_final_summary_with_usage(goal: str, execution_log: list[dict[str
 
 
 # This function keeps the older summary-only interface for call sites that do not need usage details.
-async def build_final_summary(goal: str, execution_log: list[dict[str, Any]]) -> str:
-    summary_text, _usage = await build_final_summary_with_usage(goal, execution_log)
+async def build_final_summary(goal: str, execution_log: list[dict[str, Any]], user_id: str, display_name: str | None = None) -> str:
+    summary_text, _usage = await build_final_summary_with_usage(goal, execution_log, user_id, display_name)
     return summary_text
 
 
@@ -843,11 +882,14 @@ def _build_agent_graph() -> Any:
             display_name=state.get("display_name"),
             session_title=state.get("session_title"),
         )
+        usage_limit_hit = _is_usage_limit_message(result.get("error"))
 
         return {
             **passthrough,
             "execution_log": execution_log + [result],
             "current_step_index": current_step_index + 1,
+            "stop_execution": usage_limit_hit,
+            "warning_message": result.get("error") if usage_limit_hit else passthrough.get("warning_message"),
             "last_event": {
                 "type": "step_done",
                 "step_number": result["step_number"],
@@ -877,6 +919,17 @@ def _build_agent_graph() -> Any:
             "current_step_index": state.get("current_step_index", 0),
             "execution_log": state.get("execution_log", []),
         }
+
+        if state.get("stop_execution") and _is_usage_limit_message(state.get("warning_message")):
+            return {
+                **return_base,
+                "stop_execution": True,
+                "warning_message": state.get("warning_message"),
+                "last_event": {
+                    "type": "warning",
+                    "message": str(state.get("warning_message") or ""),
+                },
+            }
 
         if elapsed_seconds >= AGENT_TIMEOUT_SECONDS:
             return {
@@ -948,7 +1001,18 @@ async def stream_agent_execution(
                 "error": None,
             }
         ]
-        fallback_summary, fallback_summary_usage = await build_final_summary_with_usage(plan.get("goal", ""), fallback_log)
+        try:
+            fallback_summary, fallback_summary_usage = await build_final_summary_with_usage(
+                plan.get("goal", ""),
+                fallback_log,
+                user_id,
+                display_name,
+            )
+            fallback_warning_message = "The planner returned no valid steps, so NeuralChat used a fallback reasoning step."
+        except RuntimeError as budget_error:
+            fallback_summary = str(budget_error)
+            fallback_summary_usage = {"input_tokens": 0, "output_tokens": 0}
+            fallback_warning_message = str(budget_error)
         yield {
             "type": "final_state",
             "plan": {
@@ -963,7 +1027,7 @@ async def stream_agent_execution(
                 ],
             },
             "execution_log": fallback_log,
-            "warning_message": "The planner returned no valid steps, so NeuralChat used a fallback reasoning step.",
+            "warning_message": fallback_warning_message,
             "summary": fallback_summary,
             "summary_usage": fallback_summary_usage,
         }
@@ -1000,11 +1064,19 @@ async def stream_agent_execution(
             f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds. "
             f"Completed {len(graph_state.get('execution_log', []))} step(s) before stopping."
         )
+    elif _is_usage_limit_message(graph_state.get("warning_message")):
+        final_summary = str(graph_state.get("warning_message") or "")
     else:
-        final_summary, final_summary_usage = await build_final_summary_with_usage(
-            plan.get("goal", ""),
-            graph_state.get("execution_log", []),
-        )
+        try:
+            final_summary, final_summary_usage = await build_final_summary_with_usage(
+                plan.get("goal", ""),
+                graph_state.get("execution_log", []),
+                user_id,
+                display_name,
+            )
+        except RuntimeError as budget_error:
+            final_summary = str(budget_error)
+            graph_state["warning_message"] = str(budget_error)
 
     yield {
         "type": "final_state",

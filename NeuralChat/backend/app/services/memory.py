@@ -18,11 +18,18 @@ from app.services.blob_paths import (
     user_segment,
     write_json_with_migration,
 )
-from app.services.cost_tracker import TokenUsage, log_usage, normalize_usage
+from app.services.cost_tracker import (
+    TokenUsage,
+    get_usage_status,
+    log_usage,
+    normalize_usage,
+    resolve_daily_limit,
+    resolve_monthly_limit,
+)
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 PROFILE_FIELDS = {"name", "job", "city", "preferences", "goals"}
-HIDDEN_PROFILE_FIELDS = {"user_id", "display_name", "updated_at", "daily_limit_usd"}
+HIDDEN_PROFILE_FIELDS = {"user_id", "display_name", "updated_at", "daily_limit_usd", "monthly_limit_usd"}
 MEMORY_PROMPT_SYSTEM = (
     "Extract facts about the user as JSON only. "
     "Keys: name, job, city, preferences, goals. Return {} if nothing found."
@@ -258,6 +265,18 @@ def clear_profile(user_id: str, display_name: str | None = None) -> None:
 
 # This async wrapper offloads extraction and save operations so chat streaming remains fast.
 async def process_memory_update(user_id: str, message: str, reply: str, display_name: str | None = None) -> None:
+    current_profile = await asyncio.to_thread(load_profile, user_id, display_name)
+    usage_status = await asyncio.to_thread(
+        get_usage_status,
+        user_id,
+        resolve_daily_limit(current_profile),
+        resolve_monthly_limit(current_profile),
+        "memory",
+        display_name,
+    )
+    if usage_status["blocked"]:
+        return
+
     extracted_facts, usage = await asyncio.to_thread(extract_facts_with_usage, message, reply)
     if usage["input_tokens"] or usage["output_tokens"]:
         await asyncio.to_thread(

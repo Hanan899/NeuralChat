@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import type { RequestNamingContext } from "../api";
-import type { DailyLimitSummary } from "../types";
+import type { UsageStatusResponse } from "../types";
 import { CostDashboardContent } from "./CostDashboard";
 
 type SettingsSectionId = "general" | "cost" | "account";
@@ -10,7 +10,7 @@ interface SettingsPanelProps {
   getAuthToken: () => Promise<string | null>;
   naming?: RequestNamingContext;
   onShowToast: (message: string, tone?: "success" | "info" | "error") => void;
-  onUsageStateChange?: (summary: DailyLimitSummary) => void;
+  onUsageStateChange?: (summary: UsageStatusResponse) => void;
   onOpenAccountSettings: () => void;
   onCloseSettings?: () => void;
 }

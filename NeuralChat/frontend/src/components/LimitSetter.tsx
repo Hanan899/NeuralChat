@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
 interface LimitSetterProps {
-  dailyLimitUsd: number;
+  label: string;
+  limitUsd: number;
   isSaving: boolean;
   onSave: (nextLimitUsd: number) => Promise<void>;
 }
@@ -10,21 +11,21 @@ function formatCurrency(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
-export function LimitSetter({ dailyLimitUsd, isSaving, onSave }: LimitSetterProps) {
+export function LimitSetter({ label, limitUsd, isSaving, onSave }: LimitSetterProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [draftValue, setDraftValue] = useState(dailyLimitUsd.toFixed(2));
+  const [draftValue, setDraftValue] = useState(limitUsd.toFixed(2));
   const [errorText, setErrorText] = useState("");
 
   useEffect(() => {
     if (!isEditing) {
-      setDraftValue(dailyLimitUsd.toFixed(2));
+      setDraftValue(limitUsd.toFixed(2));
     }
-  }, [dailyLimitUsd, isEditing]);
+  }, [limitUsd, isEditing]);
 
   async function handleSave() {
     const parsedValue = Number(draftValue);
     if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
-      setErrorText("Daily limit must be greater than zero.");
+      setErrorText(`${label} must be greater than zero.`);
       return;
     }
 
@@ -36,8 +37,8 @@ export function LimitSetter({ dailyLimitUsd, isSaving, onSave }: LimitSetterProp
   return (
     <section className="nc-cost-limit">
       <div>
-        <p className="nc-cost-section-label">Daily limit</p>
-        {!isEditing ? <p className="nc-cost-limit__value">{formatCurrency(dailyLimitUsd)}</p> : null}
+        <p className="nc-cost-section-label">{label}</p>
+        {!isEditing ? <p className="nc-cost-limit__value">{formatCurrency(limitUsd)}</p> : null}
       </div>
 
       {!isEditing ? (
@@ -45,7 +46,7 @@ export function LimitSetter({ dailyLimitUsd, isSaving, onSave }: LimitSetterProp
           type="button"
           className="nc-cost-limit__edit"
           onClick={() => {
-            setDraftValue(dailyLimitUsd.toFixed(2));
+            setDraftValue(limitUsd.toFixed(2));
             setErrorText("");
             setIsEditing(true);
           }}
@@ -54,12 +55,12 @@ export function LimitSetter({ dailyLimitUsd, isSaving, onSave }: LimitSetterProp
         </button>
       ) : (
         <div className="nc-cost-limit__editor">
-          <label className="nc-cost-limit__label" htmlFor="daily-limit-input">
-            Daily limit
+          <label className="nc-cost-limit__label" htmlFor={`${label.toLowerCase().replace(/\s+/g, "-")}-input`}>
+            {label}
           </label>
           <div className="nc-cost-limit__controls">
             <input
-              id="daily-limit-input"
+              id={`${label.toLowerCase().replace(/\s+/g, "-")}-input`}
               type="number"
               min="0.01"
               step="0.01"
@@ -73,7 +74,7 @@ export function LimitSetter({ dailyLimitUsd, isSaving, onSave }: LimitSetterProp
               type="button"
               className="nc-cost-limit__cancel"
               onClick={() => {
-                setDraftValue(dailyLimitUsd.toFixed(2));
+                setDraftValue(limitUsd.toFixed(2));
                 setErrorText("");
                 setIsEditing(false);
               }}

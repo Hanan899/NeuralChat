@@ -58,13 +58,14 @@ from app.services.chat_service import (
     tokenize_text,
 )
 from app.services.cost_tracker import (
-    DEFAULT_DAILY_LIMIT_USD,
     check_daily_limit,
     current_utc_date_text,
     get_daily_usage,
+    get_usage_status,
     get_usage_summary,
     log_usage,
     resolve_daily_limit,
+    resolve_monthly_limit,
 )
 from app.services.file_handler import (
     chunk_text,
@@ -155,6 +156,40 @@ def _visible_project_memory_payload(project: dict[str, Any], memory: dict[str, A
     return visible_memory
 
 
+def _build_usage_limits_payload(profile: dict[str, Any] | None) -> dict[str, float]:
+    return {
+        "daily_limit_usd": resolve_daily_limit(profile),
+        "monthly_limit_usd": resolve_monthly_limit(profile),
+    }
+
+
+def _get_usage_status_for_feature(
+    user_id: str,
+    feature: str,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    profile = load_profile(user_id, display_name)
+    limits_payload = _build_usage_limits_payload(profile)
+    return get_usage_status(
+        user_id,
+        limits_payload["daily_limit_usd"],
+        limits_payload["monthly_limit_usd"],
+        feature,
+        display_name,
+    )
+
+
+def _enforce_usage_limit_for_feature(
+    user_id: str,
+    feature: str,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    usage_status = _get_usage_status_for_feature(user_id, feature, display_name)
+    if usage_status["blocked"]:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=usage_status["blocking_message"])
+    return usage_status
+
+
 async def run_project_brain(
     user_id: str,
     project_id: str,
@@ -165,6 +200,9 @@ async def run_project_brain(
     display_name: str | None = None,
 ) -> None:
     try:
+        usage_status = await asyncio.to_thread(_get_usage_status_for_feature, user_id, "memory", display_name)
+        if usage_status["blocked"]:
+            return
         existing_memory = await asyncio.to_thread(load_project_memory, user_id, project_id, display_name)
         extracted_facts, usage = await asyncio.to_thread(
             extract_project_facts_with_usage,
@@ -465,6 +503,7 @@ async def post_conversation_title(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
+    await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "title_generation", naming["display_name"])
     request = validate_title_request(payload)
     title, usage = await asyncio.to_thread(generate_conversation_title_with_usage, request["prompt"], request["reply"])
     if usage["input_tokens"] or usage["output_tokens"]:
@@ -516,9 +555,9 @@ async def get_usage_today(
 ) -> dict[str, Any]:
     try:
         profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
-        daily_limit_usd = resolve_daily_limit(profile)
+        limits_payload = _build_usage_limits_payload(profile)
         today_records = await asyncio.to_thread(get_daily_usage, user_id, current_utc_date_text(), naming["display_name"])
-        today_summary = await asyncio.to_thread(check_daily_limit, user_id, daily_limit_usd, naming["display_name"])
+        today_summary = await asyncio.to_thread(check_daily_limit, user_id, limits_payload["daily_limit_usd"], naming["display_name"])
     except Exception as usage_error:
         LOGGER.exception("Today's usage load failed for user=%s", user_id)
         raise HTTPException(
@@ -529,13 +568,30 @@ async def get_usage_today(
     return {"records": today_records, "summary": today_summary}
 
 
+@app.get("/api/usage/status")
+async def get_usage_status_endpoint(
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, Any]:
+    try:
+        usage_status = await asyncio.to_thread(_get_usage_status_for_feature, user_id, "chat", naming["display_name"])
+    except Exception as usage_error:
+        LOGGER.exception("Usage status load failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load usage status: {usage_error}",
+        ) from usage_error
+
+    return usage_status
+
+
 @app.get("/api/usage/limit")
 async def get_usage_limit(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, float]:
     profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
-    return {"daily_limit_usd": resolve_daily_limit(profile)}
+    return _build_usage_limits_payload(profile)
 
 
 @app.patch("/api/usage/limit")
@@ -549,19 +605,29 @@ async def patch_usage_limit(
         await asyncio.to_thread(
             save_profile,
             user_id,
-            {"daily_limit_usd": request["daily_limit_usd"]},
+            request,
             naming["display_name"],
         )
     except Exception as usage_error:
         LOGGER.exception("Usage limit update failed for user=%s", user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to update daily limit: {usage_error}",
+            detail=f"Unable to update usage limits: {usage_error}",
         ) from usage_error
 
+    updated_profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
+    limits_payload = _build_usage_limits_payload(updated_profile)
+    updated_fields = sorted(request.keys())
+    if updated_fields == ["daily_limit_usd"]:
+        message = f"Daily limit updated to ${request['daily_limit_usd']:.2f}"
+    elif updated_fields == ["monthly_limit_usd"]:
+        message = f"Monthly limit updated to ${request['monthly_limit_usd']:.2f}"
+    else:
+        message = "Usage limits updated"
+
     return {
-        "message": f"Daily limit updated to ${request['daily_limit_usd']:.2f}",
-        "daily_limit_usd": request["daily_limit_usd"],
+        "message": message,
+        **limits_payload,
     }
 
 
@@ -796,6 +862,7 @@ async def post_agent_plan(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "agent_plan", naming["display_name"])
     request = validate_agent_plan_request(payload)
 
     try:
@@ -835,6 +902,7 @@ async def post_agent_run(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ):
+    await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "agent_step", naming["display_name"])
     request = validate_agent_run_request(payload)
     plan = await asyncio.to_thread(
         load_task_plan,
@@ -1030,6 +1098,9 @@ async def post_chat(
         if not project_data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
+    await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "chat", naming["display_name"])
+
+    if request["project_id"]:
         history_override = await asyncio.to_thread(
             load_project_chat_messages,
             user_id,
