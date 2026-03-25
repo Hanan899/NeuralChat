@@ -24,6 +24,7 @@ function findPreviousUserPrompt(messages: ChatMessage[], assistantIndex: number)
 export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunAgentPlan, footer }: ChatWindowProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   const renderedMessages = useMemo(
     () =>
@@ -41,25 +42,34 @@ export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunA
   );
 
   useEffect(() => {
-    if (scrollRef.current) {
-      if (typeof scrollRef.current.scrollTo === "function") {
-        scrollRef.current.scrollTo({
-          top: scrollRef.current.scrollHeight,
-          behavior: "smooth",
-        });
-      } else {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }
+    const scrollContainer = scrollRef.current;
+    if (!scrollContainer || !shouldStickToBottomRef.current) {
       return;
     }
 
-    if (endRef.current && typeof endRef.current.scrollIntoView === "function") {
-      endRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (typeof scrollContainer.scrollTo === "function") {
+      scrollContainer.scrollTo({
+        top: scrollContainer.scrollHeight,
+        behavior: "auto",
+      });
+      return;
     }
+
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
   }, [messages, streamingMessageId]);
 
+  function handleScroll() {
+    const scrollContainer = scrollRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+    const distanceFromBottom =
+      scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom <= 96;
+  }
+
   return (
-    <section ref={scrollRef} className="nc-message-scroll" aria-live="polite">
+    <section ref={scrollRef} className="nc-message-scroll" aria-live="polite" onScroll={handleScroll}>
       <div className="nc-message-inner">
         <AnimatePresence initial={false}>
           {renderedMessages.map(({ message, showAssistantLabel, retryPrompt }) => (

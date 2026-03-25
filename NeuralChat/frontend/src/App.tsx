@@ -15,6 +15,7 @@ import {
   getProjectChats,
   getProjectMemory,
   getTemplates,
+  updateProjectChatTitle,
   updateProject,
 } from "./api/projects";
 import { getUsageStatus } from "./api/usage";
@@ -62,10 +63,13 @@ const SIDEBAR_SHORTCUT_LABELS: Record<ShortcutId, string> = {
 };
 type ToastTone = "success" | "info" | "error";
 
-interface ToastItem {
+interface NotificationItem {
   id: string;
   message: string;
   tone: ToastTone;
+  createdAt: string;
+  isRead: boolean;
+  count: number;
 }
 
 const SIGN_IN_APPEARANCE = {
@@ -120,29 +124,29 @@ function NeuralNetworkIcon({ className, size = 36 }: { className?: string; size?
       className={className}
     >
       {/* Input → Hidden connections */}
-      <line x1="5"  y1="9"  x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
-      <line x1="5"  y1="9"  x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
-      <line x1="5"  y1="9"  x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
-      <line x1="5"  y1="27" x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
-      <line x1="5"  y1="27" x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
-      <line x1="5"  y1="27" x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line className="nc-neural-edge" x1="5"  y1="9"  x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line className="nc-neural-edge" x1="5"  y1="9"  x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line className="nc-neural-edge" x1="5"  y1="9"  x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line className="nc-neural-edge" x1="5"  y1="27" x2="16" y2="5"  stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line className="nc-neural-edge" x1="5"  y1="27" x2="16" y2="18" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line className="nc-neural-edge" x1="5"  y1="27" x2="16" y2="31" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
       {/* Hidden → Output connections */}
-      <line x1="16" y1="5"  x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
-      <line x1="16" y1="5"  x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
-      <line x1="16" y1="18" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60"/>
-      <line x1="16" y1="18" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60"/>
-      <line x1="16" y1="31" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
-      <line x1="16" y1="31" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line className="nc-neural-edge" x1="16" y1="5"  x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
+      <line className="nc-neural-edge" x1="16" y1="5"  x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line className="nc-neural-edge" x1="16" y1="18" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60"/>
+      <line className="nc-neural-edge" x1="16" y1="18" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.60"/>
+      <line className="nc-neural-edge" x1="16" y1="31" x2="31" y2="12" stroke="currentColor" strokeWidth="1" strokeOpacity="0.28"/>
+      <line className="nc-neural-edge" x1="16" y1="31" x2="31" y2="24" stroke="currentColor" strokeWidth="1" strokeOpacity="0.50"/>
       {/* Input nodes — muted */}
-      <circle cx="5"  cy="9"  r="2.8" fill="currentColor" fillOpacity="0.75"/>
-      <circle cx="5"  cy="27" r="2.8" fill="currentColor" fillOpacity="0.75"/>
+      <circle className="nc-neural-node nc-neural-node--outer" cx="5"  cy="9"  r="2.8" fill="currentColor" fillOpacity="0.75"/>
+      <circle className="nc-neural-node nc-neural-node--outer" cx="5"  cy="27" r="2.8" fill="currentColor" fillOpacity="0.75"/>
       {/* Hidden nodes — purple accent */}
-      <circle cx="16" cy="5"  r="2.8" fill="#7F77DD"/>
-      <circle cx="16" cy="18" r="3.4" fill="#7F77DD"/>
-      <circle cx="16" cy="31" r="2.8" fill="#7F77DD"/>
+      <circle className="nc-neural-node nc-neural-node--core" cx="16" cy="5"  r="2.8" fill="#7F77DD"/>
+      <circle className="nc-neural-node nc-neural-node--core" cx="16" cy="18" r="3.4" fill="#7F77DD"/>
+      <circle className="nc-neural-node nc-neural-node--core" cx="16" cy="31" r="2.8" fill="#7F77DD"/>
       {/* Output nodes */}
-      <circle cx="31" cy="12" r="2.8" fill="currentColor"/>
-      <circle cx="31" cy="24" r="2.8" fill="currentColor"/>
+      <circle className="nc-neural-node nc-neural-node--outer" cx="31" cy="12" r="2.8" fill="currentColor"/>
+      <circle className="nc-neural-node nc-neural-node--outer" cx="31" cy="24" r="2.8" fill="currentColor"/>
     </svg>
   );
 }
@@ -296,6 +300,43 @@ function getUserStorageKey(userId: string) {
 
 function getCostWarningStorageKey(userId: string, warningScope: string) {
   return `${COST_WARNING_STORAGE_KEY}:${userId}:${warningScope}`;
+}
+
+function formatRelativeLabel(timestamp: string): string {
+  const parsedTime = new Date(timestamp);
+  if (Number.isNaN(parsedTime.getTime())) {
+    return "Just now";
+  }
+
+  const differenceSeconds = Math.max(0, Math.round((Date.now() - parsedTime.getTime()) / 1000));
+  if (differenceSeconds < 45) {
+    return "Just now";
+  }
+  if (differenceSeconds < 3600) {
+    return `${Math.round(differenceSeconds / 60)}m ago`;
+  }
+  if (differenceSeconds < 86_400) {
+    return `${Math.round(differenceSeconds / 3600)}h ago`;
+  }
+  if (differenceSeconds < 604_800) {
+    return `${Math.round(differenceSeconds / 86_400)}d ago`;
+  }
+
+  return parsedTime.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function buildProjectChatDisplayTitle(chat: ProjectChat | null, messages: ChatMessage[]): string {
+  const savedTitle = chat?.title?.trim();
+  if (savedTitle) {
+    return savedTitle;
+  }
+
+  const firstUserMessage = messages.find((message) => message.role === "user" && message.content.trim());
+  if (firstUserMessage?.content?.trim()) {
+    return buildLocalConversationTitle(firstUserMessage.content);
+  }
+
+  return "Project chat";
 }
 
 function getUsageWarningScope(status: UsageStatusResponse | null): string | null {
@@ -463,7 +504,7 @@ function ChatShell() {
   const [tokensEmitted, setTokensEmitted] = useState(0);
   const [streamStatus, setStreamStatus] = useState("idle");
   const [errorText, setErrorText] = useState("");
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readInitialThemeMode());
   const [systemTheme, setSystemTheme] = useState<"dark" | "light">(() => readSystemTheme());
   const [searchEnabled, setSearchEnabled] = useState<boolean | null>(null);
@@ -506,7 +547,6 @@ function ChatShell() {
   const fileModalAuthTokenRef = useRef<string>("");
   const submitLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const toastTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({});
   const conversationsRef = useRef<ConversationSummary[]>([]);
   const typingQueueRef = useRef<string[]>([]);
   const typingTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
@@ -553,10 +593,12 @@ function ChatShell() {
     () => ({
       userDisplayName,
       sessionTitle: isProjectOverviewRoute || isProjectChatRoute
-        ? activeProject?.name?.trim() || "Project chat"
+        ? isProjectChatRoute
+          ? activeProjectChat?.title?.trim() || "Project chat"
+          : activeProject?.name?.trim() || "Project chat"
         : activeConversation?.title?.trim() || "New chat",
     }),
-    [activeConversation?.title, activeProject?.name, isProjectChatRoute, isProjectOverviewRoute, userDisplayName]
+    [activeConversation?.title, activeProject?.name, activeProjectChat?.title, isProjectChatRoute, isProjectOverviewRoute, userDisplayName]
   );
   const isScrollableWorkspaceRoute =
     isSettingsOpen ||
@@ -566,6 +608,14 @@ function ChatShell() {
   const activeUsageWarningScope = useMemo(() => getUsageWarningScope(usageStatus), [usageStatus]);
   const isUsageBlocked = usageStatus?.blocked === true;
   const usageBlockingMessage = usageStatus?.blocking_message?.trim() || "";
+  const unreadNotificationCount = useMemo(
+    () => notifications.reduce((total, notification) => total + (notification.isRead ? 0 : 1), 0),
+    [notifications]
+  );
+  const projectChatTitle = useMemo(
+    () => buildProjectChatDisplayTitle(activeProjectChat ?? null, currentMessages),
+    [activeProjectChat, currentMessages]
+  );
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
     checkSearchStatus()
@@ -687,7 +737,7 @@ function ChatShell() {
         }
         const messages = await getProjectChatMessages(authToken, projectId, projectChatId, {
           userDisplayName,
-          sessionTitle: activeProject?.name || "Project chat",
+          sessionTitle: activeProjectChat?.title?.trim() || "Project chat",
         });
         if (!cancelled) {
           setMessagesByConversation((previous) => ({
@@ -711,7 +761,7 @@ function ChatShell() {
     return () => {
       cancelled = true;
     };
-  }, [activeProject?.name, activeProjectChatId, activeProjectId, getToken, userDisplayName, userId]);
+  }, [activeProjectChat?.title, activeProjectChatId, activeProjectId, getToken, userDisplayName, userId]);
 
   const loadUsageStatus = useCallback(async () => {
     if (!userId) {
@@ -791,8 +841,6 @@ function ChatShell() {
 
   useEffect(() => {
     return () => {
-      Object.values(toastTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
-      toastTimersRef.current = {};
       if (typingTimerRef.current) {
         window.clearTimeout(typingTimerRef.current);
         typingTimerRef.current = null;
@@ -816,6 +864,18 @@ function ChatShell() {
       document.addEventListener("mousedown", handleOutsideClick);
     }
     return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [isNotifOpen]);
+
+  useEffect(() => {
+    if (!isNotifOpen) {
+      return;
+    }
+
+    setNotifications((previous) =>
+      previous.map((notification) =>
+        notification.isRead ? notification : { ...notification, isRead: true }
+      )
+    );
   }, [isNotifOpen]);
 
   useEffect(() => {
@@ -1011,6 +1071,98 @@ function ChatShell() {
     [getToken, userDisplayName]
   );
 
+  const setProjectChatLocalTitle = useCallback((sessionId: string, title: string) => {
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) {
+      return;
+    }
+
+    setProjectChats((previous) =>
+      previous.map((chat) =>
+        chat.session_id === sessionId
+          ? { ...chat, title: normalizedTitle }
+          : chat
+      )
+    );
+  }, []);
+
+  const refineProjectChatTitle = useCallback(
+    async (sessionId: string, prompt: string, reply: string) => {
+      if (!activeProjectId) {
+        return;
+      }
+
+      const localTitle = buildLocalConversationTitle(prompt);
+      const currentChat = projectChats.find((chat) => chat.session_id === sessionId) ?? null;
+      const currentTitle = currentChat?.title?.trim() || "";
+      const normalizedProjectName = activeProject?.name?.trim() || "";
+      const titleLooksGeneric =
+        !currentTitle ||
+        currentTitle === "Project chat" ||
+        currentTitle === localTitle ||
+        currentTitle === normalizedProjectName;
+
+      if (!titleLooksGeneric && !shouldRefineConversationTitle(prompt, localTitle)) {
+        return;
+      }
+      if (refiningConversationIdsRef.current.has(sessionId)) {
+        return;
+      }
+
+      refiningConversationIdsRef.current.add(sessionId);
+      try {
+        const authToken = await getToken();
+        if (!authToken) {
+          return;
+        }
+
+        const generated = await generateConversationTitle(authToken, prompt, reply, {
+          userDisplayName,
+          sessionTitle: localTitle,
+        });
+        const refinedTitle = generated.title.trim();
+        if (!refinedTitle || refinedTitle === currentTitle) {
+          return;
+        }
+
+        const persisted = await updateProjectChatTitle(authToken, activeProjectId, sessionId, refinedTitle, {
+          userDisplayName,
+          sessionTitle: refinedTitle,
+        });
+        setProjectChatLocalTitle(sessionId, persisted.title);
+        await refreshActiveProjectWorkspace();
+      } catch {
+        // Keep the local title when refinement fails.
+      } finally {
+        refiningConversationIdsRef.current.delete(sessionId);
+      }
+    },
+    [activeProject?.name, activeProjectId, getToken, projectChats, refreshActiveProjectWorkspace, setProjectChatLocalTitle, userDisplayName]
+  );
+
+  useEffect(() => {
+    if (!isProjectChatRoute || !activeProjectChatId || !activeProject) {
+      return;
+    }
+
+    const firstUserMessage = currentMessages.find((message) => message.role === "user" && message.content.trim());
+    const firstAssistantMessage = currentMessages.find((message) => message.role === "assistant" && message.content.trim());
+    if (!firstUserMessage?.content?.trim() || !firstAssistantMessage?.content?.trim()) {
+      return;
+    }
+
+    const currentTitle = activeProjectChat?.title?.trim() || "";
+    const needsUpgrade =
+      !currentTitle ||
+      currentTitle === "Project chat" ||
+      currentTitle === activeProject.name;
+    if (!needsUpgrade) {
+      return;
+    }
+
+    void refineProjectChatTitle(activeProjectChatId, firstUserMessage.content, firstAssistantMessage.content);
+  }, [activeProject, activeProjectChat?.title, activeProjectChatId, currentMessages, isProjectChatRoute, refineProjectChatTitle]);
+
   const updateAgentMessageState = useCallback(
     (conversationId: string, messageId: string, updater: (currentTask: AgentTaskState) => AgentTaskState) => {
       setMessagesByConversation((previous) => ({
@@ -1029,21 +1181,38 @@ function ChatShell() {
     []
   );
 
-  function removeToast(toastId: string) {
-    setToasts((previous) => previous.filter((toast) => toast.id !== toastId));
-    const timerId = toastTimersRef.current[toastId];
-    if (timerId) {
-      window.clearTimeout(timerId);
-      delete toastTimersRef.current[toastId];
-    }
+  function removeNotification(notificationId: string) {
+    setNotifications((previous) => previous.filter((notification) => notification.id !== notificationId));
   }
 
   function showToast(message: string, tone: ToastTone = "info") {
-    const toastId = `toast-${buildId()}`;
-    setToasts((previous) => [...previous, { id: toastId, message, tone }]);
-    toastTimersRef.current[toastId] = window.setTimeout(() => {
-      removeToast(toastId);
-    }, 2600);
+    const createdAt = new Date().toISOString();
+    setNotifications((previous) => {
+      const existingIndex = previous.findIndex(
+        (notification) => notification.message === message && notification.tone === tone
+      );
+      if (existingIndex >= 0) {
+        const existingNotification = previous[existingIndex];
+        const nextNotifications = [...previous];
+        nextNotifications[existingIndex] = {
+          ...existingNotification,
+          createdAt,
+          count: existingNotification.count + 1,
+          isRead: isNotifOpen,
+        };
+        return nextNotifications;
+      }
+
+      const nextNotification: NotificationItem = {
+        id: `toast-${buildId()}`,
+        message,
+        tone,
+        createdAt,
+        isRead: isNotifOpen,
+        count: 1,
+      };
+      return [...previous, nextNotification].slice(-50);
+    });
   }
 
   function handleBlockedUsageAttempt() {
@@ -1055,67 +1224,25 @@ function ChatShell() {
   }
 
   const flushTypingQueue = useCallback(() => {
+    typingQueueRef.current = [];
+    typingFinishWhenEmptyRef.current = false;
+    typingTargetRef.current = null;
     typingTimerRef.current = null;
-
-    const target = typingTargetRef.current;
-    if (!target) {
-      typingQueueRef.current = [];
-      typingFinishWhenEmptyRef.current = false;
-      return;
-    }
-
-    if (typingQueueRef.current.length === 0) {
-      if (typingFinishWhenEmptyRef.current) {
-        typingFinishWhenEmptyRef.current = false;
-        typingTargetRef.current = null;
-        setActiveStreamingAssistantId(null);
-      }
-      return;
-    }
-
-    const nextSlice = typingQueueRef.current.splice(0, 3).join("");
-
-    setMessagesByConversation((previous) => ({
-      ...previous,
-      [target.conversationId]: (previous[target.conversationId] ?? []).map((message) =>
-        message.id === target.assistantId ? { ...message, content: `${message.content}${nextSlice}` } : message
-      )
-    }));
-
-    if (typingQueueRef.current.length > 0) {
-      typingTimerRef.current = window.setTimeout(() => {
-        flushTypingQueue();
-      }, 18);
-      return;
-    }
-
-    if (typingFinishWhenEmptyRef.current) {
-      typingFinishWhenEmptyRef.current = false;
-      typingTargetRef.current = null;
-      setActiveStreamingAssistantId(null);
-    }
   }, []);
 
   const scheduleTypingFlush = useCallback(() => {
-    if (typingTimerRef.current || typingQueueRef.current.length === 0) {
-      return;
-    }
-
-    typingTimerRef.current = window.setTimeout(() => {
-      flushTypingQueue();
-    }, 18);
+    flushTypingQueue();
   }, [flushTypingQueue]);
 
   const finishStreamingDisplay = useCallback(() => {
-    if (typingQueueRef.current.length === 0) {
-      typingFinishWhenEmptyRef.current = false;
-      typingTargetRef.current = null;
-      setActiveStreamingAssistantId(null);
-      return;
+    typingQueueRef.current = [];
+    typingFinishWhenEmptyRef.current = false;
+    typingTargetRef.current = null;
+    if (typingTimerRef.current) {
+      window.clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
     }
-
-    typingFinishWhenEmptyRef.current = true;
-    scheduleTypingFlush();
+    setActiveStreamingAssistantId(null);
   }, [scheduleTypingFlush]);
 
   function handleNewChat() {
@@ -1261,7 +1388,7 @@ function ChatShell() {
     }
 
     const targetChat = projectChats.find((chat) => chat.session_id === sessionId);
-    const targetChatLabel = targetChat?.last_message_preview || "this chat";
+    const targetChatLabel = targetChat?.title?.trim() || targetChat?.last_message_preview || "this chat";
     const confirmed = window.confirm(`Delete "${targetChatLabel}" from ${activeProject.name}?`);
     if (!confirmed) {
       return;
@@ -1273,7 +1400,7 @@ function ChatShell() {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
 
-      await deleteProjectChat(authToken, activeProjectId, sessionId, { userDisplayName, sessionTitle: activeProject.name });
+      await deleteProjectChat(authToken, activeProjectId, sessionId, { userDisplayName, sessionTitle: targetChat?.title?.trim() || activeProject.name });
       setMessagesByConversation((previous) => {
         const nextMessages = { ...previous };
         delete nextMessages[sessionId];
@@ -1536,10 +1663,13 @@ function ChatShell() {
 
     const conversationId = activeSessionId;
     const requestSessionTitle = isProjectChatRoute
-      ? activeProject?.name?.trim() || buildLocalConversationTitle(trimmed)
+      ? activeProjectChat?.title?.trim() || buildLocalConversationTitle(trimmed)
       : activeConversation?.title === "New chat" || !activeConversation?.title
       ? buildLocalConversationTitle(trimmed)
       : activeConversation.title;
+    if (isProjectChatRoute) {
+      setProjectChatLocalTitle(conversationId, requestSessionTitle);
+    }
     setConversations((previous) =>
       previous.map((conversation) =>
         conversation.id === conversationId && conversation.archived === true
@@ -1585,7 +1715,7 @@ function ChatShell() {
     abortControllerRef.current = controller;
     typingQueueRef.current = [];
     typingFinishWhenEmptyRef.current = false;
-    typingTargetRef.current = { conversationId, assistantId };
+    typingTargetRef.current = null;
     if (typingTimerRef.current) {
       window.clearTimeout(typingTimerRef.current);
       typingTimerRef.current = null;
@@ -1613,9 +1743,12 @@ function ChatShell() {
           if (chunk.type === "token") {
             streamedText += chunk.content;
             setTokensEmitted((value) => value + 1);
-            typingTargetRef.current = { conversationId, assistantId };
-            typingQueueRef.current.push(...Array.from(chunk.content));
-            scheduleTypingFlush();
+            setMessagesByConversation((previous) => ({
+              ...previous,
+              [conversationId]: (previous[conversationId] ?? []).map((message) =>
+                message.id === assistantId ? { ...message, content: `${message.content}${chunk.content}` } : message
+              )
+            }));
             return;
           }
 
@@ -1674,8 +1807,8 @@ function ChatShell() {
       if (isProjectChatRoute) {
         if (streamedText.trim()) {
           setProjectBrainActivityToken((value) => value + 1);
+          void refineProjectChatTitle(conversationId, trimmed, streamedText);
         }
-        void refreshActiveProjectWorkspace();
       }
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown error";
@@ -1683,7 +1816,7 @@ function ChatShell() {
       if (text !== "Generation stopped by user.") {
         setErrorText(text);
       }
-      if (streamedText.trim() === "" && typingQueueRef.current.length === 0) {
+      if (streamedText.trim() === "") {
         typingTargetRef.current = null;
         typingFinishWhenEmptyRef.current = false;
         if (typingTimerRef.current) {
@@ -1729,10 +1862,13 @@ function ChatShell() {
 
     const conversationId = activeSessionId;
     const requestSessionTitle = isProjectChatRoute
-      ? activeProject?.name?.trim() || buildLocalConversationTitle(trimmed)
+      ? activeProjectChat?.title?.trim() || buildLocalConversationTitle(trimmed)
       : activeConversation?.title === "New chat" || !activeConversation?.title
       ? buildLocalConversationTitle(trimmed)
       : activeConversation.title;
+    if (isProjectChatRoute) {
+      setProjectChatLocalTitle(conversationId, requestSessionTitle);
+    }
     const attachedFilesForMessage = activeFiles.map((fileItem) => ({ ...fileItem }));
     const userMessage: ChatMessage = {
       id: buildId(),
@@ -1783,6 +1919,7 @@ function ChatShell() {
         updateConversationSummary(conversationId, trimmed, `Agent plan ready: ${plan.steps.length} steps`);
         void refineConversationTitle(conversationId, trimmed, plan.steps.map((step) => step.description).join("; "));
       } else {
+        void refineProjectChatTitle(conversationId, trimmed, plan.steps.map((step) => step.description).join("; "));
         void refreshActiveProjectWorkspace();
       }
       setStreamStatus("ready");
@@ -1811,7 +1948,7 @@ function ChatShell() {
 
     const conversationId = activeSessionId;
     const requestSessionTitle = isProjectChatRoute
-      ? activeProject?.name?.trim() || "Project chat"
+      ? activeProjectChat?.title?.trim() || "Project chat"
       : activeConversation?.title?.trim() || "New chat";
     const targetMessage = (messagesByConversation[conversationId] ?? []).find((message) => message.id === messageId);
     const agentTask = targetMessage?.agentTask;
@@ -2163,7 +2300,7 @@ function ChatShell() {
               {isSettingsOpen
                 ? "Settings"
                 : isProjectChatRoute
-                  ? activeProject?.name ?? "Project chat"
+                  ? projectChatTitle
                   : isProjectOverviewRoute
                     ? activeProject?.name ?? "Project"
                     : isProjectsIndexRoute
@@ -2228,21 +2365,30 @@ function ChatShell() {
                   <path d="M18 8.5C18 5.46 15.54 3 12.5 3S7 5.46 7 8.5c0 4.63-2 6-2 6h15s-2-1.37-2-6Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/>
                   <path d="M14.17 19a2 2 0 0 1-3.34 0" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
                 </svg>
-                {toasts.length > 0 ? (
-                  <span className="nc-notif-badge">{toasts.length > 9 ? "9+" : toasts.length}</span>
+                {unreadNotificationCount > 0 ? (
+                  <span className="nc-notif-badge">{unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}</span>
                 ) : null}
               </button>
 
               {isNotifOpen ? (
                 <div ref={notifPanelRef} className="nc-notif-panel" role="region" aria-label="Notifications">
                   <div className="nc-notif-panel__header">
-                    <span className="nc-notif-panel__title">Notifications</span>
-                    {toasts.length > 0 ? (
+                    <div className="nc-notif-panel__heading">
+                      <span className="nc-notif-panel__title">Notifications</span>
+                      <span className="nc-notif-panel__subtitle">
+                        {notifications.length === 0
+                          ? "Nothing new"
+                          : unreadNotificationCount > 0
+                          ? `${unreadNotificationCount} unread`
+                          : "All caught up"}
+                      </span>
+                    </div>
+                    {notifications.length > 0 ? (
                       <button
                         type="button"
                         className="nc-notif-panel__clear"
                         onClick={() => {
-                          toasts.forEach((t) => removeToast(t.id));
+                          setNotifications([]);
                         }}
                       >
                         Clear all
@@ -2250,7 +2396,7 @@ function ChatShell() {
                     ) : null}
                   </div>
 
-                  {toasts.length === 0 ? (
+                  {notifications.length === 0 ? (
                     <div className="nc-notif-empty">
                       <svg viewBox="0 0 24 24" fill="none" className="nc-notif-empty__icon">
                         <path d="M18 8.5C18 5.46 15.54 3 12.5 3S7 5.46 7 8.5c0 4.63-2 6-2 6h15s-2-1.37-2-6Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
@@ -2260,15 +2406,24 @@ function ChatShell() {
                     </div>
                   ) : (
                     <ul className="nc-notif-list">
-                      {[...toasts].reverse().map((toast) => (
-                        <li key={toast.id} className={`nc-notif-item nc-notif-item--${toast.tone}`}>
+                      {[...notifications].reverse().map((notification) => (
+                        <li
+                          key={notification.id}
+                          className={`nc-notif-item nc-notif-item--${notification.tone} ${notification.isRead ? "nc-notif-item--read" : ""}`}
+                        >
                           <span className="nc-notif-item__dot" />
-                          <span className="nc-notif-item__msg">{toast.message}</span>
+                          <div className="nc-notif-item__body">
+                            <span className="nc-notif-item__msg">{notification.message}</span>
+                            <span className="nc-notif-item__meta">
+                              <span>{formatRelativeLabel(notification.createdAt)}</span>
+                              {notification.count > 1 ? <span className="nc-notif-item__count">×{notification.count}</span> : null}
+                            </span>
+                          </div>
                           <button
                             type="button"
                             className="nc-notif-item__dismiss"
                             aria-label="Dismiss"
-                            onClick={() => removeToast(toast.id)}
+                            onClick={() => removeNotification(notification.id)}
                           >
                             ×
                           </button>
@@ -2372,27 +2527,17 @@ function ChatShell() {
             ) : (
               <section className="nc-project-chat-shell">
                 <div className="nc-project-chat-shell__header">
-                  <div className="nc-project-chat-shell__header-main">
-                    <button
-                      type="button"
-                      className="nc-button nc-button--ghost"
-                      onClick={() => handleOpenProject(activeProjectId!)}
-                    >
-                      ← Back to project
-                    </button>
-                    <div className="nc-project-chat-shell__title-wrap">
-                      <h2>{activeProjectChat?.last_message_preview || "Project chat"}</h2>
-                      <p>{activeProject?.name || "Project workspace"}</p>
-                    </div>
+                  <button
+                    type="button"
+                    className="nc-button nc-button--ghost"
+                    onClick={() => handleOpenProject(activeProjectId!)}
+                  >
+                    ← Back to project
+                  </button>
+                  <div className="nc-project-chat-shell__title-wrap">
+                    <h2>{projectChatTitle}</h2>
                   </div>
                   <div className="nc-project-chat-shell__actions">
-                    <button
-                      type="button"
-                      className="nc-button nc-button--ghost"
-                      onClick={() => handleOpenProject(activeProjectId!)}
-                    >
-                      🧠 Project Brain
-                    </button>
                     <button
                       type="button"
                       className="nc-button nc-button--ghost nc-button--danger"
@@ -2464,9 +2609,11 @@ function ChatShell() {
             </section>
           ) : currentMessages.length === 0 ? (
             <section className="nc-empty-state" data-testid="empty-state">
-              {/* Neural network logo replaces the old circle/arc brand mark */}
-              <div className="nc-empty-mark">
-                <NeuralNetworkIcon className="nc-empty-mark__icon" size={48} />
+              <div className="nc-empty-mark" aria-hidden="true">
+                <span className="nc-empty-mark__halo" />
+                <span className="nc-empty-mark__halo nc-empty-mark__halo--secondary" />
+                <span className="nc-empty-mark__pulse" />
+                <NeuralNetworkIcon className="nc-empty-mark__icon" size={88} />
               </div>
               <h2>How can I help you today?</h2>
               <div className="nc-empty-chips">
@@ -2534,7 +2681,7 @@ function ChatShell() {
             </form>
 
             {isUsageBlocked ? <p className="nc-error">{usageBlockingMessage}</p> : null}
-            {errorText ? <p className="nc-error">{errorText}</p> : null}
+            {errorText && (!isUsageBlocked || errorText !== usageBlockingMessage) ? <p className="nc-error">{errorText}</p> : null}
             <p className="nc-input-note">NeuralChat can make mistakes. Verify important info.</p>
           </footer>
         ) : null}

@@ -141,6 +141,28 @@ export async function deleteProjectChat(
   }
 }
 
+export async function updateProjectChatTitle(
+  authToken: string,
+  projectId: string,
+  sessionId: string,
+  title: string,
+  naming?: RequestNamingContext
+): Promise<{ title: string }> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/chats/${encodeURIComponent(sessionId)}`,
+    {
+      method: "PATCH",
+      headers: buildProtectedHeaders(authToken, naming, true),
+      body: JSON.stringify({ title }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, "Failed to update project chat title."));
+  }
+  const payload = (await response.json()) as { title?: string };
+  return { title: typeof payload.title === "string" ? payload.title : title };
+}
+
 export async function getProjectMemory(
   authToken: string,
   projectId: string,

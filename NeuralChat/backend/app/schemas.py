@@ -119,6 +119,19 @@ def validate_project_memory_update_request(payload: dict[str, Any]) -> dict[str,
     return {"key": key.strip(), "value": value.strip()}
 
 
+def validate_project_chat_title_request(payload: dict[str, Any]) -> dict[str, str]:
+    """Validate and normalize PATCH /api/projects/{project_id}/chats/{session_id} payload."""
+    title = payload.get("title", "")
+    if not isinstance(title, str) or not title.strip():
+        raise HTTPException(status_code=400, detail="title must be a non-empty string.")
+
+    normalized_title = title.strip()
+    if len(normalized_title) > 80:
+        raise HTTPException(status_code=400, detail="title must be 80 characters or fewer.")
+
+    return {"title": normalized_title}
+
+
 def build_health_response(timestamp: str, version: str) -> dict[str, str]:
     return {"status": "ok", "timestamp": timestamp, "version": version}
 

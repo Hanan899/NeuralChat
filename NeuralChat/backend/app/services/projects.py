@@ -36,6 +36,7 @@ from app.services.file_handler import (
     parse_file,
     validate_file,
 )
+from app.services.titles import sanitize_conversation_title
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 ALLOWED_PROJECT_UPDATE_FIELDS = {"name", "description", "emoji", "color", "pinned", "system_prompt"}
@@ -379,6 +380,31 @@ def _normalize_fact_value(raw_value: Any) -> str | None:
             return None
         return serialized_value.strip() or None
     return str(raw_value).strip() or None
+
+
+# This helper converts a stored session segment into a readable fallback title.
+def _session_segment_fallback_title(session_segment_value: str) -> str:
+    readable_value = str(session_segment_value).split("__")[0].strip()
+    if not readable_value or readable_value == "chat":
+        return ""
+    words = [word for word in readable_value.replace("_", "-").split("-") if word]
+    return " ".join(word.upper() if len(word) <= 3 else word.capitalize() for word in words).strip()
+
+
+# This helper resolves the best available project chat title from saved messages and path naming.
+def _resolve_project_chat_title(messages: list[dict[str, Any]], session_segment_value: str, project_name: str) -> str:
+    normalized_project_name = str(project_name or "").strip().lower()
+    for message in messages:
+        raw_title = str(message.get("session_title", "")).strip()
+        if not raw_title:
+            continue
+        if raw_title.lower() == normalized_project_name:
+            continue
+        if raw_title == str(message.get("session_id", "")).strip():
+            continue
+        return raw_title[:80]
+
+    return _session_segment_fallback_title(session_segment_value) or "Project chat"
 
 
 # This helper returns only the visible template-relevant memory facts.
@@ -731,6 +757,36 @@ def append_project_chat_message(
     save_project_chat_messages(user_id, project_id, session_id, messages, display_name, session_title)
 
 
+# This function renames one project chat by updating stored session_title values and canonical blob naming.
+def update_project_chat_title(
+    user_id: str,
+    project_id: str,
+    session_id: str,
+    title: str,
+    display_name: str | None = None,
+) -> str:
+    clean_title = sanitize_conversation_title(str(title or ""), str(title or ""))
+    if not clean_title or clean_title == "New chat":
+        raise ValueError("Project chat title must be a meaningful non-empty string.")
+
+    project_data = get_project(user_id, project_id, display_name)
+    if project_data is None:
+        raise ValueError("Project not found.")
+
+    messages = load_project_chat_messages(user_id, project_id, session_id, display_name)
+    if not messages:
+        raise ValueError("Project chat not found.")
+
+    renamed_messages: list[dict[str, Any]] = []
+    for message in messages:
+        renamed_message = dict(message)
+        renamed_message["session_title"] = clean_title
+        renamed_messages.append(renamed_message)
+
+    save_project_chat_messages(user_id, project_id, session_id, renamed_messages, display_name, clean_title)
+    return clean_title
+
+
 # This function deletes one project chat transcript and updates the chat count.
 def delete_project_chat(user_id: str, project_id: str, session_id: str, display_name: str | None = None) -> bool:
     memory_container = _get_memory_container()
@@ -747,6 +803,10 @@ def delete_project_chat(user_id: str, project_id: str, session_id: str, display_
 
 # This function lists all project chats with message counts and last-message previews.
 def get_project_chats(user_id: str, project_id: str, display_name: str | None = None) -> list[dict[str, Any]]:
+    project_data = get_project(user_id, project_id, display_name)
+    if project_data is None:
+        return []
+
     memory_container = _get_memory_container()
     existing_user_segment = _find_existing_user_segment(memory_container, user_id)
     existing_project_segment = _find_existing_project_segment(memory_container, user_id, project_id)
@@ -762,10 +822,12 @@ def get_project_chats(user_id: str, project_id: str, display_name: str | None = 
         parts = blob_parts(blob_name)
         if len(parts) != 5:
             continue
-        session_id = parts[4].removesuffix(".json").split("__")[-1]
+        session_blob_stem = parts[4].removesuffix(".json")
+        session_id = session_blob_stem.split("__")[-1]
         messages = load_project_chat_messages(user_id, project_id, session_id, display_name)
         created_at = ""
         last_message_preview = ""
+        title = _resolve_project_chat_title(messages, session_blob_stem, str(project_data.get("name", "")))
         if messages:
             created_at = str(messages[0].get("created_at", "")).strip()
             last_message_preview = str(messages[-1].get("content", "")).strip()[:80]
@@ -774,6 +836,7 @@ def get_project_chats(user_id: str, project_id: str, display_name: str | None = 
         chats.append(
             {
                 "session_id": session_id,
+                "title": title,
                 "created_at": created_at,
                 "message_count": len(messages),
                 "last_message_preview": last_message_preview,

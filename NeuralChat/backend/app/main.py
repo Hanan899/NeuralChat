@@ -28,6 +28,7 @@ from app.schemas import (
     build_chat_json_response,
     build_health_response,
     validate_agent_plan_request,
+    validate_project_chat_title_request,
     validate_agent_run_request,
     validate_chat_request,
     validate_project_memory_update_request,
@@ -105,6 +106,7 @@ from app.services.projects import (
     log_brain_extraction,
     process_project_upload,
     save_project_memory,
+    update_project_chat_title,
     update_project,
 )
 from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web
@@ -472,6 +474,35 @@ async def post_project_chat(
             detail=f"Unable to create project chat: {project_error}",
         ) from project_error
     return {"session_id": session_id}
+
+
+@app.patch("/api/projects/{project_id}/chats/{session_id}")
+async def patch_project_chat_title_endpoint(
+    project_id: str,
+    session_id: str,
+    payload: dict[str, Any] = Body(...),
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, str]:
+    project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    request = validate_project_chat_title_request(payload)
+    try:
+        title = await asyncio.to_thread(
+            update_project_chat_title,
+            user_id,
+            project_id,
+            session_id,
+            request["title"],
+            naming["display_name"],
+        )
+    except ValueError as validation_error:
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in str(validation_error).lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(validation_error)) from validation_error
+
+    return {"message": "Project chat title updated", "title": title}
 
 
 @app.delete("/api/projects/{project_id}/chats/{session_id}")
