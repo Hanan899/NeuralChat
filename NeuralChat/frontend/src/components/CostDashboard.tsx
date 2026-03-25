@@ -14,7 +14,11 @@ import {
 import type { RequestNamingContext } from "../api";
 import { getUsageStatus, getUsageSummary, updateUsageLimit } from "../api/usage";
 import type { UsageStatusResponse, UsageSummary } from "../types";
+import { useApiQuery } from "../hooks/useApi";
+import { queryClient } from "../lib/queryClient";
+import { DataLoader } from "./DataLoader";
 import { LimitSetter } from "./LimitSetter";
+import { SkeletonCard } from "./SkeletonCard";
 
 export interface CostDashboardContentProps {
   getAuthToken: () => Promise<string | null>;
@@ -75,54 +79,71 @@ export function CostDashboardContent({
   onShowToast,
   onUsageStateChange,
 }: CostDashboardContentProps) {
-  const [isLoading, setIsLoading] = useState(false);
   const [errorText, setErrorText] = useState("");
-  const [summary, setSummary] = useState<UsageSummary | null>(null);
-  const [usageStatus, setUsageStatus] = useState<UsageStatusResponse | null>(null);
   const [isSavingLimit, setIsSavingLimit] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
 
   useEffect(() => {
-    let isCancelled = false;
+    let cancelled = false;
 
-    async function loadDashboard() {
-      setIsLoading(true);
-      setErrorText("");
-      try {
-        const authToken = await getAuthToken();
-        if (!authToken) {
-          throw new Error("Authentication token unavailable. Please sign in again.");
-        }
-        const [statusPayload, usageSummary] = await Promise.all([
-          getUsageStatus(authToken, naming),
-          getUsageSummary(31, authToken, naming),
-        ]);
-        if (isCancelled) {
-          return;
-        }
-        setSummary(usageSummary);
-        setUsageStatus(statusPayload);
-        onUsageStateChange?.(statusPayload);
-      } catch (error) {
-        if (!isCancelled) {
-          setErrorText(error instanceof Error ? error.message : "Failed to load cost dashboard.");
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsLoading(false);
-        }
+    async function resolveAuthToken() {
+      const resolvedToken = await getAuthToken();
+      if (!cancelled) {
+        setAuthToken(resolvedToken);
       }
     }
 
-    void loadDashboard();
-    const intervalId = window.setInterval(() => {
-      void loadDashboard();
-    }, 60_000);
-
+    void resolveAuthToken();
     return () => {
-      isCancelled = true;
-      window.clearInterval(intervalId);
+      cancelled = true;
     };
-  }, [getAuthToken, naming, onUsageStateChange]);
+  }, [getAuthToken]);
+
+  const usageStatusQuery = useApiQuery<UsageStatusResponse>(
+    ["usage-status", naming?.userDisplayName ?? ""],
+    "/api/usage/status",
+    {
+      authToken,
+      naming,
+      enabled: Boolean(authToken),
+      queryFn: async () => {
+        if (!authToken) {
+          throw new Error("Authentication token unavailable. Please sign in again.");
+        }
+        return await getUsageStatus(authToken, naming);
+      },
+      refetchInterval: 60_000,
+    }
+  );
+  const usageSummaryQuery = useApiQuery<UsageSummary>(
+    ["usage-summary", naming?.userDisplayName ?? "", "31-days"],
+    "/api/usage/summary?days=31",
+    {
+      authToken,
+      naming,
+      enabled: Boolean(authToken),
+      queryFn: async () => {
+        if (!authToken) {
+          throw new Error("Authentication token unavailable. Please sign in again.");
+        }
+        return await getUsageSummary(31, authToken, naming);
+      },
+      refetchInterval: 60_000,
+    }
+  );
+  const usageStatus = usageStatusQuery.data ?? null;
+  const summary = usageSummaryQuery.data ?? null;
+
+  useEffect(() => {
+    const nextError = usageStatusQuery.error?.message || usageSummaryQuery.error?.message || "";
+    setErrorText(nextError);
+  }, [usageStatusQuery.error, usageSummaryQuery.error]);
+
+  useEffect(() => {
+    if (usageStatus) {
+      onUsageStateChange?.(usageStatus);
+    }
+  }, [onUsageStateChange, usageStatus]);
 
   const currentMonthStats = useMemo(() => {
     const today = new Date();
@@ -151,42 +172,13 @@ export function CostDashboardContent({
   async function handleSaveLimit(limitKey: "daily_limit_usd" | "monthly_limit_usd", nextLimitUsd: number) {
     setIsSavingLimit(true);
     try {
-      const authToken = await getAuthToken();
       if (!authToken) {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
       const response = await updateUsageLimit(authToken, { [limitKey]: nextLimitUsd }, naming);
-      setUsageStatus((previous) => {
-        if (!previous) {
-          return previous;
-        }
-        const nextStatus: UsageStatusResponse = {
-          ...previous,
-          daily: {
-            ...previous.daily,
-            limit_usd: response.daily_limit_usd,
-            remaining_usd: Math.max(response.daily_limit_usd - previous.daily.spent_usd, 0),
-            percentage_used: response.daily_limit_usd > 0 ? Number(((previous.daily.spent_usd / response.daily_limit_usd) * 100).toFixed(2)) : 0,
-            limit_exceeded: previous.daily.spent_usd >= response.daily_limit_usd,
-            warning_triggered:
-              response.daily_limit_usd > 0 ? (previous.daily.spent_usd / response.daily_limit_usd) * 100 >= 80 : false,
-          },
-          monthly: {
-            ...previous.monthly,
-            limit_usd: response.monthly_limit_usd,
-            remaining_usd: Math.max(response.monthly_limit_usd - previous.monthly.spent_usd, 0),
-            percentage_used: response.monthly_limit_usd > 0 ? Number(((previous.monthly.spent_usd / response.monthly_limit_usd) * 100).toFixed(2)) : 0,
-            limit_exceeded: previous.monthly.spent_usd >= response.monthly_limit_usd,
-            warning_triggered:
-              response.monthly_limit_usd > 0 ? (previous.monthly.spent_usd / response.monthly_limit_usd) * 100 >= 80 : false,
-          },
-          blocked: previous.blocked,
-          blocking_period: previous.blocking_period,
-          blocking_message: previous.blocking_message,
-        };
-        onUsageStateChange?.(nextStatus);
-        return nextStatus;
-      });
+      queryClient.invalidateQueries({ queryKey: ["usage-status"] });
+      queryClient.invalidateQueries({ queryKey: ["usage-summary"] });
+      await Promise.allSettled([usageStatusQuery.refetch(), usageSummaryQuery.refetch()]);
       onShowToast(response.message, "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update usage limit.";
@@ -202,14 +194,21 @@ export function CostDashboardContent({
     <>
       {errorText ? <p className="nc-cost-panel__error">{errorText}</p> : null}
 
-      {isLoading && !summary && !usageStatus ? (
-        <div className="nc-cost-skeletons">
-          <div className="nc-cost-skeleton nc-cost-skeleton--large" />
-          <div className="nc-cost-skeleton nc-cost-skeleton--row" />
-          <div className="nc-cost-skeleton nc-cost-skeleton--chart" />
-          <div className="nc-cost-skeleton nc-cost-skeleton--chart" />
-        </div>
-      ) : (
+      <DataLoader
+        data={summary && usageStatus ? { summary, usageStatus } : null}
+        isLoading={usageSummaryQuery.isLoading || usageStatusQuery.isLoading}
+        isFetching={usageSummaryQuery.isFetching || usageStatusQuery.isFetching}
+        isStale={usageSummaryQuery.isStale || usageStatusQuery.isStale}
+        skeleton={
+          <div className="nc-cost-skeletons">
+            <SkeletonCard rows={2} />
+            <SkeletonCard rows={2} />
+            <SkeletonCard rows={4} />
+            <SkeletonCard rows={4} />
+          </div>
+        }
+      >
+        {() => (
         <div className="nc-cost-panel__body">
           <section className="nc-cost-card nc-cost-card--today">
             <div className="nc-cost-card__head">
@@ -319,7 +318,8 @@ export function CostDashboardContent({
             </div>
           </section>
         </div>
-      )}
+        )}
+      </DataLoader>
     </>
   );
 }
