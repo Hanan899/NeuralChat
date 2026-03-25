@@ -1,17 +1,34 @@
 # NeuralChat
 
-[![Status](https://img.shields.io/badge/status-active%20development-0a7ea4)](#project-status)
-[![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Tailwind-38bdf8)](#architecture)
-[![Backend](https://img.shields.io/badge/backend-FastAPI%20on%20Azure%20Functions-2563eb)](#architecture)
-[![Auth](https://img.shields.io/badge/auth-Clerk-6d28d9)](#authentication--data-storage)
-[![Storage](https://img.shields.io/badge/storage-Azure%20Blob-0ea5e9)](#authentication--data-storage)
-[![Web Search](https://img.shields.io/badge/search-Tavily-16a34a)](#web-search)
-[![Python](https://img.shields.io/badge/python-3.13-3776ab)](#prerequisites)
-[![Node](https://img.shields.io/badge/node-24.x-339933)](#prerequisites)
+<p align="center">
+  <img src="./NeuralChat/docs/assets/neuralchat-logo.svg" alt="NeuralChat logo" width="132" />
+</p>
 
-NeuralChat is a personal AI workspace with authenticated GPT-5 chat, deep memory, optional web search, file-grounded answers, plan-first agents, cost tracking, and project-scoped workspaces.
+[![Status](https://img.shields.io/badge/status-active%20development-0a7ea4)](./NeuralChat/README.md)
+[![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-38bdf8)](./NeuralChat/frontend)
+[![Backend](https://img.shields.io/badge/backend-FastAPI%20on%20Azure%20Functions-2563eb)](./NeuralChat/backend)
+[![Auth](https://img.shields.io/badge/auth-Clerk-6d28d9)](./NeuralChat/README.md#auth-and-identity)
+[![Storage](https://img.shields.io/badge/storage-Azure%20Blob-0ea5e9)](./NeuralChat/README.md#storage-layout)
+[![Model](https://img.shields.io/badge/model-GPT--5%20via%20Azure%20OpenAI-111827)](./NeuralChat/README.md#stack)
 
-This repository is a workspace root. The actual application lives in [`NeuralChat/`](./NeuralChat).
+NeuralChat is a personal AI workspace for authenticated GPT-5 chat, memory, project-scoped collaboration, file-grounded answers, plan-first agents, and budget-aware usage controls.
+
+This repository is the workspace root. The application itself lives in [`NeuralChat/`](./NeuralChat).
+
+## What NeuralChat Is
+
+NeuralChat is built as a practical AI operating surface rather than a single chat box.
+
+Today it already supports:
+- authenticated GPT-5 chat with NDJSON streaming
+- global user memory that is extracted and reused across normal chats
+- optional Tavily-backed web search with cached sources
+- file-grounded answers from uploaded documents
+- project workspaces with isolated chats, memory, and files
+- Project Brain background learning per project
+- plan-first Agent Mode with saved plans and execution logs
+- daily and monthly usage controls with real backend enforcement
+- Azure Blob persistence with readable naming and stable ids
 
 ## Workspace Map
 
@@ -21,103 +38,153 @@ PROJECT/
 │   ├── backend/        # FastAPI app mounted through Azure Functions ASGI
 │   ├── frontend/       # React + TypeScript client
 │   ├── docs/           # Architecture, deployment, roadmap
-│   └── README.md       # App-level overview
-├── README.md           # Workspace-level entry point
+│   └── README.md       # App-level technical reference
+├── README.md           # Root showcase + navigation
 └── .gitignore
 ```
 
-Maintained source and docs live in:
-- `NeuralChat/backend`
-- `NeuralChat/frontend`
-- `NeuralChat/docs`
-- `NeuralChat/README.md`
+## Product Surfaces
 
-Generated or vendor folders are not documentation targets:
-- `.venv`
-- `node_modules`
-- `dist`
-- `.pytest_cache`
-- local emulator/cache folders
+### Core chat
+- standard authenticated chat flow
+- model selection
+- streaming token responses
+- conversation history and sharing
+- session files for grounded answers
 
-## Current Product Scope
+### Research and retrieval
+- optional web search with source metadata
+- Blob-backed search cache
+- file parsing and chunk reuse
+- project-specific context isolation
 
-NeuralChat currently supports:
-- Clerk authentication and JWT-backed backend protection
-- GPT-5 chat through Azure OpenAI
-- NDJSON streaming responses
-- user-level memory extraction and recall
-- optional Tavily-backed web search with caching and citations
-- session-scoped file upload, parsing, and retrieval
-- plan-first Agent Mode with stored history
-- cost monitoring with daily usage tracking and budget warning
-- project workspaces with isolated chats, memory, and files
-- Azure Blob persistence with readable naming and stable ids
+### Projects
+- project templates
+- isolated project chats
+- Project Brain completeness and memory editing
+- project file support
+- routed workspace pages and project chat shell
 
-## High-Level Architecture
+### Agent Mode
+- create a plan first
+- run it explicitly
+- stream progress in-thread
+- save plan and log history per session
+
+### Cost monitoring
+- usage summary by feature
+- daily and monthly limits
+- warning banners
+- hard blocking before GPT calls when limits are reached
+
+## Architecture At A Glance
 
 ```mermaid
 flowchart LR
-  UI[React Frontend] --> AUTH[Clerk Auth]
+  UI[React Frontend] --> AUTH[Clerk]
   UI --> API[FastAPI on Azure Functions]
   API --> AOAI[Azure OpenAI GPT-5]
   API --> TAVILY[Tavily Search]
   API --> BLOB[Azure Blob Storage]
 
-  BLOB --> MEM[Profiles + Conversations]
+  BLOB --> CONV[Conversations]
+  BLOB --> PROFILE[Profiles + Memory]
   BLOB --> FILES[Uploads + Parsed Chunks]
   BLOB --> AGENTS[Plans + Logs]
-  BLOB --> PROJECTS[Project Index + Project Memory]
-  BLOB --> USAGE[Usage Logs]
+  BLOB --> PROJECTS[Projects + Project Brain]
+  BLOB --> USAGE[Usage Records]
 ```
 
-## Main Runtime Flows
+## Stack
 
-### Standard chat
+- Frontend: React, TypeScript, Vite, Clerk React, custom CSS system, Recharts, Markdown + KaTeX rendering
+- Backend: FastAPI, Azure Functions ASGI, Pydantic, HTTPX
+- Model provider: Azure OpenAI GPT-5
+- Search provider: Tavily
+- Agent orchestration: LangChain + LangGraph
+- Storage: Azure Blob Storage
+- Auth: Clerk JWT verification through JWKS
+- Document parsing: PyMuPDF, python-docx, multipart upload handling
 
-```mermaid
-flowchart TD
-  A["User sends message"] --> B["Frontend sends auth token + session metadata"]
-  B --> C["POST /api/chat"]
-  C --> D["Load memory"]
-  D --> E["Optional search"]
-  E --> F["Optional file context"]
-  F --> G["Azure OpenAI reply"]
-  G --> H["Stream NDJSON back to UI"]
-  H --> I["Persist conversation"]
-  I --> J["Background memory extraction"]
-  I --> K["Background usage logging"]
-```
+## What Is In The Codebase Right Now
 
-### Project chat
+### Frontend
+Key current areas in `NeuralChat/frontend/src/`:
+- `App.tsx`: application shell, routing, chat orchestration, notifications, usage gating
+- `components/Sidebar.tsx`: primary navigation and workspace switching
+- `components/ChatWindow.tsx` and `components/MessageBubble.tsx`: chat transcript rendering
+- `components/ProjectBrainPanel.tsx`: project memory visibility and editing
+- `components/AgentProgress.tsx` and `components/AgentHistory.tsx`: plan-first agent UX
+- `components/CostDashboard.tsx` and `components/CostWarningBanner.tsx`: budget controls and warnings
+- `pages/ProjectsPage.tsx` and `pages/ProjectWorkspacePage.tsx`: projects index and workspace views
+- `api/`: typed frontend clients for chat, usage, agent, and project routes
 
-```mermaid
-flowchart TD
-  A["User opens project chat"] --> B["POST /api/chat with project_id"]
-  B --> C["Verify project ownership"]
-  C --> D["Load project system prompt"]
-  D --> E["Load project memory"]
-  E --> F["Load project chat history"]
-  F --> G["Optional project file context"]
-  G --> H["Azure OpenAI reply"]
-  H --> I["Save under project chat path"]
-  I --> J["Background project memory update"]
-```
+### Backend
+Key current areas in `NeuralChat/backend/app/`:
+- `main.py`: FastAPI routes and request orchestration
+- `auth.py`: Clerk token validation and user extraction
+- `services/chat_service.py`: GPT chat generation and streaming
+- `services/memory.py`: global memory extraction and prompt building
+- `services/projects.py`: project CRUD, project chats, Project Brain, and project files
+- `services/file_handler.py`: upload validation, parsing, chunking, and retrieval
+- `services/agent.py`: plan generation, execution, and persisted logs
+- `services/cost_tracker.py`: usage logging, summaries, budgets, and enforcement
+- `services/search.py`: Tavily search and cache handling
+- `services/blob_paths.py`: readable Blob path naming and migration helpers
 
-### Cost monitoring
+### Tests
+Current automated coverage includes:
+- agent flows
+- blob naming
+- cost tracking and enforcement
+- project CRUD and cleanup
+- Project Brain behavior
+- title generation
+- frontend components for projects, settings, costs, sidebar, file upload, and search rendering
 
-```mermaid
-flowchart TD
-  A["GPT call completes"] --> B["Normalize usage tokens"]
-  B --> C["Append daily usage record"]
-  C --> D["usage/display_name__user_id/YYYY-MM-DD.json"]
-  D --> E["GET /api/usage/today and /api/usage/summary"]
-  E --> F["Settings > Cost monitoring"]
-  E --> G["Chat warning banner at 80 percent"]
-```
+## API Surface Snapshot
+
+Public endpoints:
+- `GET /api/health`
+- `GET /api/search/status`
+- `GET /api/projects/templates`
+
+Protected endpoint groups:
+- `/api/chat`
+- `/api/me` and `/api/me/memory`
+- `/api/upload`, `/api/files`, `/api/conversations/*`
+- `/api/projects/*`
+- `/api/agent/*`
+- `/api/usage/*`
+- `/api/conversations/title`
+
+For the detailed route map, storage layout, and deployment notes, use the app-level docs below.
+
+## Docs
+
+- App overview and technical reference: [NeuralChat/README.md](./NeuralChat/README.md)
+- Architecture: [NeuralChat/docs/ARCHITECTURE.md](./NeuralChat/docs/ARCHITECTURE.md)
+- Deployment: [NeuralChat/docs/DEPLOYMENT.md](./NeuralChat/docs/DEPLOYMENT.md)
+- Roadmap: [NeuralChat/docs/ROADMAP.md](./NeuralChat/docs/ROADMAP.md)
+
+## Future Direction
+
+We are intentionally building NeuralChat in a way that can grow into a broader AI workspace.
+
+Planned and likely next areas include:
+- MCP tools and external tool connectivity
+- richer multi-step agents and deeper agent tooling
+- voice input and voice-driven interactions
+- image generation workflows
+- multimodal understanding for images and documents
+- stronger retrieval quality and provenance
+- more advanced project workspaces and collaboration patterns
+
+Those items are roadmap directions, not shipped features unless they are explicitly documented as present in the app-level README or code.
 
 ## Where To Start
 
-- App overview: [NeuralChat/README.md](./NeuralChat/README.md)
-- Architecture details: [NeuralChat/docs/ARCHITECTURE.md](./NeuralChat/docs/ARCHITECTURE.md)
-- Deployment guide: [NeuralChat/docs/DEPLOYMENT.md](./NeuralChat/docs/DEPLOYMENT.md)
-- Forward roadmap: [NeuralChat/docs/ROADMAP.md](./NeuralChat/docs/ROADMAP.md)
+If you want the real implementation details first:
+1. Read [NeuralChat/README.md](./NeuralChat/README.md)
+2. Check [NeuralChat/docs/ARCHITECTURE.md](./NeuralChat/docs/ARCHITECTURE.md)
+3. Use [NeuralChat/docs/DEPLOYMENT.md](./NeuralChat/docs/DEPLOYMENT.md) for local or Azure setup

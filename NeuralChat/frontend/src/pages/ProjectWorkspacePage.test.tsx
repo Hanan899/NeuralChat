@@ -38,8 +38,8 @@ describe("ProjectWorkspacePage", () => {
         project={baseProject}
         templates={{}}
         chats={[
-          { session_id: "chat-1", created_at: "2026-03-17T10:00:00Z", message_count: 3, last_message_preview: "PRD discussion" },
-          { session_id: "chat-2", created_at: "2026-03-17T11:00:00Z", message_count: 1, last_message_preview: "Investor pitch" },
+          { session_id: "chat-1", title: "PRD Discussion", created_at: "2026-03-17T10:00:00Z", message_count: 3, last_message_preview: "PRD discussion" },
+          { session_id: "chat-2", title: "Investor Pitch", created_at: "2026-03-17T11:00:00Z", message_count: 1, last_message_preview: "Investor pitch" },
         ]}
         brainData={{
           memory: { startup_name: "NeuralChat", tech_stack: "FastAPI" },
@@ -59,7 +59,7 @@ describe("ProjectWorkspacePage", () => {
     );
 
     expect(screen.getByText("My Startup")).toBeInTheDocument();
-    expect(screen.getByText("PRD discussion")).toBeInTheDocument();
+    expect(screen.getByText("PRD Discussion")).toBeInTheDocument();
     expect(screen.getByText("Project Brain")).toBeInTheDocument();
     expect(screen.getByText("pitch-deck.pdf")).toBeInTheDocument();
   });
@@ -74,7 +74,7 @@ describe("ProjectWorkspacePage", () => {
         authToken="token"
         project={baseProject}
         templates={{}}
-        chats={[{ session_id: "chat-1", created_at: "2026-03-17T10:00:00Z", message_count: 3, last_message_preview: "PRD discussion" }]}
+        chats={[{ session_id: "chat-1", title: "PRD Discussion", created_at: "2026-03-17T10:00:00Z", message_count: 3, last_message_preview: "PRD discussion" }]}
         brainData={null}
         files={[]}
         onBack={vi.fn()}

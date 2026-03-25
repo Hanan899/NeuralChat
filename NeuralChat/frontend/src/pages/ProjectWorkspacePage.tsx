@@ -6,6 +6,19 @@ import { ProjectBrainPanel } from "../components/ProjectBrainPanel";
 import { ProjectTemplateIcon } from "../components/ProjectTemplateIcon";
 import type { Project, ProjectChat, ProjectMemoryResponse, ProjectTemplate } from "../types/project";
 
+function buildProjectPromptPreview(prompt: string): string {
+  const trimmedPrompt = prompt.trim();
+  if (!trimmedPrompt) {
+    return "No system prompt configured yet.";
+  }
+
+  return trimmedPrompt
+    .replace(/\r\n/g, "\n")
+    .replace(/\s+(Behavior Guidelines:|Response Style:|Advanced Capabilities:|Restrictions:|Goal:)/g, "\n$1")
+    .replace(/\s+-\s+/g, "\n- ")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 interface ProjectWorkspacePageProps {
   authToken: string;
   getAuthToken?: () => Promise<string | null>;
@@ -48,6 +61,7 @@ export function ProjectWorkspacePage({
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   const templateLabel = templates[project.template]?.label ?? "Custom Project";
+  const promptPreview = buildProjectPromptPreview(project.system_prompt);
 
   return (
     <section className="nc-project-workspace" data-testid="project-workspace-page">
@@ -65,7 +79,10 @@ export function ProjectWorkspacePage({
             <span className="nc-project-workspace__template-badge">{templateLabel}</span>
             {project.pinned ? <span className="nc-project-workspace__template-badge nc-project-workspace__template-badge--quiet">Pinned</span> : null}
           </div>
-          <p>{project.system_prompt}</p>
+          <div className="nc-project-workspace__prompt-preview">
+            <span className="nc-project-workspace__prompt-kicker">Prompt preview</span>
+            <p>{promptPreview}</p>
+          </div>
         </div>
 
         <div className="nc-project-workspace__header-actions">
@@ -113,13 +130,13 @@ export function ProjectWorkspacePage({
               {chats.map((chat) => (
                 <div key={chat.session_id} className="nc-project-chat-row">
                   <button type="button" className="nc-project-chat-row__main" onClick={() => onOpenChat(chat.session_id)}>
-                    <strong>{chat.last_message_preview || "Untitled chat"}</strong>
+                    <strong>{chat.title || chat.last_message_preview || "Untitled chat"}</strong>
                     <span>{chat.message_count} messages</span>
                   </button>
                   <button
                     type="button"
                     className="nc-project-chat-row__delete"
-                    aria-label={`Delete ${chat.last_message_preview || "Untitled chat"}`}
+                    aria-label={`Delete ${chat.title || chat.last_message_preview || "Untitled chat"}`}
                     onClick={() => onDeleteChat(chat.session_id)}
                   >
                     Delete
@@ -169,6 +186,7 @@ export function ProjectWorkspacePage({
       <EditSystemPromptModal
         open={isPromptModalOpen}
         authToken={authToken}
+        getAuthToken={getAuthToken}
         project={project}
         templates={templates}
         naming={naming}
