@@ -5628,6 +5628,13 @@ select {
   overflow-y: auto;
 }
 
+.nc-project-modal__sidebar {
+  min-width: 0;
+  padding: 28px 28px 28px 0;
+  display: flex;
+  align-items: flex-start;
+}
+
 .nc-project-modal__main--editor-only {
   border-right: 0;
 }
@@ -5752,6 +5759,7 @@ select {
   gap: 16px;
   border-left: 4px solid var(--project-preview-color, var(--accent-primary));
   min-height: 0;
+  width: 100%;
 }
 
 .nc-project-preview__header {
