@@ -86,15 +86,24 @@ def validate_title_request(payload: dict[str, Any]) -> dict[str, str]:
 
 def validate_usage_limit_request(payload: dict[str, Any]) -> dict[str, float]:
     """Validate and normalize PATCH /api/usage/limit payload."""
-    raw_limit = payload.get("daily_limit_usd")
-    if isinstance(raw_limit, bool) or not isinstance(raw_limit, (int, float)):
-        raise HTTPException(status_code=400, detail="daily_limit_usd must be a number greater than zero.")
+    normalized_limits: dict[str, float] = {}
+    for field_name in ("daily_limit_usd", "monthly_limit_usd"):
+        if field_name not in payload:
+            continue
+        raw_limit = payload.get(field_name)
+        if isinstance(raw_limit, bool) or not isinstance(raw_limit, (int, float)):
+            raise HTTPException(status_code=400, detail=f"{field_name} must be a number greater than zero.")
 
-    daily_limit_usd = float(raw_limit)
-    if daily_limit_usd <= 0:
-        raise HTTPException(status_code=400, detail="daily_limit_usd must be greater than zero.")
+        parsed_limit = float(raw_limit)
+        if parsed_limit <= 0:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be greater than zero.")
 
-    return {"daily_limit_usd": round(daily_limit_usd, 2)}
+        normalized_limits[field_name] = round(parsed_limit, 2)
+
+    if not normalized_limits:
+        raise HTTPException(status_code=400, detail="daily_limit_usd or monthly_limit_usd is required.")
+
+    return normalized_limits
 
 
 def validate_project_memory_update_request(payload: dict[str, Any]) -> dict[str, str]:

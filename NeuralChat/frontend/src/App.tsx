@@ -17,7 +17,7 @@ import {
   getTemplates,
   updateProject,
 } from "./api/projects";
-import { getTodayUsage } from "./api/usage";
+import { getUsageStatus } from "./api/usage";
 import { AgentHistory } from "./components/AgentHistory";
 import { BrainActivityIndicator } from "./components/BrainActivityIndicator";
 import { ChatWindow } from "./components/ChatWindow";
@@ -36,10 +36,10 @@ import type {
   ChatMessage,
   ChatModel,
   ConversationSummary,
-  DailyLimitSummary,
   StreamChunk,
   ThemeMode,
   UploadedFileItem,
+  UsageStatusResponse,
 } from "./types";
 import type { Project, ProjectChat, ProjectMemoryResponse, ProjectTemplate } from "./types/project";
 
@@ -294,8 +294,31 @@ function getUserStorageKey(userId: string) {
   return `neuralchat:workspace-ui:v2:${userId}`;
 }
 
-function getCostWarningStorageKey(userId: string, usageDate: string) {
-  return `${COST_WARNING_STORAGE_KEY}:${userId}:${usageDate}`;
+function getCostWarningStorageKey(userId: string, warningScope: string) {
+  return `${COST_WARNING_STORAGE_KEY}:${userId}:${warningScope}`;
+}
+
+function getUsageWarningScope(status: UsageStatusResponse | null): string | null {
+  if (!status) {
+    return null;
+  }
+
+  const currentDate = new Date().toISOString().slice(0, 10);
+  const currentMonth = currentDate.slice(0, 7);
+
+  if (status.blocked) {
+    return status.blocking_period === "monthly" ? `blocked-monthly:${currentMonth}` : `blocked-daily:${currentDate}`;
+  }
+
+  if (status.daily.warning_triggered) {
+    return `warning-daily:${currentDate}`;
+  }
+
+  if (status.monthly.warning_triggered) {
+    return `warning-monthly:${currentMonth}`;
+  }
+
+  return null;
 }
 
 function buildConversationSummary(title = "New chat"): ConversationSummary {
@@ -473,9 +496,8 @@ function ChatShell() {
   const [projectFiles, setProjectFiles] = useState<UploadedFileItem[]>([]);
   const [isProjectWorkspaceLoading, setIsProjectWorkspaceLoading] = useState(false);
   const [projectBrainActivityToken, setProjectBrainActivityToken] = useState(0);
-  const [todayUsageSummary, setTodayUsageSummary] = useState<DailyLimitSummary | null>(null);
+  const [usageStatus, setUsageStatus] = useState<UsageStatusResponse | null>(null);
   const [isCostWarningDismissed, setIsCostWarningDismissed] = useState(false);
-  const [activeUsageDate, setActiveUsageDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const notifPanelRef = useRef<HTMLDivElement | null>(null);
   const notifBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -541,6 +563,9 @@ function ChatShell() {
     isProjectsIndexRoute ||
     isProjectOverviewRoute ||
     activeWorkspaceShortcut !== null;
+  const activeUsageWarningScope = useMemo(() => getUsageWarningScope(usageStatus), [usageStatus]);
+  const isUsageBlocked = usageStatus?.blocked === true;
+  const usageBlockingMessage = usageStatus?.blocking_message?.trim() || "";
   useEffect(() => {
     checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
     checkSearchStatus()
@@ -688,38 +713,37 @@ function ChatShell() {
     };
   }, [activeProject?.name, activeProjectChatId, activeProjectId, getToken, userDisplayName, userId]);
 
-  const loadTodayUsageSummary = useCallback(async () => {
+  const loadUsageStatus = useCallback(async () => {
     if (!userId) {
-      setTodayUsageSummary(null);
+      setUsageStatus(null);
       return;
     }
 
     try {
-      setActiveUsageDate(new Date().toISOString().slice(0, 10));
       const authToken = await getToken();
       if (!authToken) {
         return;
       }
-      const payload = await getTodayUsage(authToken, {
+      const payload = await getUsageStatus(authToken, {
         userDisplayName,
         sessionTitle: activeConversation?.title?.trim() || "New chat",
       });
-      setTodayUsageSummary(payload.summary);
+      setUsageStatus(payload);
     } catch {
       // Leave the warning hidden when usage cannot be loaded.
     }
   }, [activeConversation?.title, getToken, userDisplayName, userId]);
 
   useEffect(() => {
-    void loadTodayUsageSummary();
+    void loadUsageStatus();
     const intervalId = window.setInterval(() => {
-      void loadTodayUsageSummary();
+      void loadUsageStatus();
     }, 60_000);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [loadTodayUsageSummary]);
+  }, [loadUsageStatus]);
 
   useEffect(() => {
     if (!userId) {
@@ -727,9 +751,14 @@ function ChatShell() {
       return;
     }
 
-    const storageKey = getCostWarningStorageKey(userId, activeUsageDate);
+    if (!activeUsageWarningScope) {
+      setIsCostWarningDismissed(false);
+      return;
+    }
+
+    const storageKey = getCostWarningStorageKey(userId, activeUsageWarningScope);
     setIsCostWarningDismissed(window.localStorage.getItem(storageKey) === "1");
-  }, [activeUsageDate, userId]);
+  }, [activeUsageWarningScope, userId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -1015,6 +1044,14 @@ function ChatShell() {
     toastTimersRef.current[toastId] = window.setTimeout(() => {
       removeToast(toastId);
     }, 2600);
+  }
+
+  function handleBlockedUsageAttempt() {
+    const message =
+      usageBlockingMessage ||
+      "You've hit your daily usage limit. To get more access now, send a request to your admin or try again tomorrow";
+    setErrorText(message);
+    showToast(message, "error");
   }
 
   const flushTypingQueue = useCallback(() => {
@@ -1485,6 +1522,10 @@ function ChatShell() {
     if (!trimmed || isSending || !activeSessionId || submitLockRef.current) {
       return;
     }
+    if (isUsageBlocked) {
+      handleBlockedUsageAttempt();
+      return;
+    }
 
     submitLockRef.current = true;
     setErrorText("");
@@ -1676,6 +1717,10 @@ function ChatShell() {
     if (!trimmed || isSending || !activeSessionId || submitLockRef.current) {
       return;
     }
+    if (isUsageBlocked) {
+      handleBlockedUsageAttempt();
+      return;
+    }
 
     submitLockRef.current = true;
     setErrorText("");
@@ -1757,6 +1802,10 @@ function ChatShell() {
 
   async function handleRunAgentPlan(messageId: string) {
     if (!activeSessionId || isSending) {
+      return;
+    }
+    if (isUsageBlocked) {
+      handleBlockedUsageAttempt();
       return;
     }
 
@@ -1893,10 +1942,18 @@ function ChatShell() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isUsageBlocked) {
+      handleBlockedUsageAttempt();
+      return;
+    }
     void submitPrompt(input);
   }
 
   function handleRetryPrompt(prompt: string) {
+    if (isUsageBlocked) {
+      handleBlockedUsageAttempt();
+      return;
+    }
     if (!isSending) {
       void submitChatPrompt(prompt);
     }
@@ -1947,11 +2004,11 @@ function ChatShell() {
   }
 
   function handleDismissCostWarning() {
-    if (!userId) {
+    if (!userId || !activeUsageWarningScope) {
       setIsCostWarningDismissed(true);
       return;
     }
-    const storageKey = getCostWarningStorageKey(userId, activeUsageDate);
+    const storageKey = getCostWarningStorageKey(userId, activeUsageWarningScope);
     window.localStorage.setItem(storageKey, "1");
     setIsCostWarningDismissed(true);
   }
@@ -2232,8 +2289,8 @@ function ChatShell() {
             isSettingsOpen ? "nc-message-area--settings" : ""
           } ${isScrollableWorkspaceRoute ? "nc-message-area--scrollable" : ""}`}
         >
-          {!isSettingsOpen && todayUsageSummary && !isCostWarningDismissed ? (
-            <CostWarningBanner summary={todayUsageSummary} onDismiss={handleDismissCostWarning} />
+          {!isSettingsOpen && usageStatus && activeUsageWarningScope && !isCostWarningDismissed ? (
+            <CostWarningBanner status={usageStatus} onDismiss={handleDismissCostWarning} />
           ) : null}
 
           {isSettingsOpen ? (
@@ -2241,7 +2298,7 @@ function ChatShell() {
               getAuthToken={getToken}
               naming={activeRequestNaming}
               onShowToast={showToast}
-              onUsageStateChange={setTodayUsageSummary}
+              onUsageStateChange={setUsageStatus}
               onOpenAccountSettings={handleOpenUserSettings}
               onCloseSettings={() => setIsSettingsOpen(false)}
             />
@@ -2469,13 +2526,14 @@ function ChatShell() {
                     <UiIcon kind="stop" className="nc-send-btn__icon" />
                   </button>
                 ) : (
-                  <button type="submit" className="nc-send-btn" aria-label="Send message" disabled={!input.trim()}>
+                  <button type="submit" className="nc-send-btn" aria-label="Send message" disabled={!input.trim() || isUsageBlocked}>
                     <UiIcon kind="send" className="nc-send-btn__icon" />
                   </button>
                 )}
               </div>
             </form>
 
+            {isUsageBlocked ? <p className="nc-error">{usageBlockingMessage}</p> : null}
             {errorText ? <p className="nc-error">{errorText}</p> : null}
             <p className="nc-input-note">NeuralChat can make mistakes. Verify important info.</p>
           </footer>

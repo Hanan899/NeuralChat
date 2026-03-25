@@ -12,15 +12,15 @@ import {
 } from "recharts";
 
 import type { RequestNamingContext } from "../api";
-import { getTodayUsage, getUsageLimit, getUsageSummary, updateUsageLimit } from "../api/usage";
-import type { DailyLimitSummary, UsageSummary } from "../types";
+import { getUsageStatus, getUsageSummary, updateUsageLimit } from "../api/usage";
+import type { UsageStatusResponse, UsageSummary } from "../types";
 import { LimitSetter } from "./LimitSetter";
 
 export interface CostDashboardContentProps {
   getAuthToken: () => Promise<string | null>;
   naming?: RequestNamingContext;
   onShowToast: (message: string, tone?: "success" | "info" | "error") => void;
-  onUsageStateChange?: (summary: DailyLimitSummary) => void;
+  onUsageStateChange?: (status: UsageStatusResponse) => void;
 }
 
 interface CostDashboardProps extends CostDashboardContentProps {
@@ -78,7 +78,7 @@ export function CostDashboardContent({
   const [isLoading, setIsLoading] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [summary, setSummary] = useState<UsageSummary | null>(null);
-  const [todaySummary, setTodaySummary] = useState<DailyLimitSummary | null>(null);
+  const [usageStatus, setUsageStatus] = useState<UsageStatusResponse | null>(null);
   const [isSavingLimit, setIsSavingLimit] = useState(false);
 
   useEffect(() => {
@@ -92,26 +92,16 @@ export function CostDashboardContent({
         if (!authToken) {
           throw new Error("Authentication token unavailable. Please sign in again.");
         }
-        const [todayPayload, usageSummary, limitPayload] = await Promise.all([
-          getTodayUsage(authToken, naming),
+        const [statusPayload, usageSummary] = await Promise.all([
+          getUsageStatus(authToken, naming),
           getUsageSummary(31, authToken, naming),
-          getUsageLimit(authToken, naming),
         ]);
         if (isCancelled) {
           return;
         }
         setSummary(usageSummary);
-        const mergedTodaySummary = {
-          ...todayPayload.summary,
-          daily_limit_usd: limitPayload.daily_limit_usd,
-          percentage_used:
-            limitPayload.daily_limit_usd > 0
-              ? Number(((todayPayload.summary.today_cost_usd / limitPayload.daily_limit_usd) * 100).toFixed(2))
-              : 0,
-          limit_exceeded: todayPayload.summary.today_cost_usd > limitPayload.daily_limit_usd,
-        };
-        setTodaySummary(mergedTodaySummary);
-        onUsageStateChange?.(mergedTodaySummary);
+        setUsageStatus(statusPayload);
+        onUsageStateChange?.(statusPayload);
       } catch (error) {
         if (!isCancelled) {
           setErrorText(error instanceof Error ? error.message : "Failed to load cost dashboard.");
@@ -136,55 +126,70 @@ export function CostDashboardContent({
 
   const currentMonthStats = useMemo(() => {
     const today = new Date();
-    const currentMonth = today.getUTCMonth();
-    const currentYear = today.getUTCFullYear();
-    const monthlyPoints = (summary?.daily_costs ?? []).filter((entry) => {
-      const entryDate = new Date(`${entry.date}T00:00:00Z`);
-      return entryDate.getUTCMonth() === currentMonth && entryDate.getUTCFullYear() === currentYear;
-    });
-    const currentMonthCost = monthlyPoints.reduce((total, entry) => total + entry.cost_usd, 0);
     const elapsedDays = Math.max(1, today.getUTCDate());
+    const thisMonthCostUsd = usageStatus?.monthly.spent_usd ?? 0;
     return {
-      thisMonthCostUsd: currentMonthCost,
-      averagePerDayUsd: currentMonthCost / elapsedDays,
+      thisMonthCostUsd,
+      averagePerDayUsd: thisMonthCostUsd / elapsedDays,
     };
-  }, [summary]);
+  }, [usageStatus]);
 
-  const featureRows = useMemo(() => buildFeatureRows(summary ?? {
-    total_cost_usd: 0,
-    total_input_tokens: 0,
-    total_output_tokens: 0,
-    by_feature: {},
-    daily_costs: [],
-  }), [summary]);
+  const featureRows = useMemo(
+    () =>
+      buildFeatureRows(
+        summary ?? {
+          total_cost_usd: 0,
+          total_input_tokens: 0,
+          total_output_tokens: 0,
+          by_feature: {},
+          daily_costs: [],
+        }
+      ),
+    [summary]
+  );
 
-  async function handleSaveDailyLimit(nextLimitUsd: number) {
+  async function handleSaveLimit(limitKey: "daily_limit_usd" | "monthly_limit_usd", nextLimitUsd: number) {
     setIsSavingLimit(true);
     try {
       const authToken = await getAuthToken();
       if (!authToken) {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
-      const response = await updateUsageLimit(authToken, nextLimitUsd, naming);
-      setTodaySummary((previous) => {
+      const response = await updateUsageLimit(authToken, { [limitKey]: nextLimitUsd }, naming);
+      setUsageStatus((previous) => {
         if (!previous) {
           return previous;
         }
-        const updatedSummary = {
+        const nextStatus: UsageStatusResponse = {
           ...previous,
-          daily_limit_usd: response.daily_limit_usd,
-          percentage_used:
-            previous.today_cost_usd > 0
-              ? Number(((previous.today_cost_usd / response.daily_limit_usd) * 100).toFixed(2))
-              : 0,
-          limit_exceeded: previous.today_cost_usd > response.daily_limit_usd,
+          daily: {
+            ...previous.daily,
+            limit_usd: response.daily_limit_usd,
+            remaining_usd: Math.max(response.daily_limit_usd - previous.daily.spent_usd, 0),
+            percentage_used: response.daily_limit_usd > 0 ? Number(((previous.daily.spent_usd / response.daily_limit_usd) * 100).toFixed(2)) : 0,
+            limit_exceeded: previous.daily.spent_usd >= response.daily_limit_usd,
+            warning_triggered:
+              response.daily_limit_usd > 0 ? (previous.daily.spent_usd / response.daily_limit_usd) * 100 >= 80 : false,
+          },
+          monthly: {
+            ...previous.monthly,
+            limit_usd: response.monthly_limit_usd,
+            remaining_usd: Math.max(response.monthly_limit_usd - previous.monthly.spent_usd, 0),
+            percentage_used: response.monthly_limit_usd > 0 ? Number(((previous.monthly.spent_usd / response.monthly_limit_usd) * 100).toFixed(2)) : 0,
+            limit_exceeded: previous.monthly.spent_usd >= response.monthly_limit_usd,
+            warning_triggered:
+              response.monthly_limit_usd > 0 ? (previous.monthly.spent_usd / response.monthly_limit_usd) * 100 >= 80 : false,
+          },
+          blocked: previous.blocked,
+          blocking_period: previous.blocking_period,
+          blocking_message: previous.blocking_message,
         };
-        onUsageStateChange?.(updatedSummary);
-        return updatedSummary;
+        onUsageStateChange?.(nextStatus);
+        return nextStatus;
       });
       onShowToast(response.message, "success");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update daily limit.";
+      const message = error instanceof Error ? error.message : "Failed to update usage limit.";
       setErrorText(message);
       onShowToast(message, "error");
       throw error;
@@ -197,7 +202,7 @@ export function CostDashboardContent({
     <>
       {errorText ? <p className="nc-cost-panel__error">{errorText}</p> : null}
 
-      {isLoading && !summary && !todaySummary ? (
+      {isLoading && !summary && !usageStatus ? (
         <div className="nc-cost-skeletons">
           <div className="nc-cost-skeleton nc-cost-skeleton--large" />
           <div className="nc-cost-skeleton nc-cost-skeleton--row" />
@@ -209,17 +214,17 @@ export function CostDashboardContent({
           <section className="nc-cost-card nc-cost-card--today">
             <div className="nc-cost-card__head">
               <h3>Today's cost</h3>
-              {todaySummary ? <span>{formatCurrency(todaySummary.today_cost_usd)} / {formatCurrency(todaySummary.daily_limit_usd)}</span> : null}
+              {usageStatus ? <span>{formatCurrency(usageStatus.daily.spent_usd)} / {formatCurrency(usageStatus.daily.limit_usd)}</span> : null}
             </div>
             <div className="nc-cost-progress" aria-label="Daily usage progress bar">
               <div
-                className={`nc-cost-progress__fill ${todaySummary?.limit_exceeded ? "nc-cost-progress__fill--danger" : todaySummary && todaySummary.percentage_used >= 80 ? "nc-cost-progress__fill--warning" : ""}`}
-                style={{ width: `${Math.min(todaySummary?.percentage_used ?? 0, 100)}%` }}
+                className={`nc-cost-progress__fill ${usageStatus?.daily.limit_exceeded ? "nc-cost-progress__fill--danger" : usageStatus && usageStatus.daily.warning_triggered ? "nc-cost-progress__fill--warning" : ""}`}
+                style={{ width: `${Math.min(usageStatus?.daily.percentage_used ?? 0, 100)}%` }}
               />
             </div>
             <div className="nc-cost-card__meta">
-              <span>{Math.round(todaySummary?.percentage_used ?? 0)}%</span>
-              <span>Warning at 80%</span>
+              <span>{Math.round(usageStatus?.daily.percentage_used ?? 0)}%</span>
+              <span>{usageStatus?.blocked && usageStatus.blocking_period === "daily" ? "Daily limit reached" : "Warning at 80%"}</span>
             </div>
           </section>
 
@@ -227,6 +232,12 @@ export function CostDashboardContent({
             <section className="nc-cost-card">
               <p className="nc-cost-section-label">This month</p>
               <h3>{formatCurrency(currentMonthStats.thisMonthCostUsd)}</h3>
+              {usageStatus ? <p className="nc-cost-card__mini-meta">{Math.round(usageStatus.monthly.percentage_used)}% of monthly budget</p> : null}
+            </section>
+            <section className="nc-cost-card">
+              <p className="nc-cost-section-label">Monthly limit</p>
+              <h3>{formatCurrency(usageStatus?.monthly.limit_usd ?? 0)}</h3>
+              {usageStatus?.blocked && usageStatus.blocking_period === "monthly" ? <p className="nc-cost-card__mini-meta">Monthly limit reached</p> : null}
             </section>
             <section className="nc-cost-card">
               <p className="nc-cost-section-label">Total</p>
@@ -238,11 +249,20 @@ export function CostDashboardContent({
             </section>
           </div>
 
-          <LimitSetter
-            dailyLimitUsd={todaySummary?.daily_limit_usd ?? 1}
-            isSaving={isSavingLimit}
-            onSave={handleSaveDailyLimit}
-          />
+          <div className="nc-cost-limits-grid">
+            <LimitSetter
+              label="Daily limit"
+              limitUsd={usageStatus?.daily.limit_usd ?? 1}
+              isSaving={isSavingLimit}
+              onSave={(nextLimitUsd) => handleSaveLimit("daily_limit_usd", nextLimitUsd)}
+            />
+            <LimitSetter
+              label="Monthly limit"
+              limitUsd={usageStatus?.monthly.limit_usd ?? 30}
+              isSaving={isSavingLimit}
+              onSave={(nextLimitUsd) => handleSaveLimit("monthly_limit_usd", nextLimitUsd)}
+            />
+          </div>
 
           <section className="nc-cost-card">
             <div className="nc-cost-card__head">
@@ -318,22 +338,28 @@ export function CostDashboard({
 
   return (
     <>
-      <button type="button" className="nc-cost-panel__backdrop" onClick={onClose} aria-label="Close cost dashboard" />
-      <aside className="nc-cost-panel" aria-label="Cost dashboard" data-testid="cost-dashboard-panel">
-        <div className="nc-cost-panel__header">
-          <div>
-            <p className="nc-cost-section-label">Cost monitoring</p>
-            <h2>Usage and spend</h2>
-          </div>
-          <button type="button" className="nc-cost-panel__close" onClick={onClose}>Close</button>
-        </div>
-        <CostDashboardContent
-          getAuthToken={getAuthToken}
-          naming={naming}
-          onShowToast={onShowToast}
-          onUsageStateChange={onUsageStateChange}
-        />
-      </aside>
+      <div className="nc-modal nc-cost-modal" role="dialog" aria-modal="true" aria-label="Cost dashboard">
+        <div className="nc-modal__backdrop" onClick={onClose} />
+        <section className="nc-modal__panel nc-cost-panel" data-testid="cost-dashboard-panel">
+          <header className="nc-cost-panel__header">
+            <div>
+              <p className="nc-panel-eyebrow">Settings</p>
+              <h2>Cost monitoring</h2>
+              <p>Budgets, usage, and spend tracking</p>
+            </div>
+            <button type="button" className="nc-modal__close" aria-label="Close cost dashboard" onClick={onClose}>
+              ×
+            </button>
+          </header>
+
+          <CostDashboardContent
+            getAuthToken={getAuthToken}
+            naming={naming}
+            onShowToast={onShowToast}
+            onUsageStateChange={onUsageStateChange}
+          />
+        </section>
+      </div>
     </>
   );
 }

@@ -1,7 +1,7 @@
 """Cost tracking helpers for GPT usage in NeuralChat.
 
 These helpers store daily per-user usage logs in Azure Blob Storage and provide
-aggregated summaries for the cost dashboard.
+aggregated summaries, warning state, and budget enforcement decisions.
 """
 
 from __future__ import annotations
@@ -19,6 +19,19 @@ from app.services.blob_paths import blob_parts, read_blob_text, segment_matches_
 INPUT_COST_PER_MILLION = 3.00
 OUTPUT_COST_PER_MILLION = 15.00
 DEFAULT_DAILY_LIMIT_USD = 1.00
+DEFAULT_MONTHLY_LIMIT_USD = 30.00
+WARNING_THRESHOLD_PERCENT = 80.0
+DAILY_LIMIT_BLOCK_MESSAGE = "You've hit your daily usage limit. To get more access now, send a request to your admin or try again tomorrow"
+MONTHLY_LIMIT_BLOCK_MESSAGE = "You've hit your monthly usage limit. To get more access now, send a request to your admin or try again next month"
+FEATURE_USAGE_RESERVES_USD: dict[str, float] = {
+    "chat": 0.003,
+    "agent_plan": 0.002,
+    "agent_step": 0.003,
+    "agent_summary": 0.003,
+    "memory": 0.001,
+    "title_generation": 0.001,
+    "search_decision": 0.001,
+}
 USAGE_FEATURES = (
     "chat",
     "memory",
@@ -35,8 +48,8 @@ class TokenUsage(TypedDict):
     output_tokens: int
 
 
-# This helper builds the shared memory container used for usage logs and search cache.
 def _get_memory_container() -> ContainerClient:
+    """Build the shared memory container used for usage logs and search cache."""
     connection_string = (
         os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
         or os.getenv("AzureWebJobsStorage", "").strip()
@@ -54,8 +67,8 @@ def _get_memory_container() -> ContainerClient:
     return container_client
 
 
-# This helper normalizes any token usage shape into the app's standard input/output token dict.
 def normalize_usage(raw_usage: Any) -> TokenUsage:
+    """Normalize any token usage payload into the app's input/output token shape."""
     if raw_usage is None:
         return {"input_tokens": 0, "output_tokens": 0}
 
@@ -96,20 +109,20 @@ def normalize_usage(raw_usage: Any) -> TokenUsage:
     return {"input_tokens": 0, "output_tokens": 0}
 
 
-# This helper calculates the USD cost for one GPT request from input and output token counts.
 def calculate_cost(input_tokens: int, output_tokens: int) -> float:
+    """Calculate USD cost for one GPT request from input and output token counts."""
     input_cost = (max(0, int(input_tokens)) / 1_000_000) * INPUT_COST_PER_MILLION
     output_cost = (max(0, int(output_tokens)) / 1_000_000) * OUTPUT_COST_PER_MILLION
     return round(input_cost + output_cost, 6)
 
 
-# This helper builds the canonical usage blob path for one user and one day.
 def _usage_blob_name(user_id: str, usage_date: str, display_name: str | None = None) -> str:
+    """Build the canonical usage blob path for one user and one day."""
     return f"usage/{user_segment(user_id, display_name)}/{usage_date}.json"
 
 
-# This helper finds an existing usage blob for one user/date pair even if the readable name changed.
 def _find_existing_usage_blob(container: ContainerClient, user_id: str, usage_date: str) -> str | None:
+    """Find an existing usage blob even if the readable name changed over time."""
     legacy_blob_name = f"usage/{user_id}/{usage_date}.json"
     if read_blob_text(container, legacy_blob_name) is not None:
         return legacy_blob_name
@@ -127,8 +140,8 @@ def _find_existing_usage_blob(container: ContainerClient, user_id: str, usage_da
     return None
 
 
-# This helper safely loads a daily usage list and returns an empty list for missing or corrupt blobs.
 def get_daily_usage(user_id: str, date: str, display_name: str | None = None) -> list[dict[str, Any]]:
+    """Load one day's usage list and return an empty list for missing or corrupt blobs."""
     usage_container = _get_memory_container()
     existing_blob_name = _find_existing_usage_blob(usage_container, user_id, date)
     if existing_blob_name is None:
@@ -153,7 +166,6 @@ def get_daily_usage(user_id: str, date: str, display_name: str | None = None) ->
     return records
 
 
-# This helper appends one usage record to the current day's blob for the given user.
 def log_usage(
     user_id: str,
     feature: str,
@@ -161,6 +173,7 @@ def log_usage(
     output_tokens: int,
     display_name: str | None = None,
 ) -> None:
+    """Append one usage record to the current day's blob for the given user."""
     usage_container = _get_memory_container()
     usage_date = datetime.now(UTC).date().isoformat()
     existing_blob_name = _find_existing_usage_blob(usage_container, user_id, usage_date)
@@ -187,8 +200,8 @@ def log_usage(
     )
 
 
-# This helper aggregates the last N days of usage into totals, feature breakdowns, and daily points.
 def get_usage_summary(user_id: str, days: int = 30, display_name: str | None = None) -> dict[str, Any]:
+    """Aggregate the last N days of usage into totals, breakdowns, and daily points."""
     safe_days = max(1, int(days))
     today_date = datetime.now(UTC).date()
     total_cost_usd = 0.0
@@ -249,33 +262,129 @@ def get_usage_summary(user_id: str, days: int = 30, display_name: str | None = N
     }
 
 
-# This helper checks how much of today's configured daily budget has been used.
-def check_daily_limit(user_id: str, daily_limit_usd: float = DEFAULT_DAILY_LIMIT_USD, display_name: str | None = None) -> dict[str, Any]:
-    today_date_text = datetime.now(UTC).date().isoformat()
-    today_records = get_daily_usage(user_id, today_date_text, display_name)
-    today_cost_usd = round(sum(float(record.get("cost_usd", 0.0) or 0.0) for record in today_records), 6)
-    normalized_limit = float(daily_limit_usd) if daily_limit_usd and float(daily_limit_usd) > 0 else DEFAULT_DAILY_LIMIT_USD
-    percentage_used = round((today_cost_usd / normalized_limit) * 100, 2) if normalized_limit > 0 else 0.0
-    return {
-        "today_cost_usd": today_cost_usd,
-        "daily_limit_usd": round(normalized_limit, 2),
-        "limit_exceeded": today_cost_usd > normalized_limit,
-        "percentage_used": percentage_used,
-    }
-
-
-# This helper reads the current daily limit from a user profile object and falls back safely.
-def resolve_daily_limit(profile: dict[str, Any] | None) -> float:
-    raw_value = (profile or {}).get("daily_limit_usd")
+def _resolve_positive_limit(raw_value: Any, default_value: float) -> float:
+    """Parse a positive USD limit value and safely fall back when missing or invalid."""
     try:
         parsed_value = float(raw_value)
     except (TypeError, ValueError):
-        return DEFAULT_DAILY_LIMIT_USD
+        return round(default_value, 2)
     if parsed_value <= 0:
-        return DEFAULT_DAILY_LIMIT_USD
+        return round(default_value, 2)
     return round(parsed_value, 2)
 
 
-# This helper returns the UTC date string used by usage blobs and dismissal keys.
+def _sum_usage_cost(records: list[dict[str, Any]]) -> float:
+    """Sum usage cost across a daily usage record list."""
+    return round(sum(float(record.get("cost_usd", 0.0) or 0.0) for record in records), 6)
+
+
+def _build_limit_window_summary(spent_usd: float, limit_usd: float) -> dict[str, Any]:
+    """Build a common summary payload for one budget window."""
+    normalized_limit = _resolve_positive_limit(limit_usd, DEFAULT_DAILY_LIMIT_USD)
+    safe_spent = round(max(0.0, float(spent_usd or 0.0)), 6)
+    remaining_usd = round(max(normalized_limit - safe_spent, 0.0), 6)
+    percentage_used = round((safe_spent / normalized_limit) * 100, 2) if normalized_limit > 0 else 0.0
+    limit_exceeded = safe_spent >= normalized_limit
+    warning_triggered = percentage_used >= WARNING_THRESHOLD_PERCENT
+    return {
+        "spent_usd": safe_spent,
+        "limit_usd": normalized_limit,
+        "remaining_usd": remaining_usd,
+        "percentage_used": percentage_used,
+        "warning_triggered": warning_triggered,
+        "limit_exceeded": limit_exceeded,
+    }
+
+
+def check_daily_limit(
+    user_id: str,
+    daily_limit_usd: float = DEFAULT_DAILY_LIMIT_USD,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    """Check how much of today's configured daily budget has been used."""
+    today_date_text = datetime.now(UTC).date().isoformat()
+    today_records = get_daily_usage(user_id, today_date_text, display_name)
+    today_cost_usd = _sum_usage_cost(today_records)
+    summary = _build_limit_window_summary(today_cost_usd, _resolve_positive_limit(daily_limit_usd, DEFAULT_DAILY_LIMIT_USD))
+    return {
+        "today_cost_usd": summary["spent_usd"],
+        "daily_limit_usd": summary["limit_usd"],
+        "remaining_usd": summary["remaining_usd"],
+        "warning_triggered": summary["warning_triggered"],
+        "limit_exceeded": summary["limit_exceeded"],
+        "percentage_used": summary["percentage_used"],
+        "spent_usd": summary["spent_usd"],
+        "limit_usd": summary["limit_usd"],
+    }
+
+
+def get_monthly_usage_total(user_id: str, display_name: str | None = None, today: date | None = None) -> float:
+    """Sum usage for the current UTC month from day one through today."""
+    current_day = today or datetime.now(UTC).date()
+    month_start = current_day.replace(day=1)
+    total_cost_usd = 0.0
+    cursor = month_start
+    while cursor <= current_day:
+        total_cost_usd += _sum_usage_cost(get_daily_usage(user_id, cursor.isoformat(), display_name))
+        cursor += timedelta(days=1)
+    return round(total_cost_usd, 6)
+
+
+def check_monthly_limit(
+    user_id: str,
+    monthly_limit_usd: float = DEFAULT_MONTHLY_LIMIT_USD,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    """Check how much of the current monthly budget has been used so far."""
+    month_cost_usd = get_monthly_usage_total(user_id, display_name)
+    return _build_limit_window_summary(month_cost_usd, _resolve_positive_limit(monthly_limit_usd, DEFAULT_MONTHLY_LIMIT_USD))
+
+
+def resolve_daily_limit(profile: dict[str, Any] | None) -> float:
+    """Read the current daily limit from a user profile object and fall back safely."""
+    return _resolve_positive_limit((profile or {}).get("daily_limit_usd"), DEFAULT_DAILY_LIMIT_USD)
+
+
+def resolve_monthly_limit(profile: dict[str, Any] | None) -> float:
+    """Read the current monthly limit from a user profile object and fall back safely."""
+    return _resolve_positive_limit((profile or {}).get("monthly_limit_usd"), DEFAULT_MONTHLY_LIMIT_USD)
+
+
+def get_feature_reserve_usd(feature: str) -> float:
+    """Return the strict reserve threshold used to gate a feature before spending."""
+    return round(float(FEATURE_USAGE_RESERVES_USD.get(feature, FEATURE_USAGE_RESERVES_USD["chat"])), 6)
+
+
+def get_usage_status(
+    user_id: str,
+    daily_limit_usd: float = DEFAULT_DAILY_LIMIT_USD,
+    monthly_limit_usd: float = DEFAULT_MONTHLY_LIMIT_USD,
+    feature: str = "chat",
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    """Build the combined daily/monthly enforcement payload for one feature."""
+    daily_summary = check_daily_limit(user_id, daily_limit_usd, display_name)
+    monthly_summary = check_monthly_limit(user_id, monthly_limit_usd, display_name)
+    reserve_usd = get_feature_reserve_usd(feature)
+
+    blocking_period: str | None = None
+    blocking_message = ""
+    if daily_summary["remaining_usd"] < reserve_usd:
+        blocking_period = "daily"
+        blocking_message = DAILY_LIMIT_BLOCK_MESSAGE
+    elif monthly_summary["remaining_usd"] < reserve_usd:
+        blocking_period = "monthly"
+        blocking_message = MONTHLY_LIMIT_BLOCK_MESSAGE
+
+    return {
+        "daily": _build_limit_window_summary(daily_summary["today_cost_usd"], daily_summary["daily_limit_usd"]),
+        "monthly": monthly_summary,
+        "blocked": blocking_period is not None,
+        "blocking_period": blocking_period,
+        "blocking_message": blocking_message,
+    }
+
+
 def current_utc_date_text() -> str:
+    """Return the UTC date string used by usage blobs and dismissal keys."""
     return datetime.now(UTC).date().isoformat()

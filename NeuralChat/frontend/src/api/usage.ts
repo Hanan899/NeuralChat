@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from "../api";
 import type { RequestNamingContext } from "../api";
-import type { TodayUsageResponse, UsageLimitResponse, UsageSummary } from "../types";
+import type { TodayUsageResponse, UsageLimitResponse, UsageStatusResponse, UsageSummary } from "../types";
 
 function buildUsageHeaders(authToken: string, naming?: RequestNamingContext, includeJson = false): HeadersInit {
   const headers: Record<string, string> = {
@@ -73,18 +73,31 @@ export async function getUsageLimit(authToken: string, naming?: RequestNamingCon
   return (await response.json()) as UsageLimitResponse;
 }
 
+export async function getUsageStatus(authToken: string, naming?: RequestNamingContext): Promise<UsageStatusResponse> {
+  const response = await fetch(`${getApiBaseUrl()}/api/usage/status`, {
+    headers: buildUsageHeaders(authToken, naming),
+  });
+  if (!response.ok) {
+    throw new Error(await readUsageErrorMessage(response, "Failed to load usage status."));
+  }
+  return (await response.json()) as UsageStatusResponse;
+}
+
 export async function updateUsageLimit(
   authToken: string,
-  dailyLimitUsd: number,
+  limits: {
+    daily_limit_usd?: number;
+    monthly_limit_usd?: number;
+  },
   naming?: RequestNamingContext
-): Promise<{ message: string; daily_limit_usd: number }> {
+): Promise<{ message: string; daily_limit_usd: number; monthly_limit_usd: number }> {
   const response = await fetch(`${getApiBaseUrl()}/api/usage/limit`, {
     method: "PATCH",
     headers: buildUsageHeaders(authToken, naming, true),
-    body: JSON.stringify({ daily_limit_usd: dailyLimitUsd }),
+    body: JSON.stringify(limits),
   });
   if (!response.ok) {
     throw new Error(await readUsageErrorMessage(response, "Failed to update daily limit."));
   }
-  return (await response.json()) as { message: string; daily_limit_usd: number };
+  return (await response.json()) as { message: string; daily_limit_usd: number; monthly_limit_usd: number };
 }

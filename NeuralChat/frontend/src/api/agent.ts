@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from "../api";
+import { getApiBaseUrl, readErrorMessage } from "../api";
 import type { RequestNamingContext } from "../api";
 import type { AgentPlan, AgentStepResult, AgentTaskSummary } from "../types";
 
@@ -61,8 +61,8 @@ export async function createAgentPlanWithNaming(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Failed to create agent plan.");
+    const errorText = await readErrorMessage(response, "Failed to create agent plan.");
+    throw new Error(errorText);
   }
 
   const payload = (await response.json()) as AgentPlanResponse;
@@ -93,8 +93,8 @@ export async function runAgent(
   }
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Agent run failed.");
+    const errorText = await readErrorMessage(response, "Agent run failed.");
+    throw new Error(errorText);
   }
 
   const reader = response.body?.getReader();
