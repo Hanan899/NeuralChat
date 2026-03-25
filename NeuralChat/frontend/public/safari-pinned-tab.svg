@@ -1,0 +1,23 @@
+<svg width="256" height="256" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g stroke="#000000" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="5" y1="9" x2="16" y2="5" stroke-opacity="0.56"/>
+    <line x1="5" y1="9" x2="16" y2="18" stroke-opacity="0.58"/>
+    <line x1="5" y1="9" x2="16" y2="31" stroke-opacity="0.34"/>
+    <line x1="5" y1="27" x2="16" y2="5" stroke-opacity="0.3"/>
+    <line x1="5" y1="27" x2="16" y2="18" stroke-opacity="0.56"/>
+    <line x1="5" y1="27" x2="16" y2="31" stroke-opacity="0.56"/>
+    <line x1="16" y1="5" x2="31" y2="12" stroke-opacity="0.58"/>
+    <line x1="16" y1="5" x2="31" y2="24" stroke-opacity="0.34"/>
+    <line x1="16" y1="18" x2="31" y2="12" stroke-opacity="0.66"/>
+    <line x1="16" y1="18" x2="31" y2="24" stroke-opacity="0.66"/>
+    <line x1="16" y1="31" x2="31" y2="12" stroke-opacity="0.34"/>
+    <line x1="16" y1="31" x2="31" y2="24" stroke-opacity="0.56"/>
+  </g>
+  <circle cx="5" cy="9" r="2.8" fill="#000000"/>
+  <circle cx="5" cy="27" r="2.8" fill="#000000"/>
+  <circle cx="16" cy="5" r="2.8" fill="#000000"/>
+  <circle cx="16" cy="18" r="3.4" fill="#000000"/>
+  <circle cx="16" cy="31" r="2.8" fill="#000000"/>
+  <circle cx="31" cy="12" r="2.8" fill="#000000"/>
+  <circle cx="31" cy="24" r="2.8" fill="#000000"/>
+</svg>
