@@ -48,6 +48,7 @@ from app.services.agent import (
     save_task_plan,
     stream_agent_execution,
 )
+from app.services.cache import api_cache
 from app.services.chat_service import (
     generate_reply,
     generate_reply_stream,
@@ -116,6 +117,8 @@ from app.services.titles import generate_conversation_title, generate_conversati
 APP_VERSION = "0.3.0"
 BASE_DIR = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger(__name__)
+READ_CACHE_TTL_SECONDS = 300
+HOT_CACHE_TTL_SECONDS = 30
 
 load_local_settings_env(BASE_DIR)
 STORE = init_store()
@@ -156,6 +159,28 @@ def _visible_project_memory_payload(project: dict[str, Any], memory: dict[str, A
         if text_value:
             visible_memory[memory_key] = text_value
     return visible_memory
+
+
+def _cache_key(*parts: object) -> str:
+    normalized_parts = [str(part).strip() for part in parts]
+    return "::".join(normalized_parts)
+
+
+def _cached_json_response(cache_key: str, payload: object, ttl_seconds: int) -> JSONResponse:
+    api_cache.set(cache_key, payload, ttl_seconds)
+    return JSONResponse(payload, headers={"X-Cache": "MISS"})
+
+
+def _read_cached_json_response(cache_key: str) -> JSONResponse | None:
+    cached_payload = api_cache.get(cache_key)
+    if cached_payload is None:
+        return None
+    return JSONResponse(cached_payload, headers={"X-Cache": "HIT"})
+
+
+def _invalidate_cache_prefixes(*prefixes: str) -> None:
+    for prefix in prefixes:
+        api_cache.invalidate_prefix(prefix)
 
 
 def _build_usage_limits_payload(profile: dict[str, Any] | None) -> dict[str, float]:
@@ -227,23 +252,54 @@ async def run_project_brain(
             usage["input_tokens"] + usage["output_tokens"],
             display_name,
         )
+        await asyncio.to_thread(
+            _invalidate_cache_prefixes,
+            _cache_key("projects", user_id, display_name or "", project_id, "memory"),
+            _cache_key("projects", user_id, display_name or "", project_id, "brain-log"),
+            _cache_key("usage", user_id, display_name or ""),
+        )
     except Exception:
         LOGGER.exception("Project Brain update failed for user=%s project=%s session=%s", user_id, project_id, session_id)
 
 
 @app.get("/api/health")
 def get_health() -> dict[str, str]:
-    return build_health_response(timestamp=datetime.now(UTC).isoformat(), version=APP_VERSION)
+    cache_key = _cache_key("public", "health")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
+    return _cached_json_response(
+        cache_key,
+        build_health_response(timestamp=datetime.now(UTC).isoformat(), version=APP_VERSION),
+        HOT_CACHE_TTL_SECONDS,
+    )
+
+
+@app.get("/api/keep-warm")
+def get_keep_warm() -> dict[str, Any]:
+    return {"status": "warm", "timestamp": int(time.time() * 1000)}
 
 
 @app.get("/api/search/status")
 def get_search_status() -> dict[str, bool]:
-    return {"search_enabled": bool(os.getenv("TAVILY_API_KEY", "").strip())}
+    cache_key = _cache_key("public", "search-status")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
+    return _cached_json_response(
+        cache_key,
+        {"search_enabled": bool(os.getenv("TAVILY_API_KEY", "").strip())},
+        READ_CACHE_TTL_SECONDS,
+    )
 
 
 @app.get("/api/projects/templates")
 def get_project_templates_endpoint() -> dict[str, Any]:
-    return get_project_templates()
+    cache_key = _cache_key("public", "project-templates")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
+    return _cached_json_response(cache_key, get_project_templates(), READ_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/projects")
@@ -251,6 +307,10 @@ async def get_projects_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, list[dict[str, Any]]]:
+    cache_key = _cache_key("projects", user_id, naming["display_name"] or "", "index")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     try:
         projects = await asyncio.to_thread(get_all_projects, user_id, naming["display_name"])
     except Exception as project_error:
@@ -259,7 +319,7 @@ async def get_projects_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to load projects: {project_error}",
         ) from project_error
-    return {"projects": projects}
+    return _cached_json_response(cache_key, {"projects": projects}, READ_CACHE_TTL_SECONDS)
 
 
 @app.post("/api/projects")
@@ -295,6 +355,7 @@ async def post_project(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to create project: {project_error}",
         ) from project_error
+    _invalidate_cache_prefixes(_cache_key("projects", user_id))
     return project
 
 
@@ -304,10 +365,14 @@ async def get_project_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    cache_key = _cache_key("projects", user_id, naming["display_name"] or "", project_id, "meta")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
-    return project
+    return _cached_json_response(cache_key, project, READ_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/projects/{project_id}/memory")
@@ -316,13 +381,21 @@ async def get_project_memory_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    cache_key = _cache_key("projects", user_id, naming["display_name"] or "", project_id, "memory")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
     memory = await asyncio.to_thread(load_project_memory, user_id, project_id, naming["display_name"])
     visible_memory = _visible_project_memory_payload(project, memory)
     completeness = await asyncio.to_thread(get_memory_completeness, memory, str(project.get("template", "custom")))
-    return {"memory": visible_memory, "completeness": completeness}
+    return _cached_json_response(
+        cache_key,
+        {"memory": visible_memory, "completeness": completeness},
+        READ_CACHE_TTL_SECONDS,
+    )
 
 
 @app.patch("/api/projects/{project_id}/memory")
@@ -349,6 +422,10 @@ async def patch_project_memory_endpoint(
         naming["display_name"],
     )
     updated_memory = await asyncio.to_thread(load_project_memory, user_id, project_id, naming["display_name"])
+    _invalidate_cache_prefixes(
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "memory"),
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "brain-log"),
+    )
     return {
         "message": "Memory updated",
         "memory": _visible_project_memory_payload(project, updated_memory),
@@ -366,6 +443,10 @@ async def delete_project_memory_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
     await asyncio.to_thread(clear_project_memory, user_id, project_id, naming["display_name"])
+    _invalidate_cache_prefixes(
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "memory"),
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "brain-log"),
+    )
     return {"message": "Project Brain reset"}
 
 
@@ -375,12 +456,16 @@ async def get_project_brain_log_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, list[dict[str, Any]]]:
+    cache_key = _cache_key("projects", user_id, naming["display_name"] or "", project_id, "brain-log")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
     brain_log = await asyncio.to_thread(get_brain_log, user_id, project_id, naming["display_name"])
-    return {"log": brain_log[-20:][::-1]}
+    return _cached_json_response(cache_key, {"log": brain_log[-20:][::-1]}, HOT_CACHE_TTL_SECONDS)
 
 
 @app.patch("/api/projects/{project_id}")
@@ -401,6 +486,9 @@ async def patch_project(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to update project: {project_error}",
         ) from project_error
+    _invalidate_cache_prefixes(
+        _cache_key("projects", user_id),
+    )
     return project
 
 
@@ -420,6 +508,7 @@ async def delete_project_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to delete project: {project_error}",
         ) from project_error
+    _invalidate_cache_prefixes(_cache_key("projects", user_id))
     return {"message": "Project deleted"}
 
 
@@ -429,11 +518,15 @@ async def get_project_chats_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, list[dict[str, Any]]]:
+    cache_key = _cache_key("projects", user_id, naming["display_name"] or "", project_id, "chats")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
     chats = await asyncio.to_thread(get_project_chats, user_id, project_id, naming["display_name"])
-    return {"chats": chats}
+    return _cached_json_response(cache_key, {"chats": chats}, HOT_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/projects/{project_id}/chats/{session_id}")
@@ -443,6 +536,10 @@ async def get_project_chat_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, list[dict[str, Any]]]:
+    cache_key = _cache_key("projects", user_id, naming["display_name"] or "", project_id, "chat", session_id)
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
@@ -454,7 +551,7 @@ async def get_project_chat_endpoint(
         naming["display_name"],
         naming["session_title"],
     )
-    return {"messages": messages}
+    return _cached_json_response(cache_key, {"messages": messages}, HOT_CACHE_TTL_SECONDS)
 
 
 @app.post("/api/projects/{project_id}/chats")
@@ -473,6 +570,7 @@ async def post_project_chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to create project chat: {project_error}",
         ) from project_error
+    _invalidate_cache_prefixes(_cache_key("projects", user_id, naming["display_name"] or "", project_id, "chats"))
     return {"session_id": session_id}
 
 
@@ -501,7 +599,10 @@ async def patch_project_chat_title_endpoint(
     except ValueError as validation_error:
         status_code = status.HTTP_404_NOT_FOUND if "not found" in str(validation_error).lower() else status.HTTP_400_BAD_REQUEST
         raise HTTPException(status_code=status_code, detail=str(validation_error)) from validation_error
-
+    _invalidate_cache_prefixes(
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "chats"),
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "chat", session_id),
+    )
     return {"message": "Project chat title updated", "title": title}
 
 
@@ -525,6 +626,10 @@ async def delete_project_chat_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to delete project chat: {delete_error}",
         ) from delete_error
+    _invalidate_cache_prefixes(
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "chats"),
+        _cache_key("projects", user_id, naming["display_name"] or "", project_id, "chat", session_id),
+    )
     return {"message": "Project chat deleted successfully", "conversation_deleted": deleted, **agent_delete_counts}
 
 
@@ -548,6 +653,7 @@ async def post_conversation_title(
                 naming["display_name"],
             )
         )
+    _invalidate_cache_prefixes(_cache_key("usage", user_id, naming["display_name"] or ""))
     return {"title": title}
 
 
@@ -556,11 +662,15 @@ def get_me(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    cache_key = _cache_key("profile", user_id, naming["display_name"] or "", "me")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     profile = load_profile(user_id=user_id, display_name=naming["display_name"])
-    return {
+    return _cached_json_response(cache_key, {
         "user_id": user_id,
         "profile": profile,
-    }
+    }, READ_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/usage/summary")
@@ -569,14 +679,19 @@ async def get_usage_summary_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    cache_key = _cache_key("usage", user_id, naming["display_name"] or "", "summary", days)
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     try:
-        return await asyncio.to_thread(get_usage_summary, user_id, days, naming["display_name"])
+        summary = await asyncio.to_thread(get_usage_summary, user_id, days, naming["display_name"])
     except Exception as usage_error:
         LOGGER.exception("Usage summary load failed for user=%s", user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to load usage summary: {usage_error}",
         ) from usage_error
+    return _cached_json_response(cache_key, summary, HOT_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/usage/today")
@@ -584,6 +699,10 @@ async def get_usage_today(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    cache_key = _cache_key("usage", user_id, naming["display_name"] or "", "today")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     try:
         profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
         limits_payload = _build_usage_limits_payload(profile)
@@ -596,7 +715,7 @@ async def get_usage_today(
             detail=f"Unable to load today's usage: {usage_error}",
         ) from usage_error
 
-    return {"records": today_records, "summary": today_summary}
+    return _cached_json_response(cache_key, {"records": today_records, "summary": today_summary}, HOT_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/usage/status")
@@ -604,6 +723,10 @@ async def get_usage_status_endpoint(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    cache_key = _cache_key("usage", user_id, naming["display_name"] or "", "status")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     try:
         usage_status = await asyncio.to_thread(_get_usage_status_for_feature, user_id, "chat", naming["display_name"])
     except Exception as usage_error:
@@ -612,8 +735,7 @@ async def get_usage_status_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to load usage status: {usage_error}",
         ) from usage_error
-
-    return usage_status
+    return _cached_json_response(cache_key, usage_status, HOT_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/usage/limit")
@@ -621,8 +743,12 @@ async def get_usage_limit(
     user_id: str = Depends(require_user_id),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, float]:
+    cache_key = _cache_key("usage", user_id, naming["display_name"] or "", "limit")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
-    return _build_usage_limits_payload(profile)
+    return _cached_json_response(cache_key, _build_usage_limits_payload(profile), READ_CACHE_TTL_SECONDS)
 
 
 @app.patch("/api/usage/limit")
@@ -655,6 +781,10 @@ async def patch_usage_limit(
         message = f"Monthly limit updated to ${request['monthly_limit_usd']:.2f}"
     else:
         message = "Usage limits updated"
+    _invalidate_cache_prefixes(
+        _cache_key("usage", user_id, naming["display_name"] or ""),
+        _cache_key("profile", user_id, naming["display_name"] or "", "me"),
+    )
 
     return {
         "message": message,
@@ -682,6 +812,10 @@ def patch_memory(
     else:
         upsert_profile_key(user_id=user_id, key=clean_key, value=value, display_name=naming["display_name"])
     updated_profile = load_profile(user_id=user_id, display_name=naming["display_name"])
+    _invalidate_cache_prefixes(
+        _cache_key("profile", user_id, naming["display_name"] or ""),
+        _cache_key("usage", user_id, naming["display_name"] or ""),
+    )
     return {"user_id": user_id, "profile": updated_profile}
 
 
@@ -691,6 +825,10 @@ def delete_memory(
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
     clear_profile(user_id=user_id, display_name=naming["display_name"])
+    _invalidate_cache_prefixes(
+        _cache_key("profile", user_id, naming["display_name"] or ""),
+        _cache_key("usage", user_id, naming["display_name"] or ""),
+    )
     return {"message": "Memory cleared"}
 
 
@@ -775,7 +913,15 @@ async def post_upload(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"File upload failed: {upload_error}",
         ) from upload_error
-
+    if clean_project_id:
+        _invalidate_cache_prefixes(
+            _cache_key("projects", user_id, naming["display_name"] or "", clean_project_id, "files"),
+            _cache_key("projects", user_id, naming["display_name"] or "", clean_project_id, "meta"),
+        )
+    else:
+        _invalidate_cache_prefixes(
+            _cache_key("files", user_id, naming["display_name"] or "", clean_session_id or ""),
+        )
     return upload_result
 
 
@@ -790,6 +936,16 @@ async def get_files(
     clean_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
     if not clean_session_id and not clean_project_id:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id or project_id is required.")
+    cache_key = _cache_key(
+        "projects" if clean_project_id else "files",
+        user_id,
+        naming["display_name"] or "",
+        clean_project_id or clean_session_id or "",
+        "files",
+    )
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
 
     try:
         if clean_project_id:
@@ -802,7 +958,7 @@ async def get_files(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to list files: {list_error}",
         ) from list_error
-    return {"files": files}
+    return _cached_json_response(cache_key, {"files": files}, HOT_CACHE_TTL_SECONDS)
 
 
 @app.delete("/api/files/{filename}")
@@ -831,6 +987,10 @@ async def delete_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to delete file: {delete_error}",
         ) from delete_error
+    if clean_project_id:
+        _invalidate_cache_prefixes(_cache_key("projects", user_id, naming["display_name"] or "", clean_project_id, "files"))
+    else:
+        _invalidate_cache_prefixes(_cache_key("files", user_id, naming["display_name"] or "", clean_session_id or ""))
 
     safe_filename = Path(filename).name
     return {"message": f"{safe_filename} deleted successfully"}
@@ -878,6 +1038,13 @@ async def delete_conversation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to delete conversation session: {delete_error}",
         ) from delete_error
+    if clean_project_id:
+        _invalidate_cache_prefixes(
+            _cache_key("projects", user_id, naming["display_name"] or "", clean_project_id, "chats"),
+            _cache_key("projects", user_id, naming["display_name"] or "", clean_project_id, "chat", session_id),
+        )
+    else:
+        _invalidate_cache_prefixes(_cache_key("files", user_id, naming["display_name"] or "", session_id))
 
     return {
         "message": "Conversation deleted successfully",
@@ -922,7 +1089,10 @@ async def post_agent_plan(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to create agent plan: {plan_error}",
         ) from plan_error
-
+    _invalidate_cache_prefixes(
+        _cache_key("agent", user_id, "history"),
+        _cache_key("usage", user_id, naming["display_name"] or ""),
+    )
     return {"plan": plan}
 
 
@@ -934,6 +1104,10 @@ async def post_agent_run(
     naming: dict[str, str | None] = Depends(get_request_naming),
 ):
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "agent_step", naming["display_name"])
+    _invalidate_cache_prefixes(
+        _cache_key("agent", user_id, "history"),
+        _cache_key("usage", user_id, naming["display_name"] or ""),
+    )
     request = validate_agent_run_request(payload)
     plan = await asyncio.to_thread(
         load_task_plan,
@@ -1091,6 +1265,10 @@ async def post_agent_run(
 
 @app.get("/api/agent/history")
 async def get_agent_history(user_id: str = Depends(require_user_id)) -> dict[str, list[dict[str, Any]]]:
+    cache_key = _cache_key("agent", user_id, "history")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     try:
         tasks = await asyncio.to_thread(list_task_plans, user_id)
     except Exception as history_error:
@@ -1099,17 +1277,21 @@ async def get_agent_history(user_id: str = Depends(require_user_id)) -> dict[str
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to load agent history: {history_error}",
         ) from history_error
-    return {"tasks": tasks}
+    return _cached_json_response(cache_key, {"tasks": tasks}, HOT_CACHE_TTL_SECONDS)
 
 
 @app.get("/api/agent/history/{plan_id}")
 async def get_agent_history_detail(plan_id: str, user_id: str = Depends(require_user_id)) -> dict[str, Any]:
+    cache_key = _cache_key("agent", user_id, "history", plan_id)
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
     plan = await asyncio.to_thread(load_task_plan, user_id, plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent plan not found.")
 
     log = await asyncio.to_thread(load_execution_log, user_id, plan_id)
-    return {"plan": plan, "log": log}
+    return _cached_json_response(cache_key, {"plan": plan, "log": log}, HOT_CACHE_TTL_SECONDS)
 
 
 @app.post("/api/chat")
@@ -1130,8 +1312,15 @@ async def post_chat(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "chat", naming["display_name"])
+    _invalidate_cache_prefixes(_cache_key("usage", user_id, naming["display_name"] or ""))
 
     if request["project_id"]:
+        _invalidate_cache_prefixes(
+            _cache_key("projects", user_id, naming["display_name"] or "", request["project_id"], "chats"),
+            _cache_key("projects", user_id, naming["display_name"] or "", request["project_id"], "chat", request["session_id"]),
+            _cache_key("projects", user_id, naming["display_name"] or "", request["project_id"], "brain-log"),
+            _cache_key("projects", user_id, naming["display_name"] or "", request["project_id"], "memory"),
+        )
         history_override = await asyncio.to_thread(
             load_project_chat_messages,
             user_id,

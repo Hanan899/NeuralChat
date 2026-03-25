@@ -28,6 +28,8 @@ import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import type { ShortcutId } from "./components/Sidebar";
+import { useApiQuery } from "./hooks/useApi";
+import { usePrefetch } from "./hooks/usePrefetch";
 import { NewChatPage } from "./pages/NewChatPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -610,18 +612,42 @@ function ChatShell() {
     () => buildProjectChatDisplayTitle(activeProjectChat ?? null, currentMessages),
     [activeProjectChat, currentMessages]
   );
-  useEffect(() => {
-    checkHealth().then(setBackendHealthy).catch(() => setBackendHealthy(false));
-    checkSearchStatus()
-      .then((status) => setSearchEnabled(status))
-      .catch(() => setSearchEnabled(false));
-  }, []);
+  const healthQuery = useApiQuery<boolean>(["health"], "/api/health", { queryFn: checkHealth });
+  const searchStatusQuery = useApiQuery<boolean>(["search-status"], "/api/search/status", { queryFn: checkSearchStatus });
+  const projectTemplatesQuery = useApiQuery<Record<string, ProjectTemplate>>(
+    ["project-templates"],
+    "/api/projects/templates",
+    { queryFn: getTemplates }
+  );
+  usePrefetch({
+    getAuthToken: userId ? getToken : undefined,
+    naming: { userDisplayName },
+    enabled: true,
+  });
 
   useEffect(() => {
-    getTemplates()
-      .then(setProjectTemplates)
-      .catch(() => setProjectTemplates({}));
-  }, []);
+    if (typeof healthQuery.data === "boolean") {
+      setBackendHealthy(healthQuery.data);
+    } else if (healthQuery.error) {
+      setBackendHealthy(false);
+    }
+  }, [healthQuery.data, healthQuery.error]);
+
+  useEffect(() => {
+    if (typeof searchStatusQuery.data === "boolean") {
+      setSearchEnabled(searchStatusQuery.data);
+    } else if (searchStatusQuery.error) {
+      setSearchEnabled(false);
+    }
+  }, [searchStatusQuery.data, searchStatusQuery.error]);
+
+  useEffect(() => {
+    if (projectTemplatesQuery.data) {
+      setProjectTemplates(projectTemplatesQuery.data);
+    } else if (projectTemplatesQuery.error) {
+      setProjectTemplates({});
+    }
+  }, [projectTemplatesQuery.data, projectTemplatesQuery.error]);
 
   useEffect(() => {
     if (!userId) {
