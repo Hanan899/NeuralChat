@@ -1,4 +1,13 @@
-# NeuralChat Workspace
+# NeuralChat
+
+[![Status](https://img.shields.io/badge/status-active%20development-0a7ea4)](#project-status)
+[![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Tailwind-38bdf8)](#architecture)
+[![Backend](https://img.shields.io/badge/backend-FastAPI%20on%20Azure%20Functions-2563eb)](#architecture)
+[![Auth](https://img.shields.io/badge/auth-Clerk-6d28d9)](#authentication--data-storage)
+[![Storage](https://img.shields.io/badge/storage-Azure%20Blob-0ea5e9)](#authentication--data-storage)
+[![Web Search](https://img.shields.io/badge/search-Tavily-16a34a)](#web-search)
+[![Python](https://img.shields.io/badge/python-3.13-3776ab)](#prerequisites)
+[![Node](https://img.shields.io/badge/node-24.x-339933)](#prerequisites)
 
 NeuralChat is a personal AI workspace with authenticated GPT-5 chat, deep memory, optional web search, file-grounded answers, plan-first agents, cost tracking, and project-scoped workspaces.
 
