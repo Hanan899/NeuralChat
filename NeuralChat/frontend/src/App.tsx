@@ -28,6 +28,7 @@ import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import type { ShortcutId } from "./components/Sidebar";
+import { NewChatPage } from "./pages/NewChatPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import type {
@@ -43,13 +44,6 @@ import type {
   UsageStatusResponse,
 } from "./types";
 import type { Project, ProjectChat, ProjectMemoryResponse, ProjectTemplate } from "./types/project";
-
-const EMPTY_SUGGESTIONS = [
-  "Summarize this project architecture in simple terms",
-  "Help me debug my API latency",
-  "Write a clean README section for setup",
-  "Give me a step-by-step learning path"
-];
 
 const THEME_STORAGE_KEY = "neuralchat:theme-mode:v1";
 const COST_WARNING_STORAGE_KEY = "neuralchat:cost-warning:dismissed";
@@ -2608,30 +2602,12 @@ function ChatShell() {
               </div>
             </section>
           ) : currentMessages.length === 0 ? (
-            <section className="nc-empty-state" data-testid="empty-state">
-              <div className="nc-empty-mark" aria-hidden="true">
-                <span className="nc-empty-mark__halo" />
-                <span className="nc-empty-mark__halo nc-empty-mark__halo--secondary" />
-                <span className="nc-empty-mark__pulse" />
-                <NeuralNetworkIcon className="nc-empty-mark__icon" size={88} />
-              </div>
-              <h2>How can I help you today?</h2>
-              <div className="nc-empty-chips">
-                {EMPTY_SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    className="nc-empty-chip"
-                    onClick={() => {
-                      setInput(suggestion);
-                      textareaRef.current?.focus();
-                    }}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </section>
+            <NewChatPage
+              onSuggestionSelect={(suggestion) => {
+                setInput(suggestion);
+                textareaRef.current?.focus();
+              }}
+            />
           ) : (
             <ChatWindow
               messages={currentMessages}

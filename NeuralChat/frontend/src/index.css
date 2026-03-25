@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Syne:wght@700&display=swap");
 @import "highlight.js/styles/github-dark.css";
 
 @tailwind base;
@@ -1185,112 +1185,148 @@ select {
   background: transparent;
 }
 
-.nc-empty-state {
-  height: 100%;
+.nc-new-chat-page {
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 24px;
+  padding: 44px 24px 32px;
+  background: #f0f2f8;
 }
 
-.nc-empty-mark {
+.nc-neural-logo {
   position: relative;
-  width: 156px;
-  height: 156px;
+  width: 212px;
+  height: 212px;
   border-radius: 999px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent-primary);
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, var(--border-subtle));
+  margin-bottom: 32px;
   background:
-    radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent-primary) 10%, white) 0%, transparent 62%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 94%, white), var(--bg-elevated));
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 92%, white), color-mix(in srgb, var(--bg-elevated) 70%, white)),
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.92), transparent 48%);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 14%, var(--border-subtle));
   box-shadow:
-    0 24px 54px rgba(127, 119, 221, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.38);
-  margin-bottom: 22px;
+    0 28px 64px color-mix(in srgb, var(--accent-primary) 16%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(18px);
   overflow: hidden;
 }
 
-.nc-empty-mark__icon {
-  width: 98px;
-  height: 98px;
+.nc-neural-logo__svg {
   position: relative;
   z-index: 3;
-  animation: nc-neural-breathe 4.6s ease-in-out infinite;
+  width: 172px;
+  height: 138px;
+  display: block;
 }
 
-.nc-empty-mark__halo,
-.nc-empty-mark__pulse {
+.nc-neural-logo__orb,
+.nc-neural-logo__flare {
   position: absolute;
-  inset: 16px;
   border-radius: 999px;
+  pointer-events: none;
 }
 
-.nc-empty-mark__halo {
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
-  opacity: 0.45;
-  animation: nc-neural-halo 5.8s ease-in-out infinite;
+.nc-neural-logo__orb {
+  inset: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  animation: nc-neural-orbit 9.6s ease-in-out infinite;
 }
 
-.nc-empty-mark__halo--secondary {
-  inset: 28px;
-  opacity: 0.28;
-  animation-delay: 1.4s;
+.nc-neural-logo__orb--middle {
+  inset: 36px;
+  opacity: 0.76;
+  animation-duration: 8.2s;
 }
 
-.nc-empty-mark__pulse {
-  inset: 38px;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent-primary) 16%, transparent) 0%, transparent 72%);
-  animation: nc-neural-pulse 3.6s ease-in-out infinite;
+.nc-neural-logo__orb--inner {
+  inset: 54px;
+  opacity: 0.6;
+  animation-duration: 7.2s;
 }
 
-.nc-empty-mark__icon .nc-neural-edge {
-  stroke-dasharray: 4 5;
-  animation: nc-neural-flow 6s linear infinite;
+.nc-neural-logo__flare {
+  inset: 42px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent-primary) 16%, transparent), transparent 68%);
+  animation: nc-neural-flare 7.2s ease-in-out infinite;
 }
 
-.nc-empty-mark__icon .nc-neural-node--core {
-  filter: drop-shadow(0 0 8px rgba(127, 119, 221, 0.45));
-  animation: nc-neural-core 3.4s ease-in-out infinite;
-}
-
-.nc-empty-mark__icon .nc-neural-node--outer {
-  animation: nc-neural-node 4.2s ease-in-out infinite;
-}
-
-.nc-empty-state h2 {
+.nc-new-chat-page h2 {
   margin: 0;
-  font-size: clamp(30px, 4vw, 42px);
+  max-width: 820px;
+  font-family: "Syne", "Söhne", "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(34px, 5vw, 48px);
+  line-height: 1.03;
   font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--text-heading);
+  letter-spacing: -0.04em;
+  color: #151824;
 }
 
-.nc-empty-chips {
-  margin-top: 18px;
-  width: min(var(--chat-max-width), 100%);
+.nc-new-chat-page__chips {
+  margin-top: 28px;
+  width: min(900px, 100%);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 14px;
 }
 
-.nc-empty-chip {
+.nc-new-chat-page__chip {
+  min-height: 58px;
   text-align: left;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  padding: 10px 16px;
-  font-size: 13px;
-  cursor: pointer;
+  border-radius: 999px;
+  border: 1px solid rgba(109, 118, 153, 0.16);
+  background: rgba(255, 255, 255, 0.9);
+  color: #202637;
+  padding: 16px 22px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.35;
+  box-shadow: 0 10px 24px rgba(41, 48, 76, 0.04);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
 }
 
-.nc-empty-chip:hover {
-  border-color: var(--accent-primary);
+.nc-new-chat-page__chip:hover {
+  transform: translateY(-2px);
+  border-color: rgba(108, 99, 255, 0.28);
+  box-shadow: 0 18px 34px rgba(86, 90, 146, 0.12);
+}
+
+.nc-new-chat-page__chip:focus-visible {
+  outline: none;
+  border-color: rgba(108, 99, 255, 0.36);
+  box-shadow:
+    0 18px 34px rgba(86, 90, 146, 0.12),
+    0 0 0 4px rgba(108, 99, 255, 0.12);
+}
+
+@keyframes nc-neural-orbit {
+  0%, 100% {
+    transform: scale(0.98);
+    opacity: 0.32;
+  }
+  50% {
+    transform: scale(1.03);
+    opacity: 0.58;
+  }
+}
+
+@keyframes nc-neural-flare {
+  0%, 100% {
+    transform: scale(0.92);
+    opacity: 0.24;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.48;
+  }
 }
 
 @keyframes nc-neural-breathe {
@@ -6794,20 +6830,35 @@ select {
     font-size: 12px;
   }
 
-  .nc-empty-state {
+  .nc-new-chat-page {
     justify-content: flex-start;
     padding-top: 48px;
   }
 
-  .nc-empty-mark {
-    width: 132px;
-    height: 132px;
-    margin-bottom: 18px;
+  .nc-neural-logo {
+    width: 184px;
+    height: 184px;
+    margin-bottom: 24px;
   }
 
-  .nc-empty-mark__icon {
-    width: 82px;
-    height: 82px;
+  .nc-neural-logo__svg {
+    width: 144px;
+    height: 118px;
+  }
+
+  .nc-new-chat-page h2 {
+    font-size: clamp(30px, 10vw, 38px);
+  }
+
+  .nc-new-chat-page__chips {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .nc-new-chat-page__chip {
+    min-height: 54px;
+    padding: 14px 18px;
+    font-size: 14px;
   }
 
   .nc-workspace-view {
