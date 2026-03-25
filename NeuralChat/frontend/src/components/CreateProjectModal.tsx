@@ -51,8 +51,6 @@ export function CreateProjectModal({
     window.setTimeout(() => nameInputRef.current?.focus(), 0);
   }, [activeTemplate, open]);
 
-  const previewName = projectName.trim() || "My Project";
-  const previewDescription = projectDescription.trim() || activeTemplate?.description || "Describe what this project is for.";
   const canCreate = projectName.trim().length > 0 && !isSubmitting;
 
   if (!open) {
@@ -121,8 +119,8 @@ export function CreateProjectModal({
           </button>
         </header>
 
-        <div className="nc-project-modal__body">
-          <div className="nc-project-modal__main">
+        <div className="nc-project-modal__body nc-project-modal__body--editor-only">
+          <div className="nc-project-modal__main nc-project-modal__main--editor-only">
             <div className="nc-project-modal__template-summary" style={{ ["--template-color" as string]: activeTemplate?.color || "#6366f1" }}>
               <ProjectTemplateIcon template={selectedTemplate} color={activeTemplate?.color} className="nc-project-modal__template-summary-icon" />
               <div className="nc-project-modal__template-summary-copy">
@@ -155,25 +153,6 @@ export function CreateProjectModal({
               </label>
             </div>
           </div>
-
-          <aside className="nc-project-modal__sidebar">
-            <section className="nc-project-preview" style={{ ["--project-preview-color" as string]: activeTemplate?.color || "#6366f1" }}>
-              <div className="nc-project-preview__header">
-                <span className="nc-project-preview__eyebrow">Preview</span>
-                <span className="nc-project-preview__template-name">{activeTemplate?.label ?? "Template"}</span>
-              </div>
-              <div className="nc-project-preview__body">
-                <ProjectTemplateIcon template={selectedTemplate} color={activeTemplate?.color} className="nc-project-preview__icon" />
-                <div className="nc-project-preview__copy">
-                  <strong>{previewName}</strong>
-                  <span>{previewDescription}</span>
-                </div>
-              </div>
-              <div className="nc-project-preview__hint">
-                This workspace will keep related chats, files, and memory together.
-              </div>
-            </section>
-          </aside>
         </div>
 
         {errorText ? <p className="nc-project-modal__error">{errorText}</p> : null}
