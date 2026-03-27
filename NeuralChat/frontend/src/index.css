@@ -5956,36 +5956,37 @@ select {
   color: var(--text-secondary);
 }
 
-.nc-project-workspace__prompt-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--project-color, var(--accent-primary)) 12%, var(--border-subtle));
-  background: color-mix(in srgb, var(--project-color, var(--accent-primary)) 4%, var(--bg-elevated));
-  min-width: 0;
+.nc-project-workspace__template-badge--status {
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-elevated));
+  border-color: color-mix(in srgb, var(--accent-primary) 20%, var(--border-subtle));
+  color: var(--accent-primary);
 }
 
-.nc-project-workspace__prompt-kicker {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.nc-project-workspace__prompt-preview p {
+.nc-project-workspace__summary {
   margin: 0;
-  max-width: none;
-  white-space: pre-line;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 6;
-  -webkit-box-orient: vertical;
   font-size: 15px;
   line-height: 1.65;
   color: var(--text-secondary);
+}
+
+.nc-project-workspace__workspace-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.nc-project-workspace__workspace-note span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--project-color, var(--accent-primary)) 5%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--project-color, var(--accent-primary)) 12%, var(--border-subtle));
 }
 
 .nc-project-workspace__header-actions {
@@ -6424,11 +6425,29 @@ select {
   text-overflow: ellipsis;
 }
 
+.nc-project-chat-shell__title-wrap p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .nc-project-chat-shell__actions {
   display: flex;
   align-items: center;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.nc-project-chat-shell__refreshing {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, var(--border-subtle));
+  color: var(--accent-primary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .nc-brain-activity {

@@ -17,7 +17,7 @@ interface ProjectsPageProps {
   isLoading: boolean;
   errorText: string;
   onRefresh: () => Promise<void> | void;
-  onOpenProject: (projectId: string) => void;
+  onOpenProject: (projectId: string) => Promise<void> | void;
 }
 
 const TEMPLATE_ORDER = ["startup", "study", "code", "writing", "research", "job", "custom"];
@@ -194,7 +194,7 @@ export function ProjectsPage({
                 </div>
               </div>
               <div className="nc-project-card__footer">
-                <span className="nc-project-card__action">Open workspace</span>
+                <span className="nc-project-card__action">Open latest chat</span>
               </div>
             </button>
           ))}
@@ -223,7 +223,7 @@ export function ProjectsPage({
         onCreated={(project) => {
           setIsCreateModalOpen(false);
           void onRefresh();
-          onOpenProject(project.project_id);
+          void onOpenProject(project.project_id);
         }}
       />
     </section>

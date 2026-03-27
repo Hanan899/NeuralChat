@@ -47,6 +47,7 @@ describe("ProjectWorkspacePage", () => {
         }}
         files={[{ filename: "pitch-deck.pdf", blob_path: "blob", uploaded_at: "2026-03-17T12:00:00Z" }]}
         onBack={vi.fn()}
+        onOpenLatestChat={vi.fn()}
         onOpenChat={vi.fn()}
         onDeleteChat={vi.fn()}
         onCreateChat={vi.fn()}
@@ -78,6 +79,7 @@ describe("ProjectWorkspacePage", () => {
         brainData={null}
         files={[]}
         onBack={vi.fn()}
+        onOpenLatestChat={vi.fn()}
         onOpenChat={onOpenChat}
         onDeleteChat={onDeleteChat}
         onCreateChat={onCreateChat}
@@ -110,6 +112,7 @@ describe("ProjectWorkspacePage", () => {
         brainData={null}
         files={[]}
         onBack={onBack}
+        onOpenLatestChat={vi.fn()}
         onOpenChat={vi.fn()}
         onDeleteChat={vi.fn()}
         onCreateChat={vi.fn()}
@@ -123,5 +126,33 @@ describe("ProjectWorkspacePage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /projects/i }));
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the latest chat from the workspace header action", async () => {
+    const onOpenLatestChat = vi.fn();
+
+    render(
+      <ProjectWorkspacePage
+        authToken="token"
+        project={baseProject}
+        templates={{}}
+        chats={[{ session_id: "chat-1", title: "Latest", created_at: "2026-03-17T10:00:00Z", message_count: 3, last_message_preview: "Latest" }]}
+        brainData={null}
+        files={[]}
+        onBack={vi.fn()}
+        onOpenLatestChat={onOpenLatestChat}
+        onOpenChat={vi.fn()}
+        onDeleteChat={vi.fn()}
+        onCreateChat={vi.fn()}
+        onRefresh={vi.fn()}
+        onProjectUpdated={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onUploadFile={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /open latest chat/i }));
+    expect(onOpenLatestChat).toHaveBeenCalledTimes(1);
   });
 });
