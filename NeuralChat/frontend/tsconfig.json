@@ -6,6 +6,11 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/shared/*": ["../shared/*"],
+      "@/*": ["src/*"]
+    },
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
@@ -13,5 +18,5 @@
     "jsx": "react-jsx",
     "strict": true
   },
-  "include": ["src", "vitest.setup.ts"]
+  "include": ["src", "../shared", "vitest.setup.ts"]
 }
