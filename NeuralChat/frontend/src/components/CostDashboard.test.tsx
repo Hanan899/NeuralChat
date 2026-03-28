@@ -1,7 +1,44 @@
 import { useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { useAccessMock } = vi.hoisted(() => ({
+  useAccessMock: vi.fn(() => ({
+    role: "owner" as const,
+    roleLabel: "Owner",
+    access: {
+      role: "owner" as const,
+      role_label: "Owner",
+      is_owner: true,
+      feature_overrides: {},
+      effective_features: [
+        "chat:create",
+        "project:create",
+        "project:delete",
+        "agent:run",
+        "file:upload",
+        "memory:read",
+        "memory:write",
+        "usage:read",
+        "usage:manage",
+        "billing:manage",
+      ],
+      usage_limits: { daily_limit_usd: 1, monthly_limit_usd: 30 },
+    },
+    can: () => true,
+    isOwner: true,
+    isLoaded: true,
+    isFetching: false,
+    userId: "user_1",
+    refetch: vi.fn(),
+  })),
+}));
+
+vi.mock("../hooks/useAccess", () => ({
+  useAccess: useAccessMock,
+}));
 
 import { CostDashboard } from "./CostDashboard";
 import { CostWarningBanner } from "./CostWarningBanner";
@@ -81,15 +118,24 @@ const summaryResponse = {
 };
 
 function renderDashboard() {
+  const testQueryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
   return render(
-    <CostDashboard
-      isOpen
-      onClose={vi.fn()}
-      getAuthToken={vi.fn().mockResolvedValue("token")}
-      onShowToast={vi.fn()}
-      onUsageStateChange={vi.fn()}
-      naming={{ userDisplayName: "Abdul Hanan", sessionTitle: "Chat" }}
-    />
+    <QueryClientProvider client={testQueryClient}>
+      <CostDashboard
+        isOpen
+        onClose={vi.fn()}
+        getAuthToken={vi.fn().mockResolvedValue("token")}
+        onShowToast={vi.fn()}
+        onUsageStateChange={vi.fn()}
+        naming={{ userDisplayName: "Abdul Hanan", sessionTitle: "Chat" }}
+      />
+    </QueryClientProvider>
   );
 }
 
@@ -238,15 +284,24 @@ describe("CostDashboard", () => {
 
   it("test_limit_setter_shows_success_toast", async () => {
     const onShowToast = vi.fn();
+    const testQueryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
     render(
-      <CostDashboard
-        isOpen
-        onClose={vi.fn()}
-        getAuthToken={vi.fn().mockResolvedValue("token")}
-        onShowToast={onShowToast}
-        onUsageStateChange={vi.fn()}
-        naming={{ userDisplayName: "Abdul Hanan", sessionTitle: "Chat" }}
-      />
+      <QueryClientProvider client={testQueryClient}>
+        <CostDashboard
+          isOpen
+          onClose={vi.fn()}
+          getAuthToken={vi.fn().mockResolvedValue("token")}
+          onShowToast={onShowToast}
+          onUsageStateChange={vi.fn()}
+          naming={{ userDisplayName: "Abdul Hanan", sessionTitle: "Chat" }}
+        />
+      </QueryClientProvider>
     );
     const panel = await screen.findByTestId("cost-dashboard-panel");
 

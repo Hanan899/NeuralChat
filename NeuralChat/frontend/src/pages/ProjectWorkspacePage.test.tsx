@@ -2,6 +2,42 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { useAccessMock } = vi.hoisted(() => ({
+  useAccessMock: vi.fn(() => ({
+    role: "owner" as const,
+    roleLabel: "Owner",
+    access: {
+      role: "owner" as const,
+      role_label: "Owner",
+      is_owner: true,
+      feature_overrides: {},
+      effective_features: [
+        "chat:create",
+        "project:create",
+        "project:delete",
+        "agent:run",
+        "file:upload",
+        "memory:read",
+        "memory:write",
+        "usage:read",
+        "usage:manage",
+        "billing:manage",
+      ],
+      usage_limits: { daily_limit_usd: 1, monthly_limit_usd: 30 },
+    },
+    can: () => true,
+    isOwner: true,
+    isLoaded: true,
+    isFetching: false,
+    userId: "user_1",
+    refetch: vi.fn(),
+  })),
+}));
+
+vi.mock("../hooks/useAccess", () => ({
+  useAccess: useAccessMock,
+}));
+
 import { ProjectWorkspacePage } from "./ProjectWorkspacePage";
 
 vi.mock("../api/projects", () => ({

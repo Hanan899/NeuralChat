@@ -15,6 +15,9 @@
     "CLERK_JWKS_URL": "....",
     "CLERK_ISSUER": "....",
     "CLERK_AUDIENCE": "",
+    "CLERK_SECRET_KEY": "....",
+    "OWNER_EMAILS": "owner@example.com",
+    "OWNER_USER_IDS": "",
 
     "AZURE_OPENAI_ENDPOINT": "....",
     "AZURE_OPENAI_API_KEY": "....",

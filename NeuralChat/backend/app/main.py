@@ -22,8 +22,18 @@ from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Q
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.access import (
+    AppFeature,
+    AccessContext,
+    get_access_context,
+    get_effective_access_payload,
+    require_feature,
+    require_owner,
+    resolve_limits_for_user,
+)
 from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
+from app.routers import members_router
 from app.schemas import (
     build_chat_json_response,
     build_health_response,
@@ -124,6 +134,7 @@ load_local_settings_env(BASE_DIR)
 STORE = init_store()
 
 app = FastAPI(title="NeuralChat Backend", version=APP_VERSION)
+app.include_router(members_router)
 
 raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,neuralchat-adgueyh0gucffsbp.eastus-01.azurewebsites.net")
 allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
@@ -183,11 +194,14 @@ def _invalidate_cache_prefixes(*prefixes: str) -> None:
         api_cache.invalidate_prefix(prefix)
 
 
-def _build_usage_limits_payload(profile: dict[str, Any] | None) -> dict[str, float]:
-    return {
-        "daily_limit_usd": resolve_daily_limit(profile),
-        "monthly_limit_usd": resolve_monthly_limit(profile),
-    }
+def _build_usage_limits_payload(
+    user_id: str,
+    display_name: str | None,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    if profile is None:
+        profile = load_profile(user_id, display_name)
+    return resolve_limits_for_user(user_id, display_name)
 
 
 def _get_usage_status_for_feature(
@@ -196,7 +210,7 @@ def _get_usage_status_for_feature(
     display_name: str | None = None,
 ) -> dict[str, Any]:
     profile = load_profile(user_id, display_name)
-    limits_payload = _build_usage_limits_payload(profile)
+    limits_payload = _build_usage_limits_payload(user_id, display_name, profile)
     return get_usage_status(
         user_id,
         limits_payload["daily_limit_usd"],
@@ -325,9 +339,10 @@ async def get_projects_endpoint(
 @app.post("/api/projects")
 async def post_project(
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.PROJECT_CREATE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     project_name = payload.get("name", "")
     template = payload.get("template", "")
     if not isinstance(project_name, str) or not project_name.strip():
@@ -402,9 +417,10 @@ async def get_project_memory_endpoint(
 async def patch_project_memory_endpoint(
     project_id: str,
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.MEMORY_WRITE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
@@ -435,9 +451,10 @@ async def patch_project_memory_endpoint(
 @app.delete("/api/projects/{project_id}/memory")
 async def delete_project_memory_endpoint(
     project_id: str,
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.MEMORY_WRITE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
+    user_id = access_context.user_id
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
@@ -495,9 +512,10 @@ async def patch_project(
 @app.delete("/api/projects/{project_id}")
 async def delete_project_endpoint(
     project_id: str,
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.PROJECT_DELETE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
+    user_id = access_context.user_id
     try:
         await asyncio.to_thread(delete_project, user_id, project_id, naming["display_name"])
     except ValueError as validation_error:
@@ -610,9 +628,10 @@ async def patch_project_chat_title_endpoint(
 async def delete_project_chat_endpoint(
     project_id: str,
     session_id: str,
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.PROJECT_DELETE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
@@ -659,9 +678,10 @@ async def post_conversation_title(
 
 @app.get("/api/me")
 def get_me(
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(get_access_context),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     cache_key = _cache_key("profile", user_id, naming["display_name"] or "", "me")
     cached_response = _read_cached_json_response(cache_key)
     if cached_response is not None:
@@ -670,6 +690,7 @@ def get_me(
     return _cached_json_response(cache_key, {
         "user_id": user_id,
         "profile": profile,
+        "access": get_effective_access_payload(access_context, profile),
     }, READ_CACHE_TTL_SECONDS)
 
 
@@ -705,7 +726,7 @@ async def get_usage_today(
         return cached_response
     try:
         profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
-        limits_payload = _build_usage_limits_payload(profile)
+        limits_payload = await asyncio.to_thread(_build_usage_limits_payload, user_id, naming["display_name"], profile)
         today_records = await asyncio.to_thread(get_daily_usage, user_id, current_utc_date_text(), naming["display_name"])
         today_summary = await asyncio.to_thread(check_daily_limit, user_id, limits_payload["daily_limit_usd"], naming["display_name"])
     except Exception as usage_error:
@@ -738,6 +759,33 @@ async def get_usage_status_endpoint(
     return _cached_json_response(cache_key, usage_status, HOT_CACHE_TTL_SECONDS)
 
 
+@app.get("/api/usage/users")
+async def get_usage_users_endpoint(
+    _access_context: AccessContext = Depends(require_owner),
+) -> dict[str, Any]:
+    from app.access import list_member_profiles
+
+    cache_key = _cache_key("usage", "users")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
+
+    try:
+        members = await asyncio.to_thread(list_member_profiles, True)
+    except Exception as usage_error:
+        LOGGER.exception("Owner usage user list failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load team usage: {usage_error}",
+        ) from usage_error
+
+    return _cached_json_response(
+        cache_key,
+        {"users": [member.model_dump(mode="json") for member in members]},
+        HOT_CACHE_TTL_SECONDS,
+    )
+
+
 @app.get("/api/usage/limit")
 async def get_usage_limit(
     user_id: str = Depends(require_user_id),
@@ -748,23 +796,25 @@ async def get_usage_limit(
     if cached_response is not None:
         return cached_response
     profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
-    return _cached_json_response(cache_key, _build_usage_limits_payload(profile), READ_CACHE_TTL_SECONDS)
+    return _cached_json_response(
+        cache_key,
+        await asyncio.to_thread(_build_usage_limits_payload, user_id, naming["display_name"], profile),
+        READ_CACHE_TTL_SECONDS,
+    )
 
 
 @app.patch("/api/usage/limit")
 async def patch_usage_limit(
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.USAGE_MANAGE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     request = validate_usage_limit_request(payload)
     try:
-        await asyncio.to_thread(
-            save_profile,
-            user_id,
-            request,
-            naming["display_name"],
-        )
+        from app.access import update_member_usage_limits
+
+        await asyncio.to_thread(update_member_usage_limits, user_id, request, naming["display_name"])
     except Exception as usage_error:
         LOGGER.exception("Usage limit update failed for user=%s", user_id)
         raise HTTPException(
@@ -773,7 +823,7 @@ async def patch_usage_limit(
         ) from usage_error
 
     updated_profile = await asyncio.to_thread(load_profile, user_id, naming["display_name"])
-    limits_payload = _build_usage_limits_payload(updated_profile)
+    limits_payload = await asyncio.to_thread(_build_usage_limits_payload, user_id, naming["display_name"], updated_profile)
     updated_fields = sorted(request.keys())
     if updated_fields == ["daily_limit_usd"]:
         message = f"Daily limit updated to ${request['daily_limit_usd']:.2f}"
@@ -795,9 +845,10 @@ async def patch_usage_limit(
 @app.patch("/api/me/memory")
 def patch_memory(
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.MEMORY_WRITE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     key = payload.get("key", "")
     value = payload.get("value", "")
 
@@ -821,9 +872,10 @@ def patch_memory(
 
 @app.delete("/api/me/memory")
 def delete_memory(
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.MEMORY_WRITE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
+    user_id = access_context.user_id
     clear_profile(user_id=user_id, display_name=naming["display_name"])
     _invalidate_cache_prefixes(
         _cache_key("profile", user_id, naming["display_name"] or ""),
@@ -837,9 +889,10 @@ async def post_upload(
     session_id: str | None = Form(default=None),
     project_id: str | None = Form(default=None),
     file: UploadFile = File(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.FILE_UPLOAD)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     clean_session_id = session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
     clean_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
     if not clean_session_id and not clean_project_id:
@@ -1057,9 +1110,10 @@ async def delete_conversation(
 @app.post("/api/agent/plan")
 async def post_agent_plan(
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.AGENT_RUN)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = access_context.user_id
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "agent_plan", naming["display_name"])
     request = validate_agent_plan_request(payload)
 
@@ -1100,9 +1154,10 @@ async def post_agent_plan(
 async def post_agent_run(
     plan_id: str,
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.AGENT_RUN)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ):
+    user_id = access_context.user_id
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "agent_step", naming["display_name"])
     _invalidate_cache_prefixes(
         _cache_key("agent", user_id, "history"),
@@ -1297,9 +1352,10 @@ async def get_agent_history_detail(plan_id: str, user_id: str = Depends(require_
 @app.post("/api/chat")
 async def post_chat(
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    access_context: AccessContext = Depends(require_feature(AppFeature.CHAT_CREATE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ):
+    user_id = access_context.user_id
     request = validate_chat_request(payload)
     request_id = str(uuid.uuid4())
     start = time.perf_counter()

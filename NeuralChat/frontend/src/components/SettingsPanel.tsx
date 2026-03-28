@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { RequestNamingContext } from "../api";
+import { useAccess } from "../hooks/useAccess";
 import type { UsageStatusResponse } from "../types";
+import { AccessManagementPanel } from "./AccessManagementPanel";
 import { CostDashboardContent } from "./CostDashboard";
 
-type SettingsSectionId = "general" | "cost" | "account";
+type SettingsSectionId = "general" | "cost" | "account" | "access";
 
 interface SettingsPanelProps {
   getAuthToken: () => Promise<string | null>;
@@ -25,6 +27,7 @@ const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   { id: "general", label: "General", description: "Product behavior and workspace defaults" },
   { id: "cost", label: "Cost monitoring", description: "Budgets, usage, and spend tracking" },
   { id: "account", label: "Account", description: "Profile and sign-in settings" },
+  { id: "access", label: "Access management", description: "Roles, features, and per-user budgets" },
 ];
 
 function SettingsSectionIcon({ sectionId }: { sectionId: SettingsSectionId }) {
@@ -53,6 +56,16 @@ function SettingsSectionIcon({ sectionId }: { sectionId: SettingsSectionId }) {
     );
   }
 
+  if (sectionId === "access") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M7 10.5C7 8 9.02 6 11.5 6C13.98 6 16 8 16 10.5V12.5C16 15 13.98 17 11.5 17C9.02 17 7 15 7 12.5V10.5Z" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M11.5 17V20" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        <path d="M17.5 9.5L20 12L17.5 14.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="8.5" r="3.5" stroke="currentColor" strokeWidth="1.7" />
@@ -69,18 +82,29 @@ export function SettingsPanel({
   onOpenAccountSettings,
   onCloseSettings,
 }: SettingsPanelProps) {
+  const { isOwner } = useAccess();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
+  const navItems = useMemo(
+    () => SETTINGS_NAV_ITEMS.filter((item) => item.id !== "access" || isOwner),
+    [isOwner]
+  );
+
+  useEffect(() => {
+    if (!isOwner && activeSection === "access") {
+      setActiveSection("general");
+    }
+  }, [activeSection, isOwner]);
 
   const activeSectionMeta = useMemo(
-    () => SETTINGS_NAV_ITEMS.find((item) => item.id === activeSection) ?? SETTINGS_NAV_ITEMS[0],
-    [activeSection]
+    () => navItems.find((item) => item.id === activeSection) ?? navItems[0],
+    [activeSection, navItems]
   );
 
   return (
     <section className="nc-settings-page" aria-label="Settings" data-testid="settings-panel">
       <div className="nc-settings-panel__layout">
         <nav className="nc-settings-nav" aria-label="Settings sections">
-          {SETTINGS_NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const isActive = item.id === activeSection;
 
             return (
@@ -170,6 +194,14 @@ export function SettingsPanel({
                 ) : null}
               </div>
             </section>
+          ) : null}
+
+          {activeSection === "access" && isOwner ? (
+            <AccessManagementPanel
+              getAuthToken={getAuthToken}
+              naming={naming}
+              onShowToast={onShowToast}
+            />
           ) : null}
         </div>
       </div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { deleteMemory, getMe, patchMemory } from "../api";
 import type { RequestNamingContext } from "../api";
+import { useAccess } from "../hooks/useAccess";
 
 interface MemoryPanelProps {
   isOpen: boolean;
@@ -68,6 +69,7 @@ function formatFactForDisplay(value: string): string {
 }
 
 export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPanelProps) {
+  const { can } = useAccess();
   const [facts, setFacts] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [errorText, setErrorText] = useState("");
@@ -75,6 +77,7 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPan
   const [editingValue, setEditingValue] = useState("");
 
   const factEntries = useMemo(() => Object.entries(facts).sort(([left], [right]) => left.localeCompare(right)), [facts]);
+  const canEditMemory = can("memory:write");
 
   useEffect(() => {
     if (!isOpen) {
@@ -209,6 +212,7 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPan
                         setEditingValue(value);
                       }}
                       className="nc-memory-panel__action"
+                      disabled={!canEditMemory}
                     >
                       Edit
                     </button>
@@ -216,6 +220,7 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPan
                       type="button"
                       onClick={() => handleDeleteKey(key)}
                       className="nc-memory-panel__action nc-memory-panel__action--danger"
+                      disabled={!canEditMemory}
                     >
                       Delete
                     </button>
@@ -247,10 +252,12 @@ export function MemoryPanel({ isOpen, onClose, getAuthToken, naming }: MemoryPan
         </div>
 
         <div className="nc-memory-panel__footer">
+          {!canEditMemory ? <p className="nc-memory-panel__empty">Memory editing is disabled for your current access.</p> : null}
           <button
             type="button"
             onClick={handleClearAll}
             className="nc-memory-panel__clear"
+            disabled={!canEditMemory}
           >
             Clear All Memory
           </button>

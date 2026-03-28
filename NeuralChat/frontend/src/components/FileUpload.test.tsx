@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,6 +22,7 @@ const {
   runAgentMock,
   getAgentHistoryMock,
   getAgentTaskMock,
+  useAccessMock,
 } = vi.hoisted(() => ({
   authState: { signedIn: true },
   getTokenMock: vi.fn().mockResolvedValue("token"),
@@ -55,6 +57,35 @@ const {
   runAgentMock: vi.fn(),
   getAgentHistoryMock: vi.fn().mockResolvedValue([]),
   getAgentTaskMock: vi.fn().mockResolvedValue({ plan: { plan_id: "plan-1", goal: "Goal", steps: [] }, log: [] }),
+  useAccessMock: vi.fn(() => ({
+    role: "owner" as const,
+    roleLabel: "Owner",
+    access: {
+      role: "owner" as const,
+      role_label: "Owner",
+      is_owner: true,
+      feature_overrides: {},
+      effective_features: [
+        "chat:create",
+        "project:create",
+        "project:delete",
+        "agent:run",
+        "file:upload",
+        "memory:read",
+        "memory:write",
+        "usage:read",
+        "usage:manage",
+        "billing:manage",
+      ],
+      usage_limits: { daily_limit_usd: 1, monthly_limit_usd: 30 },
+    },
+    can: () => true,
+    isOwner: true,
+    isLoaded: true,
+    isFetching: false,
+    userId: "user_1",
+    refetch: vi.fn(),
+  })),
 }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -79,6 +110,10 @@ vi.mock("../api/agent", () => ({
   getAgentTask: getAgentTaskMock,
 }));
 
+vi.mock("../hooks/useAccess", () => ({
+  useAccess: useAccessMock,
+}));
+
 vi.mock("@clerk/clerk-react", () => ({
   SignedIn: ({ children }: { children: React.ReactNode }) => (authState.signedIn ? children : null),
   SignedOut: ({ children }: { children: React.ReactNode }) => (authState.signedIn ? null : children),
@@ -98,10 +133,19 @@ vi.mock("@clerk/clerk-react", () => ({
 import App from "../App";
 
 function renderApp() {
+  const testQueryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
   return render(
-    <MemoryRouter>
-      <App />
-    </MemoryRouter>
+    <QueryClientProvider client={testQueryClient}>
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 

@@ -28,6 +28,7 @@ import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import type { ShortcutId } from "./components/Sidebar";
+import { useAccess } from "./hooks/useAccess";
 import { useApiQuery } from "./hooks/useApi";
 import { usePrefetch } from "./hooks/usePrefetch";
 import { NewChatPage } from "./pages/NewChatPage";
@@ -495,6 +496,7 @@ function ChatShell() {
   const { getToken, userId } = useAuth();
   const clerk = useClerk();
   const { user } = useUser();
+  const { can } = useAccess();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1345,6 +1347,10 @@ function ChatShell() {
   }, [scheduleTypingFlush]);
 
   function handleNewChat() {
+    if (!can("chat:create")) {
+      showToast("Your current access does not allow creating new conversations.", "info");
+      return;
+    }
     if (location.pathname !== "/") {
       navigate("/");
     }
@@ -1426,6 +1432,10 @@ function ChatShell() {
   }
 
   function handleOpenCodex() {
+    if (!can("agent:run")) {
+      showToast("Agent mode is not available for your current access.", "info");
+      return;
+    }
     navigate("/");
     setForceWebSearch(false);
     setActiveShortcutId("codex");
@@ -1445,6 +1455,10 @@ function ChatShell() {
   }
 
   function handleRequestCreateProject() {
+    if (!can("project:create")) {
+      showToast("Project creation is not available for your current access.", "info");
+      return;
+    }
     resetChatModes();
     setActiveShortcutId("projects");
     setActiveWorkspaceShortcut(null);
@@ -2098,6 +2112,10 @@ function ChatShell() {
     if (!trimmed || isSending || !activeSessionId || submitLockRef.current) {
       return;
     }
+    if (!can("agent:run")) {
+      showToast("Agent mode is not available for your current access.", "info");
+      return;
+    }
     if (isUsageBlocked) {
       handleBlockedUsageAttempt();
       return;
@@ -2187,6 +2205,10 @@ function ChatShell() {
 
   async function handleRunAgentPlan(messageId: string) {
     if (!activeSessionId || isSending) {
+      return;
+    }
+    if (!can("agent:run")) {
+      showToast("Agent mode is not available for your current access.", "info");
       return;
     }
     if (isUsageBlocked) {
@@ -2399,6 +2421,10 @@ function ChatShell() {
   }
 
   async function handleOpenFileUpload() {
+    if (!can("file:upload")) {
+      showToast("File uploads are not enabled for your current access.", "info");
+      return;
+    }
     if (!activeSessionId && !activeProjectId) {
       showToast("Start a chat first before adding files.", "info");
       return;
@@ -2429,6 +2455,10 @@ function ChatShell() {
   }
 
   async function handleOpenAgentHistory() {
+    if (!can("agent:run")) {
+      showToast("Agent mode is not available for your current access.", "info");
+      return;
+    }
     try {
       const authToken = await getToken();
       if (!authToken) {
@@ -2577,6 +2607,8 @@ function ChatShell() {
               className="nc-topbar-btn nc-topbar-btn--icon-label"
               aria-label="Open agent history"
               onClick={() => void handleOpenAgentHistory()}
+              disabled={!can("agent:run")}
+              title={!can("agent:run") ? "Agent mode is not available for your current access." : undefined}
             >
               <UiIcon kind="agent" className="nc-ui-icon" />
               <span>Agents</span>
@@ -2906,7 +2938,8 @@ function ChatShell() {
                     className="nc-attach-btn"
                     aria-label="Add files to this chat"
                     onClick={() => void handleOpenFileUpload()}
-                    title="Add or manage files for this chat"
+                    title={!can("file:upload") ? "File uploads are not enabled for your current access." : "Add or manage files for this chat"}
+                    disabled={!can("file:upload")}
                   >
                     <UiIcon kind="attach" className="nc-ui-icon" />
                     <span>Add files</span>

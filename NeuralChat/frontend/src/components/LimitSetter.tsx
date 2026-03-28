@@ -4,6 +4,7 @@ interface LimitSetterProps {
   label: string;
   limitUsd: number;
   isSaving: boolean;
+  canEdit?: boolean;
   onSave: (nextLimitUsd: number) => Promise<void>;
 }
 
@@ -11,7 +12,7 @@ function formatCurrency(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
-export function LimitSetter({ label, limitUsd, isSaving, onSave }: LimitSetterProps) {
+export function LimitSetter({ label, limitUsd, isSaving, canEdit = true, onSave }: LimitSetterProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftValue, setDraftValue] = useState(limitUsd.toFixed(2));
   const [errorText, setErrorText] = useState("");
@@ -50,8 +51,9 @@ export function LimitSetter({ label, limitUsd, isSaving, onSave }: LimitSetterPr
             setErrorText("");
             setIsEditing(true);
           }}
+          disabled={!canEdit}
         >
-          Edit
+          {canEdit ? "Edit" : "Locked"}
         </button>
       ) : (
         <div className="nc-cost-limit__editor">
