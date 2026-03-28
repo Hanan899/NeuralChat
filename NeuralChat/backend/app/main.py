@@ -26,6 +26,7 @@ from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
 from app.rbac import AuthContext, Permission, require_permission
 from app.routers.members import members_router
+from app.routers.webhooks import webhooks_router
 from app.schemas import (
     build_chat_json_response,
     build_health_response,
@@ -138,6 +139,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(webhooks_router)
 app.include_router(members_router)
 
 
