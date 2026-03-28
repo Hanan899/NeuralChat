@@ -24,6 +24,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
+from app.rbac import AuthContext, Permission, require_permission
+from app.routers.members import members_router
 from app.schemas import (
     build_chat_json_response,
     build_health_response,
@@ -135,6 +137,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(members_router)
 
 
 def get_request_naming(
@@ -325,9 +329,10 @@ async def get_projects_endpoint(
 @app.post("/api/projects")
 async def post_project(
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    auth_context: AuthContext = Depends(require_permission(Permission.PROJECT_CREATE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = auth_context.user_id
     project_name = payload.get("name", "")
     template = payload.get("template", "")
     if not isinstance(project_name, str) or not project_name.strip():
@@ -435,9 +440,10 @@ async def patch_project_memory_endpoint(
 @app.delete("/api/projects/{project_id}/memory")
 async def delete_project_memory_endpoint(
     project_id: str,
-    user_id: str = Depends(require_user_id),
+    auth_context: AuthContext = Depends(require_permission(Permission.PROJECT_DELETE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
+    user_id = auth_context.user_id
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
@@ -495,9 +501,10 @@ async def patch_project(
 @app.delete("/api/projects/{project_id}")
 async def delete_project_endpoint(
     project_id: str,
-    user_id: str = Depends(require_user_id),
+    auth_context: AuthContext = Depends(require_permission(Permission.PROJECT_DELETE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, str]:
+    user_id = auth_context.user_id
     try:
         await asyncio.to_thread(delete_project, user_id, project_id, naming["display_name"])
     except ValueError as validation_error:
@@ -610,9 +617,10 @@ async def patch_project_chat_title_endpoint(
 async def delete_project_chat_endpoint(
     project_id: str,
     session_id: str,
-    user_id: str = Depends(require_user_id),
+    auth_context: AuthContext = Depends(require_permission(Permission.PROJECT_DELETE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = auth_context.user_id
     project = await asyncio.to_thread(get_project, user_id, project_id, naming["display_name"])
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
@@ -837,9 +845,10 @@ async def post_upload(
     session_id: str | None = Form(default=None),
     project_id: str | None = Form(default=None),
     file: UploadFile = File(...),
-    user_id: str = Depends(require_user_id),
+    auth_context: AuthContext = Depends(require_permission(Permission.FILE_UPLOAD)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ) -> dict[str, Any]:
+    user_id = auth_context.user_id
     clean_session_id = session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
     clean_project_id = project_id.strip() if isinstance(project_id, str) and project_id.strip() else None
     if not clean_session_id and not clean_project_id:
@@ -1100,9 +1109,10 @@ async def post_agent_plan(
 async def post_agent_run(
     plan_id: str,
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    auth_context: AuthContext = Depends(require_permission(Permission.AGENT_RUN)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ):
+    user_id = auth_context.user_id
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "agent_step", naming["display_name"])
     _invalidate_cache_prefixes(
         _cache_key("agent", user_id, "history"),
@@ -1297,9 +1307,10 @@ async def get_agent_history_detail(plan_id: str, user_id: str = Depends(require_
 @app.post("/api/chat")
 async def post_chat(
     payload: dict[str, Any] = Body(...),
-    user_id: str = Depends(require_user_id),
+    auth_context: AuthContext = Depends(require_permission(Permission.CHAT_CREATE)),
     naming: dict[str, str | None] = Depends(get_request_naming),
 ):
+    user_id = auth_context.user_id
     request = validate_chat_request(payload)
     request_id = str(uuid.uuid4())
     start = time.perf_counter()
