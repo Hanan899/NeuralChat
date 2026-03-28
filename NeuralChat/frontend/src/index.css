@@ -5433,6 +5433,71 @@ select {
   color: var(--text-secondary);
 }
 
+.nc-projects-empty__actions {
+  margin-top: 22px;
+}
+
+.nc-projects-empty__cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, var(--border-subtle));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 8%, white) 0%, var(--bg-elevated) 46%, color-mix(in srgb, var(--accent-secondary) 7%, white) 100%);
+  box-shadow:
+    0 18px 40px rgba(72, 58, 166, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  color: var(--text-primary);
+  text-align: left;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.nc-projects-empty__cta:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, var(--border-subtle));
+  box-shadow:
+    0 22px 44px rgba(72, 58, 166, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.nc-projects-empty__cta-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nc-projects-empty__cta-copy strong {
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--text-heading);
+}
+
+.nc-projects-empty__cta-copy span {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.nc-projects-empty__cta-arrow {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  font-size: 22px;
+  font-weight: 700;
+  box-shadow: 0 12px 24px rgba(106, 95, 221, 0.24);
+}
+
 .nc-projects-empty__section-heading {
   display: flex;
   align-items: end;
@@ -5532,6 +5597,15 @@ select {
   .nc-projects-empty__icon {
     width: 56px;
     height: 56px;
+  }
+
+  .nc-projects-empty__cta {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .nc-projects-empty__cta-copy strong {
+    font-size: 17px;
   }
 
   .nc-project-card {

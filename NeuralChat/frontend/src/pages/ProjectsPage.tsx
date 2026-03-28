@@ -119,8 +119,18 @@ export function ProjectsPage({
             </div>
           </div>
           <div className="nc-projects-empty__actions">
-            <button type="button" className="nc-button nc-button--primary" onClick={() => handleOpenCreateModal("custom")}>
-              Create your first project
+            <button
+              type="button"
+              className="nc-projects-empty__cta"
+              onClick={() => handleOpenCreateModal("custom")}
+            >
+              <span className="nc-projects-empty__cta-copy">
+                <strong>Create Project</strong>
+                <span>Start with a dedicated workspace and tailor it as you go.</span>
+              </span>
+              <span className="nc-projects-empty__cta-arrow" aria-hidden="true">
+                →
+              </span>
             </button>
           </div>
         </div>
