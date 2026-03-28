@@ -61,3 +61,5 @@ export function useRBAC(): RBACContext {
     };
   }, [isLoaded, role]);
 }
+
+export default useRBAC;
