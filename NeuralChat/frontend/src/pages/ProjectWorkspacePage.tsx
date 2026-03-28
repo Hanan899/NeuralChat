@@ -6,19 +6,6 @@ import { ProjectBrainPanel } from "../components/ProjectBrainPanel";
 import { ProjectTemplateIcon } from "../components/ProjectTemplateIcon";
 import type { Project, ProjectChat, ProjectMemoryResponse, ProjectTemplate } from "../types/project";
 
-function buildProjectPromptPreview(prompt: string): string {
-  const trimmedPrompt = prompt.trim();
-  if (!trimmedPrompt) {
-    return "No system prompt configured yet.";
-  }
-
-  return trimmedPrompt
-    .replace(/\r\n/g, "\n")
-    .replace(/\s+(Behavior Guidelines:|Response Style:|Advanced Capabilities:|Restrictions:|Goal:)/g, "\n$1")
-    .replace(/\s+-\s+/g, "\n- ")
-    .replace(/\n{3,}/g, "\n\n");
-}
-
 interface ProjectWorkspacePageProps {
   authToken: string;
   getAuthToken?: () => Promise<string | null>;
@@ -29,6 +16,7 @@ interface ProjectWorkspacePageProps {
   files: UploadedFileItem[];
   naming?: { userDisplayName?: string; sessionTitle?: string };
   onBack: () => void;
+  onOpenLatestChat: () => void;
   onOpenChat: (sessionId: string) => void;
   onDeleteChat: (sessionId: string) => void;
   onCreateChat: () => void;
@@ -37,6 +25,7 @@ interface ProjectWorkspacePageProps {
   onDeleteProject: () => void;
   onTogglePin: () => void;
   onUploadFile: () => void;
+  isRefreshing?: boolean;
 }
 
 export function ProjectWorkspacePage({
@@ -49,6 +38,7 @@ export function ProjectWorkspacePage({
   files,
   naming,
   onBack,
+  onOpenLatestChat,
   onOpenChat,
   onDeleteChat,
   onCreateChat,
@@ -57,11 +47,12 @@ export function ProjectWorkspacePage({
   onDeleteProject,
   onTogglePin,
   onUploadFile,
+  isRefreshing = false,
 }: ProjectWorkspacePageProps) {
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   const templateLabel = templates[project.template]?.label ?? "Custom Project";
-  const promptPreview = buildProjectPromptPreview(project.system_prompt);
+  const latestChat = chats[0] ?? null;
 
   return (
     <section className="nc-project-workspace" data-testid="project-workspace-page">
@@ -78,14 +69,22 @@ export function ProjectWorkspacePage({
           <div className="nc-project-workspace__meta-row">
             <span className="nc-project-workspace__template-badge">{templateLabel}</span>
             {project.pinned ? <span className="nc-project-workspace__template-badge nc-project-workspace__template-badge--quiet">Pinned</span> : null}
+            {isRefreshing ? <span className="nc-project-workspace__template-badge nc-project-workspace__template-badge--status">Refreshing...</span> : null}
           </div>
-          <div className="nc-project-workspace__prompt-preview">
-            <span className="nc-project-workspace__prompt-kicker">Prompt preview</span>
-            <p>{promptPreview}</p>
+          <p className="nc-project-workspace__summary">
+            {project.description?.trim() || templates[project.template]?.description || "Manage this workspace, its memory, and reusable files."}
+          </p>
+          <div className="nc-project-workspace__workspace-note">
+            <span>{chats.length} chat{chats.length === 1 ? "" : "s"}</span>
+            <span>{files.length} file{files.length === 1 ? "" : "s"}</span>
+            <span>Project Brain + files refresh in the background</span>
           </div>
         </div>
 
         <div className="nc-project-workspace__header-actions">
+          <button type="button" className="nc-button nc-button--primary" onClick={onOpenLatestChat}>
+            {latestChat ? "Open latest chat" : "Start first chat"}
+          </button>
           <button type="button" className="nc-button nc-button--ghost" onClick={() => setIsPromptModalOpen(true)}>
             Edit prompt
           </button>

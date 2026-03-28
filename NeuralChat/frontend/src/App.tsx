@@ -68,6 +68,14 @@ interface NotificationItem {
   count: number;
 }
 
+interface ProjectWorkspaceCacheEntry {
+  project: Project | null;
+  chats: ProjectChat[];
+  memory: ProjectMemoryResponse | null;
+  files: UploadedFileItem[];
+  loadedAt: string;
+}
+
 const SIGN_IN_APPEARANCE = {
   variables: {
     colorPrimary: "#d97757",
@@ -531,8 +539,11 @@ function ChatShell() {
   const [projectChats, setProjectChats] = useState<ProjectChat[]>([]);
   const [projectMemory, setProjectMemory] = useState<ProjectMemoryResponse | null>(null);
   const [projectFiles, setProjectFiles] = useState<UploadedFileItem[]>([]);
+  const [projectWorkspaceCache, setProjectWorkspaceCache] = useState<Record<string, ProjectWorkspaceCacheEntry>>({});
   const [isProjectWorkspaceLoading, setIsProjectWorkspaceLoading] = useState(false);
+  const [isProjectWorkspaceRefreshing, setIsProjectWorkspaceRefreshing] = useState(false);
   const [projectBrainActivityToken, setProjectBrainActivityToken] = useState(0);
+  const projectWorkspaceCacheRef = useRef<Record<string, ProjectWorkspaceCacheEntry>>({});
   const [usageStatus, setUsageStatus] = useState<UsageStatusResponse | null>(null);
   const [isCostWarningDismissed, setIsCostWarningDismissed] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -678,6 +689,37 @@ function ChatShell() {
     setProjectBrainActivityToken(0);
   }, [activeProjectChatId, activeProjectId]);
 
+  const updateProjectWorkspaceCache = useCallback(
+    (
+      projectId: string,
+      updates: Partial<ProjectWorkspaceCacheEntry> | ((previous: ProjectWorkspaceCacheEntry | null) => ProjectWorkspaceCacheEntry)
+    ) => {
+      setProjectWorkspaceCache((previous) => {
+        const previousEntry = previous[projectId] ?? null;
+        const nextEntry =
+          typeof updates === "function"
+            ? updates(previousEntry)
+            : {
+                project: previousEntry?.project ?? null,
+                chats: previousEntry?.chats ?? [],
+                memory: previousEntry?.memory ?? null,
+                files: previousEntry?.files ?? [],
+                loadedAt: new Date().toISOString(),
+                ...updates,
+              };
+        return {
+          ...previous,
+          [projectId]: nextEntry,
+        };
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    projectWorkspaceCacheRef.current = projectWorkspaceCache;
+  }, [projectWorkspaceCache]);
+
   const refreshProjects = useCallback(async () => {
     if (!userId) {
       setProjects([]);
@@ -706,31 +748,63 @@ function ChatShell() {
       setProjectChats([]);
       setProjectMemory(null);
       setProjectFiles([]);
+      setIsProjectWorkspaceLoading(false);
+      setIsProjectWorkspaceRefreshing(false);
       return;
     }
 
+    const cachedWorkspace = projectWorkspaceCacheRef.current[activeProjectId];
+
     try {
-      setIsProjectWorkspaceLoading(true);
+      if (cachedWorkspace) {
+        setActiveProject(cachedWorkspace.project);
+        setProjectChats(cachedWorkspace.chats);
+        setProjectMemory(cachedWorkspace.memory);
+        setProjectFiles(cachedWorkspace.files);
+        setIsProjectWorkspaceLoading(false);
+        setIsProjectWorkspaceRefreshing(true);
+      } else {
+        setIsProjectWorkspaceLoading(true);
+        setIsProjectWorkspaceRefreshing(false);
+      }
       const authToken = await getToken();
       if (!authToken) {
         return;
       }
-      const [projectData, nextProjectChats, nextProjectMemory, nextProjectFiles] = await Promise.all([
+      const [projectData, nextProjectChats] = await Promise.all([
         getProject(authToken, activeProjectId, { userDisplayName }),
         getProjectChats(authToken, activeProjectId, { userDisplayName }),
-        getProjectMemory(authToken, activeProjectId, { userDisplayName }),
-        getProjectFiles(authToken, activeProjectId, { userDisplayName }),
       ]);
       setActiveProject(projectData);
       setProjectChats(nextProjectChats);
+      updateProjectWorkspaceCache(activeProjectId, (previous) => ({
+        project: projectData,
+        chats: nextProjectChats,
+        memory: previous?.memory ?? null,
+        files: previous?.files ?? [],
+        loadedAt: new Date().toISOString(),
+      }));
+
+      const [nextProjectMemory, nextProjectFiles] = await Promise.all([
+        getProjectMemory(authToken, activeProjectId, { userDisplayName }),
+        getProjectFiles(authToken, activeProjectId, { userDisplayName }),
+      ]);
       setProjectMemory(nextProjectMemory);
       setProjectFiles(nextProjectFiles.files);
+      updateProjectWorkspaceCache(activeProjectId, {
+        project: projectData,
+        chats: nextProjectChats,
+        memory: nextProjectMemory,
+        files: nextProjectFiles.files,
+        loadedAt: new Date().toISOString(),
+      });
     } catch (error) {
       setProjectsErrorText(error instanceof Error ? error.message : "Failed to load project workspace.");
     } finally {
       setIsProjectWorkspaceLoading(false);
+      setIsProjectWorkspaceRefreshing(false);
     }
-  }, [activeProjectId, getToken, userDisplayName, userId]);
+  }, [activeProjectId, getToken, updateProjectWorkspaceCache, userDisplayName, userId]);
 
   useEffect(() => {
     void refreshProjects();
@@ -747,9 +821,13 @@ function ChatShell() {
 
     const projectId = activeProjectId;
     const projectChatId = activeProjectChatId;
+    const cachedMessages = messagesByConversation[projectChatId];
 
     let cancelled = false;
     async function loadProjectChat() {
+      if (cachedMessages?.length) {
+        return;
+      }
       try {
         const authToken = await getToken();
         if (!authToken) {
@@ -760,14 +838,15 @@ function ChatShell() {
           sessionTitle: activeProjectChat?.title?.trim() || "Project chat",
         });
         if (!cancelled) {
-          setMessagesByConversation((previous) => ({
-            ...previous,
-            [projectChatId]: messages.map((message, index) => ({
+          const normalizedMessages = messages.map((message, index) => ({
               ...message,
               id: message.id || `project-${projectChatId}-${index}`,
               createdAt: message.createdAt || (message as unknown as Record<string, string>).created_at || new Date().toISOString(),
               projectId,
-            })),
+            }));
+          setMessagesByConversation((previous) => ({
+            ...previous,
+            [projectChatId]: normalizedMessages,
           }));
         }
       } catch {
@@ -781,7 +860,7 @@ function ChatShell() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectChat?.title, activeProjectChatId, activeProjectId, getToken, userDisplayName, userId]);
+  }, [activeProjectChat?.title, activeProjectChatId, activeProjectId, getToken, messagesByConversation, userDisplayName, userId]);
 
   const loadUsageStatus = useCallback(async () => {
     if (!userId) {
@@ -1374,13 +1453,132 @@ function ChatShell() {
     navigate("/projects?create=1&template=custom");
   }
 
-  function handleOpenProject(projectId: string, sessionId?: string) {
+  function getLatestProjectChatSessionId(projectId: string): string | null {
+    const cachedChats = projectWorkspaceCache[projectId]?.chats ?? [];
+    if (cachedChats.length > 0) {
+      return cachedChats[0]?.session_id ?? null;
+    }
+    if (activeProjectId === projectId && projectChats.length > 0) {
+      return projectChats[0]?.session_id ?? null;
+    }
+    return null;
+  }
+
+  const openProjectOverview = useCallback(
+    (projectId: string) => {
+      resetChatModes();
+      setActiveShortcutId("projects");
+      setActiveWorkspaceShortcut(null);
+      setIsSettingsOpen(false);
+      setErrorText("");
+
+      const cachedWorkspace = projectWorkspaceCacheRef.current[projectId];
+      const knownProject =
+        cachedWorkspace?.project ??
+        projects.find((project) => project.project_id === projectId) ??
+        (activeProjectId === projectId ? activeProject : null);
+
+      if (knownProject) {
+        setActiveProject(knownProject);
+      }
+      if (cachedWorkspace) {
+        setProjectChats(cachedWorkspace.chats);
+        setProjectMemory(cachedWorkspace.memory);
+        setProjectFiles(cachedWorkspace.files);
+      }
+
+      navigate({
+        pathname: `/projects/${encodeURIComponent(projectId)}`,
+        search: "",
+      });
+    },
+    [activeProject, activeProjectId, navigate, projects, resetChatModes]
+  );
+
+  async function handleOpenProject(projectId: string, sessionId?: string) {
     resetChatModes();
     setActiveShortcutId("projects");
     setActiveWorkspaceShortcut(null);
     setIsSettingsOpen(false);
     setErrorText("");
-    navigate(sessionId ? `/projects/${encodeURIComponent(projectId)}?chat=${encodeURIComponent(sessionId)}` : `/projects/${encodeURIComponent(projectId)}`);
+    if (sessionId) {
+      navigate(`/projects/${encodeURIComponent(projectId)}?chat=${encodeURIComponent(sessionId)}`);
+      return;
+    }
+
+    const cachedSessionId = getLatestProjectChatSessionId(projectId);
+    if (cachedSessionId) {
+      navigate(`/projects/${encodeURIComponent(projectId)}?chat=${encodeURIComponent(cachedSessionId)}`);
+      return;
+    }
+
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+
+      const knownProject = projects.find((project) => project.project_id === projectId);
+      if ((knownProject?.chat_count ?? 0) === 0) {
+        const createdChat = await createProjectChat(authToken, projectId, { userDisplayName });
+        updateProjectWorkspaceCache(projectId, (previous) => ({
+          project: previous?.project ?? knownProject ?? null,
+          chats: [
+            {
+              session_id: createdChat.session_id,
+              title: "New project chat",
+              created_at: new Date().toISOString(),
+              message_count: 0,
+              last_message_preview: "",
+            },
+            ...(previous?.chats ?? []),
+          ],
+          memory: previous?.memory ?? null,
+          files: previous?.files ?? [],
+          loadedAt: new Date().toISOString(),
+        }));
+        void refreshProjects();
+        navigate(`/projects/${encodeURIComponent(projectId)}?chat=${encodeURIComponent(createdChat.session_id)}`);
+        return;
+      }
+
+      const fetchedChats = await getProjectChats(authToken, projectId, { userDisplayName });
+      const latestChat = fetchedChats[0];
+      if (!latestChat) {
+        const createdChat = await createProjectChat(authToken, projectId, { userDisplayName });
+        updateProjectWorkspaceCache(projectId, (previous) => ({
+          project: previous?.project ?? knownProject ?? null,
+          chats: [
+            {
+              session_id: createdChat.session_id,
+              title: "New project chat",
+              created_at: new Date().toISOString(),
+              message_count: 0,
+              last_message_preview: "",
+            },
+          ],
+          memory: previous?.memory ?? null,
+          files: previous?.files ?? [],
+          loadedAt: new Date().toISOString(),
+        }));
+        void refreshProjects();
+        navigate(`/projects/${encodeURIComponent(projectId)}?chat=${encodeURIComponent(createdChat.session_id)}`);
+        return;
+      }
+
+      updateProjectWorkspaceCache(projectId, (previous) => ({
+        project: previous?.project ?? knownProject ?? null,
+        chats: fetchedChats,
+        memory: previous?.memory ?? null,
+        files: previous?.files ?? [],
+        loadedAt: new Date().toISOString(),
+      }));
+      navigate(`/projects/${encodeURIComponent(projectId)}?chat=${encodeURIComponent(latestChat.session_id)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to open project.";
+      setErrorText(message);
+      showToast(message, "error");
+    }
   }
 
   async function handleCreateProjectChat() {
@@ -1393,8 +1591,24 @@ function ChatShell() {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
       const response = await createProjectChat(authToken, activeProjectId, { userDisplayName });
+      updateProjectWorkspaceCache(activeProjectId, (previous) => ({
+        project: previous?.project ?? activeProject ?? null,
+        chats: [
+          {
+            session_id: response.session_id,
+            title: "New project chat",
+            created_at: new Date().toISOString(),
+            message_count: 0,
+            last_message_preview: "",
+          },
+          ...(previous?.chats ?? projectChats),
+        ],
+        memory: previous?.memory ?? projectMemory,
+        files: previous?.files ?? projectFiles,
+        loadedAt: new Date().toISOString(),
+      }));
       await refreshActiveProjectWorkspace();
-      handleOpenProject(activeProjectId, response.session_id);
+      await handleOpenProject(activeProjectId, response.session_id);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create project chat.";
       setErrorText(message);
@@ -1426,6 +1640,13 @@ function ChatShell() {
         delete nextMessages[sessionId];
         return nextMessages;
       });
+      updateProjectWorkspaceCache(activeProjectId, (previous) => ({
+        project: previous?.project ?? activeProject,
+        chats: (previous?.chats ?? projectChats).filter((chat) => chat.session_id !== sessionId),
+        memory: previous?.memory ?? projectMemory,
+        files: previous?.files ?? projectFiles,
+        loadedAt: new Date().toISOString(),
+      }));
       await refreshActiveProjectWorkspace();
 
       if (activeProjectChatId === sessionId) {
@@ -1455,6 +1676,13 @@ function ChatShell() {
         { userDisplayName, sessionTitle: activeProject.name }
       );
       setActiveProject(updatedProject);
+      updateProjectWorkspaceCache(updatedProject.project_id, (previous) => ({
+        project: updatedProject,
+        chats: previous?.chats ?? projectChats,
+        memory: previous?.memory ?? projectMemory,
+        files: previous?.files ?? projectFiles,
+        loadedAt: new Date().toISOString(),
+      }));
       await refreshProjects();
       await refreshActiveProjectWorkspace();
     } catch (error) {
@@ -2508,18 +2736,27 @@ function ChatShell() {
               files={projectFiles}
               naming={{ userDisplayName, sessionTitle: activeProject.name }}
               onBack={() => navigate("/projects")}
+              onOpenLatestChat={() => void handleOpenProject(activeProject.project_id)}
               onOpenChat={(sessionId) => handleOpenProject(activeProject.project_id, sessionId)}
               onDeleteChat={(sessionId) => void handleDeleteProjectChat(sessionId)}
               onCreateChat={() => void handleCreateProjectChat()}
               onRefresh={refreshActiveProjectWorkspace}
               onProjectUpdated={(project) => {
                 setActiveProject(project);
+                updateProjectWorkspaceCache(project.project_id, (previous) => ({
+                  project,
+                  chats: previous?.chats ?? projectChats,
+                  memory: previous?.memory ?? projectMemory,
+                  files: previous?.files ?? projectFiles,
+                  loadedAt: new Date().toISOString(),
+                }));
                 void refreshProjects();
                 void refreshActiveProjectWorkspace();
               }}
               onDeleteProject={() => void handleDeleteActiveProject()}
               onTogglePin={() => void handleToggleProjectPin()}
               onUploadFile={() => void handleOpenFileUpload()}
+              isRefreshing={isProjectWorkspaceRefreshing}
             />
           ) : isProjectOverviewRoute ? (
             <section className="nc-workspace-view">
@@ -2550,14 +2787,20 @@ function ChatShell() {
                   <button
                     type="button"
                     className="nc-button nc-button--ghost"
-                    onClick={() => handleOpenProject(activeProjectId!)}
+                    onClick={() => openProjectOverview(activeProjectId!)}
                   >
                     ← Back to project
                   </button>
                   <div className="nc-project-chat-shell__title-wrap">
                     <h2>{projectChatTitle}</h2>
+                    {activeProject ? <p>{activeProject.name}</p> : null}
                   </div>
                   <div className="nc-project-chat-shell__actions">
+                    {isProjectWorkspaceRefreshing ? (
+                      <span className="nc-project-chat-shell__refreshing" aria-live="polite">
+                        Refreshing...
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       className="nc-button nc-button--ghost nc-button--danger"

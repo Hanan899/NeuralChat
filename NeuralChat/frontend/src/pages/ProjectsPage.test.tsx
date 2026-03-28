@@ -68,7 +68,7 @@ describe("ProjectsPage", () => {
     cleanup();
   });
 
-  it("shows the template gallery when no projects exist", () => {
+  it("shows a simple empty state when no projects exist", () => {
     render(
       <ProjectsPage
         authToken="token"
@@ -82,8 +82,8 @@ describe("ProjectsPage", () => {
     );
 
     expect(screen.getByText("Welcome to Projects")).toBeInTheDocument();
-    expect(screen.getByText("Startup Builder")).toBeInTheDocument();
-    expect(screen.getByText("Custom Project")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create project/i })).toBeInTheDocument();
+    expect(screen.queryByText("Start with a template")).not.toBeInTheDocument();
   });
 
   it("shows the project grid when projects exist", () => {

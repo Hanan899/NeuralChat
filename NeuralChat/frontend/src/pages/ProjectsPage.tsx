@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { RequestNamingContext } from "../api";
 import { CreateProjectModal } from "../components/CreateProjectModal";
@@ -17,10 +17,8 @@ interface ProjectsPageProps {
   isLoading: boolean;
   errorText: string;
   onRefresh: () => Promise<void> | void;
-  onOpenProject: (projectId: string) => void;
+  onOpenProject: (projectId: string) => Promise<void> | void;
 }
-
-const TEMPLATE_ORDER = ["startup", "study", "code", "writing", "research", "job", "custom"];
 
 function formatChatCount(chatCount: number): string {
   return `${chatCount} chat${chatCount === 1 ? "" : "s"}`;
@@ -36,18 +34,6 @@ function formatUpdatedAt(updatedAt: string): string {
     return "Updated today";
   }
   return `Updated ${dateValue.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
-}
-
-function summarizeMemoryKeys(memoryKeys: string[]): string {
-  if (memoryKeys.length === 0) {
-    return "Learns the structure of your custom workspace as you go.";
-  }
-
-  if (memoryKeys.length <= 3) {
-    return `Tracks ${memoryKeys.join(", ")}.`;
-  }
-
-  return `Tracks ${memoryKeys.slice(0, 3).join(", ")}, and more.`;
 }
 
 export function ProjectsPage({
@@ -66,11 +52,6 @@ export function ProjectsPage({
 }: ProjectsPageProps) {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [initialTemplate, setInitialTemplate] = useState("startup");
-
-  const orderedTemplates = useMemo(
-    () => TEMPLATE_ORDER.filter((templateKey) => Boolean(templates[templateKey])).map((templateKey) => ({ key: templateKey, ...templates[templateKey] })),
-    [templates]
-  );
 
   function handleOpenCreateModal(templateKey = "startup") {
     setInitialTemplate(templateKey);
@@ -118,7 +99,7 @@ export function ProjectsPage({
                 <ProjectTemplateIcon template="custom" className="nc-projects-empty__icon" />
                 <div className="nc-projects-empty__hero-copy-text">
                   <h3>Welcome to Projects</h3>
-                  <p>Choose a template to create your first dedicated workspace. Each project keeps its own context, memory, and files so your work stays focused.</p>
+                  <p>Create your first dedicated workspace. Each project keeps its own context, memory, and files so your work stays focused.</p>
                 </div>
               </div>
             </div>
@@ -137,38 +118,20 @@ export function ProjectsPage({
               </div>
             </div>
           </div>
-          <div className="nc-projects-empty__section-heading">
-            <div>
-              <h3>Start with a template</h3>
-              <p>Pick a workspace type and we will preconfigure the assistant for that job.</p>
-            </div>
-          </div>
-          <div className="nc-projects-grid nc-projects-grid--templates">
-            {orderedTemplates.map((template) => (
-              <button
-                key={template.key}
-                type="button"
-                className="nc-project-card nc-project-card--template"
-                style={{ ["--project-color" as string]: template.color }}
-                onClick={() => handleOpenCreateModal(template.key)}
-              >
-                <div className="nc-project-card__top">
-                  <ProjectTemplateIcon template={template.key} color={template.color} className="nc-project-card__icon" />
-                  <span className="nc-project-card__badge">Template</span>
-                </div>
-                <div className="nc-project-card__meta">
-                  <strong className="nc-project-card__title">{template.label}</strong>
-                  <p className="nc-project-card__description">{template.description}</p>
-                </div>
-                <div className="nc-project-card__template-notes">
-                  <span className="nc-project-card__template-kicker">AI will remember</span>
-                  <span className="nc-project-card__template-memory">{summarizeMemoryKeys(template.memory_keys)}</span>
-                </div>
-                <div className="nc-project-card__footer">
-                  <span className="nc-project-card__action">Use template</span>
-                </div>
-              </button>
-            ))}
+          <div className="nc-projects-empty__actions">
+            <button
+              type="button"
+              className="nc-projects-empty__cta"
+              onClick={() => handleOpenCreateModal("custom")}
+            >
+              <span className="nc-projects-empty__cta-copy">
+                <strong>Create Project</strong>
+                <span>Start with a dedicated workspace and tailor it as you go.</span>
+              </span>
+              <span className="nc-projects-empty__cta-arrow" aria-hidden="true">
+                →
+              </span>
+            </button>
           </div>
         </div>
       ) : (
@@ -194,7 +157,7 @@ export function ProjectsPage({
                 </div>
               </div>
               <div className="nc-project-card__footer">
-                <span className="nc-project-card__action">Open workspace</span>
+                <span className="nc-project-card__action">Open latest chat</span>
               </div>
             </button>
           ))}
@@ -223,7 +186,7 @@ export function ProjectsPage({
         onCreated={(project) => {
           setIsCreateModalOpen(false);
           void onRefresh();
-          onOpenProject(project.project_id);
+          void onOpenProject(project.project_id);
         }}
       />
     </section>
