@@ -13,6 +13,7 @@ import {
 
 import type { RequestNamingContext } from "../api";
 import { getUsageStatus, getUsageSummary, updateUsageLimit } from "../api/usage";
+import { useAccess } from "../hooks/useAccess";
 import type { UsageStatusResponse, UsageSummary } from "../types";
 import { useApiQuery } from "../hooks/useApi";
 import { queryClient } from "../lib/queryClient";
@@ -79,6 +80,7 @@ export function CostDashboardContent({
   onShowToast,
   onUsageStateChange,
 }: CostDashboardContentProps) {
+  const { can, isOwner } = useAccess();
   const [errorText, setErrorText] = useState("");
   const [isSavingLimit, setIsSavingLimit] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -253,12 +255,14 @@ export function CostDashboardContent({
               label="Daily limit"
               limitUsd={usageStatus?.daily.limit_usd ?? 1}
               isSaving={isSavingLimit}
+              canEdit={isOwner || can("usage:manage")}
               onSave={(nextLimitUsd) => handleSaveLimit("daily_limit_usd", nextLimitUsd)}
             />
             <LimitSetter
               label="Monthly limit"
               limitUsd={usageStatus?.monthly.limit_usd ?? 30}
               isSaving={isSavingLimit}
+              canEdit={isOwner || can("usage:manage")}
               onSave={(nextLimitUsd) => handleSaveLimit("monthly_limit_usd", nextLimitUsd)}
             />
           </div>

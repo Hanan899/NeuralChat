@@ -9,11 +9,41 @@ const {
   getBrainLogMock,
   updateProjectMemoryFactMock,
   resetProjectBrainMock,
+  useAccessMock,
 } = vi.hoisted(() => ({
   getProjectMemoryMock: vi.fn(),
   getBrainLogMock: vi.fn(),
   updateProjectMemoryFactMock: vi.fn(),
   resetProjectBrainMock: vi.fn(),
+  useAccessMock: vi.fn(() => ({
+    role: "owner" as const,
+    roleLabel: "Owner",
+    access: {
+      role: "owner" as const,
+      role_label: "Owner",
+      is_owner: true,
+      feature_overrides: {},
+      effective_features: [
+        "chat:create",
+        "project:create",
+        "project:delete",
+        "agent:run",
+        "file:upload",
+        "memory:read",
+        "memory:write",
+        "usage:read",
+        "usage:manage",
+        "billing:manage",
+      ],
+      usage_limits: { daily_limit_usd: 1, monthly_limit_usd: 30 },
+    },
+    can: () => true,
+    isOwner: true,
+    isLoaded: true,
+    isFetching: false,
+    userId: "user_1",
+    refetch: vi.fn(),
+  })),
 }));
 
 vi.mock("../api/projects", () => ({
@@ -21,6 +51,10 @@ vi.mock("../api/projects", () => ({
   getBrainLog: getBrainLogMock,
   updateProjectMemoryFact: updateProjectMemoryFactMock,
   resetProjectBrain: resetProjectBrainMock,
+}));
+
+vi.mock("../hooks/useAccess", () => ({
+  useAccess: useAccessMock,
 }));
 
 describe("ProjectBrainPanel", () => {

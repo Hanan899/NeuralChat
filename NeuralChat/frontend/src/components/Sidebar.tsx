@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { useAccess } from "../hooks/useAccess";
 import type { ConversationSummary, ThemeMode } from "../types";
 import type { Project } from "../types/project";
+import { AccessRoleBadge } from "./access/AccessRoleBadge";
 
 interface SidebarProps {
   historyItems: ConversationSummary[];
@@ -226,6 +228,7 @@ export function Sidebar({
   onCreateProject,
   onOpenProject,
 }: SidebarProps) {
+  const { can, access } = useAccess();
   const userInitials = buildInitials(userName);
   const [openMenuConversationId, setOpenMenuConversationId] = useState<string | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -358,6 +361,9 @@ export function Sidebar({
 
     switch (id) {
       case "new":
+        if (!can("chat:create")) {
+          return;
+        }
         onNewChat();
         break;
       case "images":
@@ -474,19 +480,21 @@ export function Sidebar({
 
     return (
       <div className="nc-project-subnav">
-        <button
-          type="button"
-          className="nc-project-subnav__item nc-project-subnav__item--new"
-          onClick={() => {
-            onCreateProject?.();
-            onCloseMobile();
-          }}
-        >
-          <span className="nc-project-subnav__icon nc-project-subnav__icon--folder">
-            <ProjectSidebarIcon kind="new" />
-          </span>
-          <span className="nc-project-subnav__label">New project</span>
-        </button>
+        {can("project:create") ? (
+          <button
+            type="button"
+            className="nc-project-subnav__item nc-project-subnav__item--new"
+            onClick={() => {
+              onCreateProject?.();
+              onCloseMobile();
+            }}
+          >
+            <span className="nc-project-subnav__icon nc-project-subnav__icon--folder">
+              <ProjectSidebarIcon kind="new" />
+            </span>
+            <span className="nc-project-subnav__label">New project</span>
+          </button>
+        ) : null}
 
         {projects.map((project) => (
           <button
@@ -543,7 +551,7 @@ export function Sidebar({
         </div>
 
         <nav className="nc-shortcuts" aria-label="Primary shortcuts">
-          {SHORTCUTS.map((shortcut) => (
+          {SHORTCUTS.filter((shortcut) => shortcut.id !== "codex" || can("agent:run")).map((shortcut) => (
             <div key={shortcut.id} className="nc-shortcut-group">
               <button
                 type="button"
@@ -552,6 +560,7 @@ export function Sidebar({
                 aria-label={shortcut.label}
                 aria-current={activeShortcutId === shortcut.id ? "page" : undefined}
                 title={isCollapsed ? shortcut.label : undefined}
+                disabled={shortcut.id === "new" && !can("chat:create")}
               >
                 <span className="nc-shortcut-item__icon">
                   <ShortcutIcon id={shortcut.id} />
@@ -642,6 +651,7 @@ export function Sidebar({
           <span className="nc-user-meta">
             <span className="nc-user-name">{userName}</span>
             <span className="nc-user-subtitle">{userSubtitle}</span>
+            <AccessRoleBadge role={access.role} />
           </span>
           <div className="nc-user-menu-wrap" ref={isUserMenuOpen && !isCollapsed ? userMenuReference : null}>
             {!isCollapsed ? (

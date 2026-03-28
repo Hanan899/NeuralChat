@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { RequestNamingContext } from "../api";
 import { CreateProjectModal } from "../components/CreateProjectModal";
 import { ProjectTemplateIcon } from "../components/ProjectTemplateIcon";
+import { useAccess } from "../hooks/useAccess";
 import type { Project, ProjectTemplate } from "../types/project";
 
 interface ProjectsPageProps {
@@ -50,6 +51,7 @@ export function ProjectsPage({
   onRefresh,
   onOpenProject,
 }: ProjectsPageProps) {
+  const { can } = useAccess();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [initialTemplate, setInitialTemplate] = useState("startup");
 
@@ -75,7 +77,7 @@ export function ProjectsPage({
           <h2>Projects</h2>
           <p>Give your AI a dedicated workspace for each area of your life and work.</p>
         </div>
-        {projects.length > 0 ? (
+        {projects.length > 0 && can("project:create") ? (
           <button type="button" className="nc-button nc-button--primary" onClick={() => handleOpenCreateModal("startup")}>
             + New Project
           </button>
@@ -119,19 +121,25 @@ export function ProjectsPage({
             </div>
           </div>
           <div className="nc-projects-empty__actions">
-            <button
-              type="button"
-              className="nc-projects-empty__cta"
-              onClick={() => handleOpenCreateModal("custom")}
-            >
-              <span className="nc-projects-empty__cta-copy">
-                <strong>Create Project</strong>
-                <span>Start with a dedicated workspace and tailor it as you go.</span>
-              </span>
-              <span className="nc-projects-empty__cta-arrow" aria-hidden="true">
-                →
-              </span>
-            </button>
+            {can("project:create") ? (
+              <button
+                type="button"
+                className="nc-projects-empty__cta"
+                onClick={() => handleOpenCreateModal("custom")}
+              >
+                <span className="nc-projects-empty__cta-copy">
+                  <strong>Create Project</strong>
+                  <span>Start with a dedicated workspace and tailor it as you go.</span>
+                </span>
+                <span className="nc-projects-empty__cta-arrow" aria-hidden="true">
+                  →
+                </span>
+              </button>
+            ) : (
+              <div className="nc-projects-empty__locked">
+                Project creation is disabled for your current access.
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -162,16 +170,18 @@ export function ProjectsPage({
             </button>
           ))}
 
-          <button type="button" className="nc-project-card nc-project-card--new" onClick={() => handleOpenCreateModal("startup")}>
-            <span className="nc-project-card__add-icon" aria-hidden="true">
-              ＋
-            </span>
-            <strong className="nc-project-card__title">New Project</strong>
-            <p className="nc-project-card__description">Create another dedicated workspace</p>
-            <div className="nc-project-card__footer">
-              <span className="nc-project-card__action">Start from a template</span>
-            </div>
-          </button>
+          {can("project:create") ? (
+            <button type="button" className="nc-project-card nc-project-card--new" onClick={() => handleOpenCreateModal("startup")}>
+              <span className="nc-project-card__add-icon" aria-hidden="true">
+                ＋
+              </span>
+              <strong className="nc-project-card__title">New Project</strong>
+              <p className="nc-project-card__description">Create another dedicated workspace</p>
+              <div className="nc-project-card__footer">
+                <span className="nc-project-card__action">Start from a template</span>
+              </div>
+            </button>
+          ) : null}
         </div>
       )}
 

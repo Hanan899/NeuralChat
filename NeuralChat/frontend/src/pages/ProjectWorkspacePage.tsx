@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { useAccess } from "../hooks/useAccess";
 import type { UploadedFileItem } from "../types";
 import { EditSystemPromptModal } from "../components/EditSystemPromptModal";
 import { ProjectBrainPanel } from "../components/ProjectBrainPanel";
@@ -49,6 +50,7 @@ export function ProjectWorkspacePage({
   onUploadFile,
   isRefreshing = false,
 }: ProjectWorkspacePageProps) {
+  const { can } = useAccess();
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   const templateLabel = templates[project.template]?.label ?? "Custom Project";
@@ -85,7 +87,7 @@ export function ProjectWorkspacePage({
           <button type="button" className="nc-button nc-button--primary" onClick={onOpenLatestChat}>
             {latestChat ? "Open latest chat" : "Start first chat"}
           </button>
-          <button type="button" className="nc-button nc-button--ghost" onClick={() => setIsPromptModalOpen(true)}>
+          <button type="button" className="nc-button nc-button--ghost" onClick={() => setIsPromptModalOpen(true)} disabled={!can("memory:write")}>
             Edit prompt
           </button>
           <div className="nc-project-options">
@@ -97,10 +99,10 @@ export function ProjectWorkspacePage({
                 <button type="button" onClick={() => { setIsOptionsOpen(false); onTogglePin(); }}>
                   {project.pinned ? "Unpin project" : "Pin project"}
                 </button>
-                <button type="button" onClick={() => { setIsOptionsOpen(false); setIsPromptModalOpen(true); }}>
+                <button type="button" onClick={() => { setIsOptionsOpen(false); setIsPromptModalOpen(true); }} disabled={!can("memory:write")}>
                   Edit system prompt
                 </button>
-                <button type="button" className="nc-project-options__danger" onClick={() => { setIsOptionsOpen(false); onDeleteProject(); }}>
+                <button type="button" className="nc-project-options__danger" onClick={() => { setIsOptionsOpen(false); onDeleteProject(); }} disabled={!can("project:delete")}>
                   Delete project
                 </button>
               </div>
@@ -132,14 +134,16 @@ export function ProjectWorkspacePage({
                     <strong>{chat.title || chat.last_message_preview || "Untitled chat"}</strong>
                     <span>{chat.message_count} messages</span>
                   </button>
-                  <button
-                    type="button"
-                    className="nc-project-chat-row__delete"
-                    aria-label={`Delete ${chat.title || chat.last_message_preview || "Untitled chat"}`}
-                    onClick={() => onDeleteChat(chat.session_id)}
-                  >
-                    Delete
-                  </button>
+                  {can("project:delete") ? (
+                    <button
+                      type="button"
+                      className="nc-project-chat-row__delete"
+                      aria-label={`Delete ${chat.title || chat.last_message_preview || "Untitled chat"}`}
+                      onClick={() => onDeleteChat(chat.session_id)}
+                    >
+                      Delete
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -165,7 +169,7 @@ export function ProjectWorkspacePage({
               </span>
               Project Files
             </h3>
-            <button type="button" className="nc-button nc-button--ghost" onClick={onUploadFile}>+ Upload file</button>
+            <button type="button" className="nc-button nc-button--ghost" onClick={onUploadFile} disabled={!can("file:upload")}>+ Upload file</button>
           </div>
           {files.length === 0 ? (
             <div className="nc-project-panel__empty">No project files yet. Upload documents once and reuse them across every project chat.</div>

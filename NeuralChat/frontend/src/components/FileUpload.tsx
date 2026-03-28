@@ -2,6 +2,7 @@ import { ChangeEvent, DragEvent, useRef, useState } from "react";
 
 import { uploadFileWithProgress, uploadProjectFileWithProgress } from "../api";
 import type { RequestNamingContext } from "../api";
+import { useAccess } from "../hooks/useAccess";
 import type { UploadedFileItem } from "../types";
 import { FileList } from "./FileList";
 
@@ -26,6 +27,7 @@ function CloseIcon() {
 }
 
 export function FileUpload({ open, authToken, sessionId, projectId, naming, onClose, onFilesChange }: FileUploadProps) {
+  const { can } = useAccess();
   const inputReference = useRef<HTMLInputElement | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
@@ -36,6 +38,26 @@ export function FileUpload({ open, authToken, sessionId, projectId, naming, onCl
 
   if (!open) {
     return null;
+  }
+
+  if (!can("file:upload")) {
+    return (
+      <div className="nc-file-upload-modal" role="dialog" aria-modal="true" aria-label="Upload files">
+        <div className="nc-file-upload-modal__backdrop" onClick={onClose} />
+        <section className="nc-file-upload-modal__panel">
+          <header className="nc-file-upload-modal__header">
+            <h2>Upload files</h2>
+            <button type="button" aria-label="Close file upload" onClick={onClose}>
+              <CloseIcon />
+            </button>
+          </header>
+          <div className="nc-file-upload-modal__empty">
+            <strong>Uploads are not available for your current access.</strong>
+            <span>Ask your owner to enable file uploads for your account.</span>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   async function handleFileUpload(file: File) {

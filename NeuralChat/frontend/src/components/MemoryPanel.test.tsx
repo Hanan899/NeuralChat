@@ -15,6 +15,7 @@ const {
   generateConversationTitleMock,
   authState,
   getTokenMock,
+  useAccessMock,
 } = vi.hoisted(() => ({
     getMeMock: vi.fn(),
     patchMemoryMock: vi.fn(),
@@ -33,6 +34,35 @@ const {
     generateConversationTitleMock: vi.fn().mockResolvedValue({ title: "Profile Memory" }),
     authState: { signedIn: true },
     getTokenMock: vi.fn().mockResolvedValue("token"),
+    useAccessMock: vi.fn(() => ({
+      role: "owner" as const,
+      roleLabel: "Owner",
+      access: {
+        role: "owner" as const,
+        role_label: "Owner",
+        is_owner: true,
+        feature_overrides: {},
+        effective_features: [
+          "chat:create",
+          "project:create",
+          "project:delete",
+          "agent:run",
+          "file:upload",
+          "memory:read",
+          "memory:write",
+          "usage:read",
+          "usage:manage",
+          "billing:manage",
+        ],
+        usage_limits: { daily_limit_usd: 1, monthly_limit_usd: 30 },
+      },
+      can: () => true,
+      isOwner: true,
+      isLoaded: true,
+      isFetching: false,
+      userId: "user_1",
+      refetch: vi.fn(),
+    })),
   }));
 
 vi.mock("../api", () => ({
@@ -75,6 +105,10 @@ vi.mock("@clerk/clerk-react", () => ({
       }
     }
   }),
+}));
+
+vi.mock("../hooks/useAccess", () => ({
+  useAccess: useAccessMock,
 }));
 
 import { MemoryPanel } from "./MemoryPanel";

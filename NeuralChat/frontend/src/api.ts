@@ -1,3 +1,4 @@
+import type { EffectiveAccessProfile } from "./access";
 import type { ChatRequest, SearchSource, StreamChunk, UploadedFileItem } from "./types";
 
 // Default to Azure Functions local runtime (`func start`).
@@ -7,6 +8,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:7071
 export interface MeResponse {
   user_id: string;
   profile: Record<string, unknown>;
+  access?: EffectiveAccessProfile;
 }
 
 export interface UploadResponse {

@@ -1,6 +1,7 @@
 import { KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { RequestNamingContext } from "../api";
+import { useAccess } from "../hooks/useAccess";
 import { getBrainLog, getProjectMemory, resetProjectBrain, updateProjectMemoryFact } from "../api/projects";
 import type { ProjectBrainLogEntry, ProjectMemoryResponse } from "../types/project";
 import { isProjectAuthTimeoutError, runWithProjectAuthToken } from "../utils/projectAuth";
@@ -47,6 +48,7 @@ export function ProjectBrainPanel({
   naming,
   initialData,
 }: ProjectBrainPanelProps) {
+  const { can } = useAccess();
   const [brainState, setBrainState] = useState<ProjectBrainState>(
     initialData ?? { memory: {}, completeness: EMPTY_COMPLETENESS }
   );
@@ -196,6 +198,7 @@ export function ProjectBrainPanel({
 
   const hasKnownFacts = filledRows.length > 0;
   const isCustomTemplate = template === "custom";
+  const canEditBrain = can("memory:write");
   const memoryPercentageLabel = isCustomTemplate && !hasKnownFacts
     ? "Open-ended"
     : `${brainState.completeness.percentage}%`;
@@ -270,6 +273,7 @@ export function ProjectBrainPanel({
                           onChange={(event) => setEditingValue(event.target.value)}
                           onKeyDown={handleEditKeyDown}
                           autoFocus
+                          disabled={!canEditBrain}
                         />
                       ) : (
                         <span>{row.value}</span>
@@ -277,7 +281,7 @@ export function ProjectBrainPanel({
                     </div>
                     <div className="nc-project-brain-panel__fact-actions">
                       {editingKey === row.key ? (
-                        <button type="button" className="nc-button nc-button--ghost" onClick={() => void saveEditedFact()} disabled={isSaving}>
+                        <button type="button" className="nc-button nc-button--ghost" onClick={() => void saveEditedFact()} disabled={isSaving || !canEditBrain}>
                           Save
                         </button>
                       ) : (
@@ -289,6 +293,7 @@ export function ProjectBrainPanel({
                             setEditingKey(row.key);
                             setEditingValue(row.value);
                           }}
+                          disabled={!canEditBrain}
                         >
                           ✏️
                         </button>
@@ -315,7 +320,7 @@ export function ProjectBrainPanel({
           ) : null}
 
           <div className="nc-project-brain-panel__actions">
-            <button type="button" className="nc-button nc-button--ghost nc-button--danger" onClick={() => void handleResetBrain()} disabled={isResetting}>
+            <button type="button" className="nc-button nc-button--ghost nc-button--danger" onClick={() => void handleResetBrain()} disabled={isResetting || !canEditBrain}>
               {isResetting ? "Resetting…" : "Reset Project Brain"}
             </button>
           </div>
