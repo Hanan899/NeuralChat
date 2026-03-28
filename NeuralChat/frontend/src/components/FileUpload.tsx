@@ -1,5 +1,7 @@
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
 
+import { PermissionGate } from "@/components/auth/RoleGate";
+
 import { uploadFileWithProgress, uploadProjectFileWithProgress } from "../api";
 import type { RequestNamingContext } from "../api";
 import type { UploadedFileItem } from "../types";
@@ -87,27 +89,31 @@ export function FileUpload({ open, authToken, sessionId, projectId, naming, onCl
         </header>
 
         {/* Dropzone */}
-        <button
-          type="button"
-          className={`nc-file-upload-dropzone ${isDragOver ? "nc-file-upload-dropzone--active" : ""}`}
-          onClick={() => inputReference.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-          onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
-          onDrop={handleDrop}
-          disabled={isUploading}
-        >
-          <strong>{isDragOver ? "Drop to upload" : "Drag & drop or click to browse"}</strong>
-          <span>{ACCEPTED_EXTENSIONS_TEXT}</span>
-        </button>
+        <PermissionGate permission="file:upload">
+          <>
+            <button
+              type="button"
+              className={`nc-file-upload-dropzone ${isDragOver ? "nc-file-upload-dropzone--active" : ""}`}
+              onClick={() => inputReference.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+              onDrop={handleDrop}
+              disabled={isUploading}
+            >
+              <strong>{isDragOver ? "Drop to upload" : "Drag & drop or click to browse"}</strong>
+              <span>{ACCEPTED_EXTENSIONS_TEXT}</span>
+            </button>
 
-        <input
-          ref={inputReference}
-          type="file"
-          className="nc-file-upload-input"
-          onChange={handleInputChange}
-          accept=".pdf,.docx,.txt,.csv,.png,.jpg,.jpeg"
-          aria-label="Browse files"
-        />
+            <input
+              ref={inputReference}
+              type="file"
+              className="nc-file-upload-input"
+              onChange={handleInputChange}
+              accept=".pdf,.docx,.txt,.csv,.png,.jpg,.jpeg"
+              aria-label="Browse files"
+            />
+          </>
+        </PermissionGate>
 
         {/* Progress */}
         {isUploading ? (

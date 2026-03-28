@@ -1,10 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import useRBAC from "@/hooks/useRBAC";
+import { MembersPanel } from "@/components/settings/MembersPanel";
 
 import type { RequestNamingContext } from "../api";
 import type { UsageStatusResponse } from "../types";
 import { CostDashboardContent } from "./CostDashboard";
 
-type SettingsSectionId = "general" | "cost" | "account";
+export type SettingsSectionId = "general" | "cost" | "account" | "members";
 
 interface SettingsPanelProps {
   getAuthToken: () => Promise<string | null>;
@@ -13,6 +16,7 @@ interface SettingsPanelProps {
   onUsageStateChange?: (summary: UsageStatusResponse) => void;
   onOpenAccountSettings: () => void;
   onCloseSettings?: () => void;
+  initialSection?: SettingsSectionId;
 }
 
 interface SettingsNavItem {
@@ -25,6 +29,7 @@ const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   { id: "general", label: "General", description: "Product behavior and workspace defaults" },
   { id: "cost", label: "Cost monitoring", description: "Budgets, usage, and spend tracking" },
   { id: "account", label: "Account", description: "Profile and sign-in settings" },
+  { id: "members", label: "Members", description: "Workspace access, roles, and invitations" },
 ];
 
 function SettingsSectionIcon({ sectionId }: { sectionId: SettingsSectionId }) {
@@ -53,6 +58,17 @@ function SettingsSectionIcon({ sectionId }: { sectionId: SettingsSectionId }) {
     );
   }
 
+  if (sectionId === "members") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="9" cy="9" r="3" stroke="currentColor" strokeWidth="1.7" />
+        <circle cx="16.5" cy="10.5" r="2.5" stroke="currentColor" strokeWidth="1.5" opacity="0.9" />
+        <path d="M4.8 18.5C5.9 15.8 8.1 14.5 10.8 14.5C13.6 14.5 15.7 15.8 16.9 18.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        <path d="M14.4 17.6C15.1 15.9 16.5 15 18.3 15C20 15 21.1 15.8 21.7 17.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity="0.9" />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="8.5" r="3.5" stroke="currentColor" strokeWidth="1.7" />
@@ -68,19 +84,33 @@ export function SettingsPanel({
   onUsageStateChange,
   onOpenAccountSettings,
   onCloseSettings,
+  initialSection = "general",
 }: SettingsPanelProps) {
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
+  const { isAtLeast } = useRBAC();
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
+  const availableSections = useMemo(
+    () => SETTINGS_NAV_ITEMS.filter((item) => item.id !== "members" || isAtLeast("owner")),
+    [isAtLeast]
+  );
+
+  useEffect(() => {
+    if (availableSections.some((item) => item.id === initialSection)) {
+      setActiveSection(initialSection);
+      return;
+    }
+    setActiveSection("general");
+  }, [availableSections, initialSection]);
 
   const activeSectionMeta = useMemo(
-    () => SETTINGS_NAV_ITEMS.find((item) => item.id === activeSection) ?? SETTINGS_NAV_ITEMS[0],
-    [activeSection]
+    () => availableSections.find((item) => item.id === activeSection) ?? availableSections[0],
+    [activeSection, availableSections]
   );
 
   return (
     <section className="nc-settings-page" aria-label="Settings" data-testid="settings-panel">
       <div className="nc-settings-panel__layout">
         <nav className="nc-settings-nav" aria-label="Settings sections">
-          {SETTINGS_NAV_ITEMS.map((item) => {
+          {availableSections.map((item) => {
             const isActive = item.id === activeSection;
 
             return (
@@ -171,6 +201,8 @@ export function SettingsPanel({
               </div>
             </section>
           ) : null}
+
+          {activeSection === "members" ? <MembersPanel /> : null}
         </div>
       </div>
     </section>

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { RoleBadge } from "@/components/auth/RoleGate";
+import useRBAC from "@/hooks/useRBAC";
+
 import type { ConversationSummary, ThemeMode } from "../types";
 import type { Project } from "../types/project";
 
@@ -40,6 +43,9 @@ interface SidebarProps {
   onOpenProjects?: () => void;
   onCreateProject?: () => void;
   onOpenProject?: (projectId: string) => void;
+  onOpenSettingsSection?: (section: "members" | "cost") => void;
+  isNewChatDisabled?: boolean;
+  newChatDisabledReason?: string;
 }
 
 export type ShortcutId = "new" | "images" | "apps" | "research" | "codex" | "projects";
@@ -225,7 +231,11 @@ export function Sidebar({
   onOpenProjects,
   onCreateProject,
   onOpenProject,
+  onOpenSettingsSection,
+  isNewChatDisabled = false,
+  newChatDisabledReason,
 }: SidebarProps) {
+  const { can, isAtLeast, role } = useRBAC();
   const userInitials = buildInitials(userName);
   const [openMenuConversationId, setOpenMenuConversationId] = useState<string | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -328,6 +338,30 @@ export function Sidebar({
         >
           Settings
         </button>
+        {isAtLeast("owner") ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onOpenSettingsSection?.("members");
+              setIsUserMenuOpen(false);
+            }}
+          >
+            Members
+          </button>
+        ) : null}
+        {isAtLeast("owner") ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onOpenSettingsSection?.("cost");
+              setIsUserMenuOpen(false);
+            }}
+          >
+            Billing
+          </button>
+        ) : null}
         <button
           type="button"
           role="menuitem"
@@ -474,19 +508,21 @@ export function Sidebar({
 
     return (
       <div className="nc-project-subnav">
-        <button
-          type="button"
-          className="nc-project-subnav__item nc-project-subnav__item--new"
-          onClick={() => {
-            onCreateProject?.();
-            onCloseMobile();
-          }}
-        >
-          <span className="nc-project-subnav__icon nc-project-subnav__icon--folder">
-            <ProjectSidebarIcon kind="new" />
-          </span>
-          <span className="nc-project-subnav__label">New project</span>
-        </button>
+        {can("project:create") ? (
+          <button
+            type="button"
+            className="nc-project-subnav__item nc-project-subnav__item--new"
+            onClick={() => {
+              onCreateProject?.();
+              onCloseMobile();
+            }}
+          >
+            <span className="nc-project-subnav__icon nc-project-subnav__icon--folder">
+              <ProjectSidebarIcon kind="new" />
+            </span>
+            <span className="nc-project-subnav__label">New project</span>
+          </button>
+        ) : null}
 
         {projects.map((project) => (
           <button
@@ -551,7 +587,14 @@ export function Sidebar({
                 onClick={() => handleShortcutClick(shortcut.id)}
                 aria-label={shortcut.label}
                 aria-current={activeShortcutId === shortcut.id ? "page" : undefined}
-                title={isCollapsed ? shortcut.label : undefined}
+                title={
+                  shortcut.id === "new" && isNewChatDisabled
+                    ? newChatDisabledReason
+                    : isCollapsed
+                      ? shortcut.label
+                      : undefined
+                }
+                disabled={shortcut.id === "new" && isNewChatDisabled}
               >
                 <span className="nc-shortcut-item__icon">
                   <ShortcutIcon id={shortcut.id} />
@@ -581,7 +624,7 @@ export function Sidebar({
                 </button>
               ) : null}
 
-              {shortcut.id === "codex" ? (
+              {shortcut.id === "codex" && can("agent:run") ? (
                 <button
                   type="button"
                   className={`nc-shortcut-subitem ${isAgentMode ? "nc-shortcut-subitem--active" : ""}`}
@@ -640,7 +683,10 @@ export function Sidebar({
         >
           <span className="nc-user-avatar">{userInitials}</span>
           <span className="nc-user-meta">
-            <span className="nc-user-name">{userName}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <span className="nc-user-name">{userName}</span>
+              <RoleBadge role={role} size="sm" />
+            </span>
             <span className="nc-user-subtitle">{userSubtitle}</span>
           </span>
           <div className="nc-user-menu-wrap" ref={isUserMenuOpen && !isCollapsed ? userMenuReference : null}>

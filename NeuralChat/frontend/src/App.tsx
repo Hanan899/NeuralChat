@@ -2,6 +2,9 @@ import { SignIn, SignedIn, SignedOut, useAuth, useClerk, useUser } from "@clerk/
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
+import { PermissionGate } from "@/components/auth/RoleGate";
+import useRBAC from "@/hooks/useRBAC";
+
 import { checkHealth, checkSearchStatus, deleteConversationSession, generateConversationTitle, getFiles, getProjectFiles, streamChat } from "./api";
 import type { RequestNamingContext } from "./api";
 import { createAgentPlan, runAgent } from "./api/agent";
@@ -26,6 +29,7 @@ import { CostWarningBanner } from "./components/CostWarningBanner";
 import { FileUpload } from "./components/FileUpload";
 import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
+import type { SettingsSectionId } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import type { ShortcutId } from "./components/Sidebar";
 import { useApiQuery } from "./hooks/useApi";
@@ -494,7 +498,8 @@ function readSystemTheme(): "dark" | "light" {
 function ChatShell() {
   const { getToken, userId } = useAuth();
   const clerk = useClerk();
-  const { user } = useUser();
+  const { user, isLoaded: isUserLoaded } = useUser();
+  const { role, can, isLoaded: isRBACLoaded } = useRBAC();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -531,6 +536,7 @@ function ChatShell() {
   const [isAgentHistoryOpen, setIsAgentHistoryOpen] = useState(false);
   const [agentHistoryAuthToken, setAgentHistoryAuthToken] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionId>("general");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectTemplates, setProjectTemplates] = useState<Record<string, ProjectTemplate>>({});
   const [isProjectsLoading, setIsProjectsLoading] = useState(false);
@@ -615,6 +621,8 @@ function ChatShell() {
   const activeUsageWarningScope = useMemo(() => getUsageWarningScope(usageStatus), [usageStatus]);
   const isUsageBlocked = usageStatus?.blocked === true;
   const usageBlockingMessage = usageStatus?.blocking_message?.trim() || "";
+  const isChatCreationRestricted = isRBACLoaded && (role === "guest" || role === "viewer");
+  const newChatDisabledReason = "Your role does not allow creating new conversations.";
   const unreadNotificationCount = useMemo(
     () => notifications.reduce((total, notification) => total + (notification.isRead ? 0 : 1), 0),
     [notifications]
@@ -1345,6 +1353,12 @@ function ChatShell() {
   }, [scheduleTypingFlush]);
 
   function handleNewChat() {
+    if (isUserLoaded && isRBACLoaded && isChatCreationRestricted) {
+      setErrorText(newChatDisabledReason);
+      showToast(newChatDisabledReason, "info");
+      return;
+    }
+
     if (location.pathname !== "/") {
       navigate("/");
     }
@@ -2366,6 +2380,16 @@ function ChatShell() {
 
   function handleOpenSettings() {
     resetChatModes();
+    setSettingsInitialSection("general");
+    setIsSettingsOpen(true);
+    setActiveWorkspaceShortcut(null);
+    setIsSidebarOpen(false);
+    setErrorText("");
+  }
+
+  function handleOpenSettingsSection(section: Extract<SettingsSectionId, "members" | "cost">) {
+    resetChatModes();
+    setSettingsInitialSection(section);
     setIsSettingsOpen(true);
     setActiveWorkspaceShortcut(null);
     setIsSidebarOpen(false);
@@ -2399,6 +2423,13 @@ function ChatShell() {
   }
 
   async function handleOpenFileUpload() {
+    if (isRBACLoaded && !can("file:upload")) {
+      const message = "Your role does not allow uploading files.";
+      setErrorText(message);
+      showToast(message, "info");
+      return;
+    }
+
     if (!activeSessionId && !activeProjectId) {
       showToast("Start a chat first before adding files.", "info");
       return;
@@ -2429,6 +2460,13 @@ function ChatShell() {
   }
 
   async function handleOpenAgentHistory() {
+    if (isRBACLoaded && !can("agent:run")) {
+      const message = "Agent mode is not available for your current role.";
+      setErrorText(message);
+      showToast(message, "info");
+      return;
+    }
+
     try {
       const authToken = await getToken();
       if (!authToken) {
@@ -2520,6 +2558,7 @@ function ChatShell() {
         onOpenSettings={handleOpenSettings}
         onOpenUserSettings={handleOpenUserSettings}
         onSignOut={handleSignOut}
+        onOpenSettingsSection={handleOpenSettingsSection}
         onCloseMobile={() => setIsSidebarOpen(false)}
         onToggleCollapse={handleToggleSidebarPane}
         onOpenImages={handleOpenImages}
@@ -2529,6 +2568,8 @@ function ChatShell() {
             onOpenProjects={handleOpenProjects}
             onCreateProject={handleRequestCreateProject}
             onOpenProject={handleOpenProject}
+            isNewChatDisabled={isChatCreationRestricted}
+            newChatDisabledReason={newChatDisabledReason}
           />
 
       {isSidebarOpen ? <button className="nc-sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} /> : null}
@@ -2572,15 +2613,24 @@ function ChatShell() {
             ) : (
               <>
             {/* Agents — icon + label, purple-tinted */}
-            <button
-              type="button"
-              className="nc-topbar-btn nc-topbar-btn--icon-label"
-              aria-label="Open agent history"
-              onClick={() => void handleOpenAgentHistory()}
+            <PermissionGate
+              permission="agent:run"
+              fallback={
+                <p style={{ fontSize: 13, color: "var(--color-text-tertiary)" }}>
+                  Agent mode is not available for your current role.
+                </p>
+              }
             >
-              <UiIcon kind="agent" className="nc-ui-icon" />
-              <span>Agents</span>
-            </button>
+              <button
+                type="button"
+                className="nc-topbar-btn nc-topbar-btn--icon-label"
+                aria-label="Open agent history"
+                onClick={() => void handleOpenAgentHistory()}
+              >
+                <UiIcon kind="agent" className="nc-ui-icon" />
+                <span>Agents</span>
+              </button>
+            </PermissionGate>
 
             {/* Share — clean pill */}
             <button
@@ -2704,6 +2754,7 @@ function ChatShell() {
               onUsageStateChange={setUsageStatus}
               onOpenAccountSettings={handleOpenUserSettings}
               onCloseSettings={() => setIsSettingsOpen(false)}
+              initialSection={settingsInitialSection}
             />
           ) : isProjectsIndexRoute ? (
             <ProjectsPage
@@ -2852,6 +2903,8 @@ function ChatShell() {
                     type="button"
                     className="nc-empty-chip"
                     onClick={handleNewChat}
+                    disabled={isChatCreationRestricted}
+                    title={isChatCreationRestricted ? newChatDisabledReason : undefined}
                   >
                     Start new chat
                   </button>
