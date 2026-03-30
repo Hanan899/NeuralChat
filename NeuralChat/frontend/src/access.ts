@@ -88,6 +88,7 @@ export interface UserAccessProfile {
   user_id: string;
   display_name: string;
   email?: string | null;
+  last_active_at?: string | null;
   role: AppRole;
   role_label: string;
   feature_overrides: Partial<Record<AppFeaturePermission, boolean>>;
@@ -95,6 +96,18 @@ export interface UserAccessProfile {
   usage_limits: EffectiveUsageLimits;
   usage?: UserUsageSummary | null;
   seeded_owner?: boolean;
+}
+
+export interface InviteMemberRequest {
+  email: string;
+  role: AppRole;
+}
+
+export interface InviteMemberResponse {
+  email: string;
+  role: AppRole;
+  invitation_id?: string | null;
+  status?: string | null;
 }
 
 export function isAppRole(value: unknown): value is AppRole {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -14,6 +15,7 @@ from app.services.cost_tracker import resolve_daily_limit, resolve_monthly_limit
 from app.services.memory import load_profile, save_profile
 
 ACCESS_CACHE_TTL_SECONDS = 60
+CLERK_USERS_CACHE_KEY = "access::clerk::users"
 CLERK_API_BASE_URL = "https://api.clerk.com/v1"
 
 
@@ -99,6 +101,7 @@ class MemberAccessProfile(BaseModel):
     user_id: str
     display_name: str
     email: str | None = None
+    last_active_at: str | None = None
     role: AppRole
     role_label: str
     feature_overrides: dict[str, bool]
@@ -195,6 +198,28 @@ def _extract_clerk_display_name(clerk_user: dict[str, Any]) -> str | None:
         if isinstance(raw_value, str) and raw_value.strip():
             return raw_value.strip()
     return _extract_clerk_email(clerk_user)
+
+
+def _normalize_clerk_timestamp(value: Any) -> str | None:
+    if isinstance(value, (int, float)):
+        timestamp_value = float(value)
+        if timestamp_value > 10_000_000_000:
+            timestamp_value /= 1000
+        try:
+            return datetime.fromtimestamp(timestamp_value, UTC).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _extract_clerk_last_active_at(clerk_user: dict[str, Any]) -> str | None:
+    for field_name in ("last_active_at", "last_sign_in_at", "updated_at", "created_at"):
+        normalized = _normalize_clerk_timestamp(clerk_user.get(field_name))
+        if normalized:
+            return normalized
+    return None
 
 
 def _normalize_role(value: Any) -> AppRole:
@@ -311,6 +336,10 @@ def _patch_clerk_public_metadata_sync(user_id: str, public_metadata_updates: dic
 
 
 def list_clerk_users_sync(limit: int = 100) -> list[dict[str, Any]]:
+    cached_users = api_cache.get(CLERK_USERS_CACHE_KEY)
+    if isinstance(cached_users, list):
+        return [user for user in cached_users if isinstance(user, dict)]
+
     secret = _get_clerk_secret_key(required=True)
     all_users: list[dict[str, Any]] = []
     offset = 0
@@ -332,6 +361,7 @@ def list_clerk_users_sync(limit: int = 100) -> list[dict[str, Any]]:
             if len(payload) < min(limit, 100):
                 break
             offset += len(payload)
+    api_cache.set(CLERK_USERS_CACHE_KEY, all_users, ACCESS_CACHE_TTL_SECONDS)
     return all_users
 
 
@@ -346,7 +376,40 @@ def delete_clerk_user_sync(user_id: str) -> None:
         detail = response.text.strip() or "Unable to remove user from Clerk."
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
     api_cache.invalidate(_access_cache_key(user_id))
+    api_cache.invalidate(CLERK_USERS_CACHE_KEY)
+    api_cache.invalidate(f"access::member-usage::{user_id}")
     api_cache.invalidate_prefix("usage::users")
+
+
+def create_clerk_invitation_sync(email: str, role: AppRole) -> dict[str, Any]:
+    secret = _get_clerk_secret_key(required=True)
+    normalized_email = _normalize_email(email)
+    if not normalized_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A valid email is required.")
+
+    with httpx.Client(timeout=10.0) as client:
+        response = client.post(
+            f"{CLERK_API_BASE_URL}/invitations",
+            headers={
+                "Authorization": f"Bearer {secret}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "email_address": normalized_email,
+                "public_metadata": {"role": role.value},
+            },
+        )
+
+    if response.status_code >= 400:
+        detail = response.text.strip() or "Unable to create Clerk invitation."
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+
+    payload = response.json()
+    api_cache.invalidate(CLERK_USERS_CACHE_KEY)
+    api_cache.invalidate_prefix("usage::users")
+    if isinstance(payload, dict):
+        return payload
+    return {"email_address": normalized_email, "status": "pending"}
 
 
 def _resolve_seeded_owner(user_id: str, email: str | None) -> bool:
@@ -491,6 +554,7 @@ def build_member_profile(clerk_user: dict[str, Any], include_usage: bool = False
         user_id=access_context.user_id,
         display_name=access_context.display_name or access_context.user_id,
         email=access_context.email,
+        last_active_at=_extract_clerk_last_active_at(clerk_user),
         role=access_context.role,
         role_label=ROLE_LABELS[access_context.role],
         feature_overrides={feature.value: enabled for feature, enabled in access_context.feature_overrides.items()},
@@ -501,9 +565,28 @@ def build_member_profile(clerk_user: dict[str, Any], include_usage: bool = False
     )
 
 
+def get_member_usage_summary(user_id: str) -> MemberUsageSummary:
+    cache_key = f"access::member-usage::{user_id}"
+    cached_summary = api_cache.get(cache_key)
+    if isinstance(cached_summary, MemberUsageSummary):
+        return cached_summary
+
+    target_user = _fetch_clerk_user_sync(user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    member_profile = build_member_profile(target_user, include_usage=True)
+    if member_profile.usage is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load member usage.")
+    api_cache.set(cache_key, member_profile.usage, ACCESS_CACHE_TTL_SECONDS)
+    return member_profile.usage
+
+
 def update_member_role(user_id: str, role: AppRole) -> MemberAccessProfile:
     updated_user = _patch_clerk_public_metadata_sync(user_id, {"role": role.value})
-    return build_member_profile(updated_user, include_usage=True)
+    api_cache.invalidate(CLERK_USERS_CACHE_KEY)
+    api_cache.invalidate(f"access::member-usage::{user_id}")
+    return build_member_profile(updated_user, include_usage=False)
 
 
 def update_member_features(user_id: str, feature_overrides: dict[AppFeature, bool]) -> MemberAccessProfile:
@@ -513,7 +596,9 @@ def update_member_features(user_id: str, feature_overrides: dict[AppFeature, boo
             "feature_overrides": {feature.value: enabled for feature, enabled in feature_overrides.items()},
         },
     )
-    return build_member_profile(updated_user, include_usage=True)
+    api_cache.invalidate(CLERK_USERS_CACHE_KEY)
+    api_cache.invalidate(f"access::member-usage::{user_id}")
+    return build_member_profile(updated_user, include_usage=False)
 
 
 def update_member_usage_limits(
@@ -527,7 +612,9 @@ def update_member_usage_limits(
     }
     updated_user = _patch_clerk_public_metadata_sync(user_id, {"usage_limits": {key: value for key, value in normalized_limits.items() if value is not None}})
     save_profile(user_id, {key: value for key, value in normalized_limits.items() if value is not None}, display_name)
-    return build_member_profile(updated_user, include_usage=True)
+    api_cache.invalidate(CLERK_USERS_CACHE_KEY)
+    api_cache.invalidate(f"access::member-usage::{user_id}")
+    return build_member_profile(updated_user, include_usage=False)
 
 
 def list_member_profiles(include_usage: bool = True) -> list[MemberAccessProfile]:

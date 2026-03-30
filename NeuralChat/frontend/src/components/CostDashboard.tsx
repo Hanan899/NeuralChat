@@ -84,6 +84,20 @@ export function CostDashboardContent({
   const [errorText, setErrorText] = useState("");
   const [isSavingLimit, setIsSavingLimit] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const usageStatusQueryKey = useMemo(
+    () => ["usage-status", naming?.userDisplayName ?? ""],
+    [naming?.userDisplayName]
+  );
+  const usageSummaryQueryKey = useMemo(
+    () => ["usage-summary", naming?.userDisplayName ?? "", "31-days"],
+    [naming?.userDisplayName]
+  );
+  const [cachedStatus, setCachedStatus] = useState<UsageStatusResponse | null>(
+    () => queryClient.getQueryData<UsageStatusResponse>(usageStatusQueryKey) ?? null
+  );
+  const [cachedSummary, setCachedSummary] = useState<UsageSummary | null>(
+    () => queryClient.getQueryData<UsageSummary>(usageSummaryQueryKey) ?? null
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -102,7 +116,7 @@ export function CostDashboardContent({
   }, [getAuthToken]);
 
   const usageStatusQuery = useApiQuery<UsageStatusResponse>(
-    ["usage-status", naming?.userDisplayName ?? ""],
+    usageStatusQueryKey,
     "/api/usage/status",
     {
       authToken,
@@ -118,7 +132,7 @@ export function CostDashboardContent({
     }
   );
   const usageSummaryQuery = useApiQuery<UsageSummary>(
-    ["usage-summary", naming?.userDisplayName ?? "", "31-days"],
+    usageSummaryQueryKey,
     "/api/usage/summary?days=31",
     {
       authToken,
@@ -133,8 +147,28 @@ export function CostDashboardContent({
       refetchInterval: 60_000,
     }
   );
-  const usageStatus = usageStatusQuery.data ?? null;
-  const summary = usageSummaryQuery.data ?? null;
+  const usageStatus = usageStatusQuery.data ?? cachedStatus;
+  const summary = usageSummaryQuery.data ?? cachedSummary;
+
+  useEffect(() => {
+    setCachedStatus(queryClient.getQueryData<UsageStatusResponse>(usageStatusQueryKey) ?? null);
+  }, [usageStatusQueryKey]);
+
+  useEffect(() => {
+    setCachedSummary(queryClient.getQueryData<UsageSummary>(usageSummaryQueryKey) ?? null);
+  }, [usageSummaryQueryKey]);
+
+  useEffect(() => {
+    if (usageStatusQuery.data) {
+      setCachedStatus(usageStatusQuery.data);
+    }
+  }, [usageStatusQuery.data]);
+
+  useEffect(() => {
+    if (usageSummaryQuery.data) {
+      setCachedSummary(usageSummaryQuery.data);
+    }
+  }, [usageSummaryQuery.data]);
 
   useEffect(() => {
     const nextError = usageStatusQuery.error?.message || usageSummaryQuery.error?.message || "";
@@ -198,7 +232,7 @@ export function CostDashboardContent({
 
       <DataLoader
         data={summary && usageStatus ? { summary, usageStatus } : null}
-        isLoading={usageSummaryQuery.isLoading || usageStatusQuery.isLoading}
+        isLoading={(!summary || !usageStatus) && (usageSummaryQuery.isLoading || usageStatusQuery.isLoading || !authToken)}
         isFetching={usageSummaryQuery.isFetching || usageStatusQuery.isFetching}
         isStale={usageSummaryQuery.isStale || usageStatusQuery.isStale}
         skeleton={
