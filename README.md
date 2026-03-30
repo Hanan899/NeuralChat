@@ -7,28 +7,28 @@
 [![Status](https://img.shields.io/badge/status-active%20development-0a7ea4)](./NeuralChat/README.md)
 [![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-38bdf8)](./NeuralChat/frontend)
 [![Backend](https://img.shields.io/badge/backend-FastAPI%20on%20Azure%20Functions-2563eb)](./NeuralChat/backend)
-[![Auth](https://img.shields.io/badge/auth-Clerk-6d28d9)](./NeuralChat/README.md#auth-and-identity)
+[![Auth](https://img.shields.io/badge/auth-Clerk-6d28d9)](./NeuralChat/README.md#auth-and-access)
 [![Storage](https://img.shields.io/badge/storage-Azure%20Blob-0ea5e9)](./NeuralChat/README.md#storage-layout)
 [![Model](https://img.shields.io/badge/model-GPT--5%20via%20Azure%20OpenAI-111827)](./NeuralChat/README.md#stack)
 
-NeuralChat is a personal AI workspace for authenticated GPT-5 chat, memory, project-scoped collaboration, file-grounded answers, plan-first agents, and budget-aware usage controls.
+NeuralChat is a personal AI workspace for authenticated GPT-5 chat, persistent memory, project-scoped collaboration, file-grounded answers, plan-first agents, enforced usage limits, and owner-managed access controls.
 
-This repository is the workspace root. The application itself lives in [`NeuralChat/`](./NeuralChat).
+This repository is the workspace root. The app itself lives in [`NeuralChat/`](./NeuralChat).
 
 ## What NeuralChat Is
 
-NeuralChat is built as a practical AI operating surface rather than a single chat box.
+NeuralChat is built as an AI workspace rather than a single chat box.
 
 Today it already supports:
 - authenticated GPT-5 chat with NDJSON streaming
-- global user memory that is extracted and reused across normal chats
-- optional Tavily-backed web search with cached sources
+- global user memory for standard chats
+- project-scoped chat, files, and Project Brain memory
 - file-grounded answers from uploaded documents
-- project workspaces with isolated chats, memory, and files
-- Project Brain background learning per project
+- optional Tavily-backed web search with source metadata
 - plan-first Agent Mode with saved plans and execution logs
-- daily and monthly usage controls with real backend enforcement
-- Azure Blob persistence with readable naming and stable ids
+- daily and monthly usage limits with real backend enforcement
+- owner-managed access control for `owner`, `member`, and `user`
+- frontend caching plus backend caching to reduce cold-start and reload pain
 
 ## Workspace Map
 
@@ -39,43 +39,41 @@ PROJECT/
 │   ├── frontend/       # React + TypeScript client
 │   ├── docs/           # Architecture, deployment, roadmap
 │   └── README.md       # App-level technical reference
-├── README.md           # Root showcase + navigation
+├── README.md           # Root overview + navigation
 └── .gitignore
 ```
 
-## Product Surfaces
+## Product Areas
 
-### Core chat
-- standard authenticated chat flow
-- model selection
+### Chat
+- authenticated chat flow with GPT-5
 - streaming token responses
-- conversation history and sharing
-- session files for grounded answers
+- local and AI-refined conversation titles
+- usage-aware request blocking when limits are reached
 
-### Research and retrieval
-- optional web search with source metadata
-- Blob-backed search cache
-- file parsing and chunk reuse
-- project-specific context isolation
+### Memory and retrieval
+- global user memory for normal chats
+- Project Brain memory for project chats
+- file upload, parsing, chunk reuse, and grounded answers
+- optional web search with cached sources
 
 ### Projects
-- project templates
-- isolated project chats
-- Project Brain completeness and memory editing
-- project file support
-- routed workspace pages and project chat shell
+- project workspaces with isolated chats
+- project-level memory and files
+- project chat shells and workspace views
+- project templates and custom project prompts
 
 ### Agent Mode
 - create a plan first
-- run it explicitly
-- stream progress in-thread
-- save plan and log history per session
+- run the plan explicitly
+- stream progress into the UI
+- persist plan history and execution logs
 
-### Cost monitoring
-- usage summary by feature
-- daily and monthly limits
-- warning banners
-- hard blocking before GPT calls when limits are reached
+### Operations and governance
+- daily and monthly usage monitoring
+- enforced budgets with warning and block states
+- access management for workspace users
+- owner-level user role, feature, and per-user budget controls
 
 ## Architecture At A Glance
 
@@ -86,6 +84,7 @@ flowchart LR
   API --> AOAI[Azure OpenAI GPT-5]
   API --> TAVILY[Tavily Search]
   API --> BLOB[Azure Blob Storage]
+  API --> CLERK[Clerk Backend API]
 
   BLOB --> CONV[Conversations]
   BLOB --> PROFILE[Profiles + Memory]
@@ -97,55 +96,51 @@ flowchart LR
 
 ## Stack
 
-- Frontend: React, TypeScript, Vite, Clerk React, custom CSS system, Recharts, Markdown + KaTeX rendering
+- Frontend: React 18, TypeScript, Vite, Clerk React, React Query, Framer Motion, Recharts, Markdown + KaTeX rendering
 - Backend: FastAPI, Azure Functions ASGI, Pydantic, HTTPX
 - Model provider: Azure OpenAI GPT-5
 - Search provider: Tavily
 - Agent orchestration: LangChain + LangGraph
 - Storage: Azure Blob Storage
-- Auth: Clerk JWT verification through JWKS
+- Auth: Clerk JWT verification and Clerk Backend API calls
 - Document parsing: PyMuPDF, python-docx, multipart upload handling
 
 ## What Is In The Codebase Right Now
 
 ### Frontend
 Key current areas in `NeuralChat/frontend/src/`:
-- `App.tsx`: application shell, routing, chat orchestration, notifications, usage gating
+- `App.tsx`: app shell, routing, chat orchestration, project switching, notifications, usage gating
+- `main.tsx`: Clerk boot, React Query provider, keep-alive startup, theme initialization
 - `components/Sidebar.tsx`: primary navigation and workspace switching
-- `components/ChatWindow.tsx` and `components/MessageBubble.tsx`: chat transcript rendering
+- `components/ChatWindow.tsx` and `components/MessageBubble.tsx`: transcript rendering
 - `components/ProjectBrainPanel.tsx`: project memory visibility and editing
 - `components/AgentProgress.tsx` and `components/AgentHistory.tsx`: plan-first agent UX
-- `components/CostDashboard.tsx` and `components/CostWarningBanner.tsx`: budget controls and warnings
-- `pages/ProjectsPage.tsx` and `pages/ProjectWorkspacePage.tsx`: projects index and workspace views
-- `api/`: typed frontend clients for chat, usage, agent, and project routes
+- `components/CostDashboard.tsx`: budget controls and usage reporting
+- `components/AccessManagementPanel.tsx`: owner-facing access management UI
+- `pages/ProjectsPage.tsx` and `pages/ProjectWorkspacePage.tsx`: project index and workspace views
+- `api/`: typed frontend clients for chat, usage, agent, members, and project routes
 
 ### Backend
 Key current areas in `NeuralChat/backend/app/`:
 - `main.py`: FastAPI routes and request orchestration
 - `auth.py`: Clerk token validation and user extraction
+- `access.py`: global access model, owner seeding, feature overrides, member profiles
+- `routers/members.py`: owner-only member list, invite, role, feature, limit, and removal routes
 - `services/chat_service.py`: GPT chat generation and streaming
 - `services/memory.py`: global memory extraction and prompt building
 - `services/projects.py`: project CRUD, project chats, Project Brain, and project files
 - `services/file_handler.py`: upload validation, parsing, chunking, and retrieval
 - `services/agent.py`: plan generation, execution, and persisted logs
 - `services/cost_tracker.py`: usage logging, summaries, budgets, and enforcement
+- `services/cache.py`: in-memory TTL cache for read-heavy endpoints
 - `services/search.py`: Tavily search and cache handling
 - `services/blob_paths.py`: readable Blob path naming and migration helpers
-
-### Tests
-Current automated coverage includes:
-- agent flows
-- blob naming
-- cost tracking and enforcement
-- project CRUD and cleanup
-- Project Brain behavior
-- title generation
-- frontend components for projects, settings, costs, sidebar, file upload, and search rendering
 
 ## API Surface Snapshot
 
 Public endpoints:
 - `GET /api/health`
+- `GET /api/keep-warm`
 - `GET /api/search/status`
 - `GET /api/projects/templates`
 
@@ -156,9 +151,7 @@ Protected endpoint groups:
 - `/api/projects/*`
 - `/api/agent/*`
 - `/api/usage/*`
-- `/api/conversations/title`
-
-For the detailed route map, storage layout, and deployment notes, use the app-level docs below.
+- `/api/members/*`
 
 ## Docs
 
@@ -169,18 +162,18 @@ For the detailed route map, storage layout, and deployment notes, use the app-le
 
 ## Future Direction
 
-We are intentionally building NeuralChat in a way that can grow into a broader AI workspace.
+NeuralChat is being built to grow into a broader AI workspace.
 
-Planned and likely next areas include:
+Likely next areas include:
 - MCP tools and external tool connectivity
-- richer multi-step agents and deeper agent tooling
+- richer multi-step agents and deeper tool execution
 - voice input and voice-driven interactions
 - image generation workflows
 - multimodal understanding for images and documents
 - stronger retrieval quality and provenance
-- more advanced project workspaces and collaboration patterns
+- deeper collaboration and admin controls
 
-Those items are roadmap directions, not shipped features unless they are explicitly documented as present in the app-level README or code.
+These are roadmap directions, not shipped features unless they are explicitly documented as present in the app-level README or code.
 
 ## Where To Start
 
