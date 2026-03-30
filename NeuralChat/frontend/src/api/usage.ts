@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from "../api";
 import type { RequestNamingContext } from "../api";
+import type { UserAccessProfile } from "../access";
 import type { TodayUsageResponse, UsageLimitResponse, UsageStatusResponse, UsageSummary } from "../types";
 
 function buildUsageHeaders(authToken: string, naming?: RequestNamingContext, includeJson = false): HeadersInit {
@@ -81,6 +82,17 @@ export async function getUsageStatus(authToken: string, naming?: RequestNamingCo
     throw new Error(await readUsageErrorMessage(response, "Failed to load usage status."));
   }
   return (await response.json()) as UsageStatusResponse;
+}
+
+export async function getUsageUsers(authToken: string, naming?: RequestNamingContext): Promise<UserAccessProfile[]> {
+  const response = await fetch(`${getApiBaseUrl()}/api/usage/users`, {
+    headers: buildUsageHeaders(authToken, naming),
+  });
+  if (!response.ok) {
+    throw new Error(await readUsageErrorMessage(response, "Failed to load team usage."));
+  }
+  const payload = (await response.json()) as { users?: UserAccessProfile[] };
+  return Array.isArray(payload.users) ? payload.users : [];
 }
 
 export async function updateUsageLimit(

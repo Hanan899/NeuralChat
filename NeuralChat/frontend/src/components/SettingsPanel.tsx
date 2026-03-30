@@ -127,10 +127,12 @@ export function SettingsPanel({
         </nav>
 
         <div className="nc-settings-panel__content">
-          <div className="nc-settings-panel__section-header">
-            <h3>{activeSectionMeta.label}</h3>
-            <p>{activeSectionMeta.description}</p>
-          </div>
+          {activeSection !== "access" ? (
+            <div className="nc-settings-panel__section-header">
+              <h3>{activeSectionMeta.label}</h3>
+              <p>{activeSectionMeta.description}</p>
+            </div>
+          ) : null}
 
           {activeSection === "general" ? (
             <section className="nc-settings-card">

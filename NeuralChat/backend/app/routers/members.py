@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 from app.access import (
     AppFeature,
     AppRole,
-    ROLE_LABELS,
     AccessContext,
     build_member_profile,
+    create_clerk_invitation_sync,
+    get_member_usage_summary,
     list_member_profiles,
     remove_member,
     require_owner,
@@ -42,6 +43,11 @@ class MemberUsageLimitUpdate(BaseModel):
         }
 
 
+class MemberInviteRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+    role: AppRole = AppRole.USER
+
+
 def _get_target_member(target_user_id: str) -> dict[str, Any]:
     target_user = _fetch_clerk_user_sync(target_user_id)
     if not target_user:
@@ -51,7 +57,30 @@ def _get_target_member(target_user_id: str) -> dict[str, Any]:
 
 @router.get("")
 def get_members(_ctx: AccessContext = Depends(require_owner)) -> dict[str, Any]:
-    return {"members": [member.model_dump(mode="json") for member in list_member_profiles(include_usage=True)]}
+    return {"members": [member.model_dump(mode="json") for member in list_member_profiles(include_usage=False)]}
+
+
+@router.get("/{target_user_id}/usage")
+def get_member_usage(
+    target_user_id: str,
+    _ctx: AccessContext = Depends(require_owner),
+) -> dict[str, Any]:
+    _get_target_member(target_user_id)
+    return {"usage": get_member_usage_summary(target_user_id).model_dump(mode="json")}
+
+
+@router.post("/invite")
+def invite_member(
+    body: MemberInviteRequest,
+    _ctx: AccessContext = Depends(require_owner),
+) -> dict[str, Any]:
+    invitation = create_clerk_invitation_sync(body.email, body.role)
+    return {
+        "email": body.email.strip(),
+        "role": body.role.value,
+        "invitation_id": invitation.get("id"),
+        "status": invitation.get("status", "pending"),
+    }
 
 
 @router.patch("/{target_user_id}/role")
