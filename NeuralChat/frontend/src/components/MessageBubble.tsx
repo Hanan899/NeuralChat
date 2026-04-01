@@ -21,6 +21,7 @@ interface MessageBubbleProps {
   showAssistantLabel?: boolean;
   onRetry?: () => void;
   onRunAgentPlan?: () => void;
+  onConfirmAgentAction?: (approved: boolean) => void;
 }
 
 // Normalizes various LaTeX delimiters that GPT outputs into standard KaTeX format.
@@ -235,6 +236,7 @@ export function MessageBubble({
   showAssistantLabel = false,
   onRetry,
   onRunAgentPlan,
+  onConfirmAgentAction,
 }: MessageBubbleProps) {
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
   const [copiedMessage, setCopiedMessage] = useState(false);
@@ -331,7 +333,7 @@ export function MessageBubble({
         ) : null}
 
         {message.agentTask ? (
-          <AgentProgress task={message.agentTask} onRun={onRunAgentPlan} />
+          <AgentProgress task={message.agentTask} onRun={onRunAgentPlan} onConfirmAction={onConfirmAgentAction} />
         ) : (
           <>
             <div className="nc-markdown">

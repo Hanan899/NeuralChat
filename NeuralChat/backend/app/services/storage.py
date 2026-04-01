@@ -23,10 +23,97 @@ from app.services.blob_paths import (
     user_segment,
     write_json_with_migration,
 )
+from app.services.titles import fallback_conversation_title
 
 _STORE_LOCK = Lock()
 _MEMORY_STORE: dict[str, list[dict[str, Any]]] = {}
 _MEMORY_PROFILES: dict[str, dict[str, Any]] = {}
+
+
+def _extract_stable_id_from_segment(segment_value: str) -> str:
+    normalized = str(segment_value or "").strip()
+    if "__" in normalized:
+        return normalized.rsplit("__", 1)[-1]
+    return normalized.removesuffix(".json")
+
+
+def _build_conversation_summary(session_id: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    normalized_messages = [message for message in messages if isinstance(message, dict)]
+    latest_message = normalized_messages[-1] if normalized_messages else {}
+    first_user_message = next(
+        (
+            message
+            for message in normalized_messages
+            if str(message.get("role", "")).strip() == "user" and str(message.get("content", "")).strip()
+        ),
+        {},
+    )
+    title_candidate = str(latest_message.get("session_title", "") or "").strip() or str(first_user_message.get("session_title", "") or "").strip()
+    prompt_for_title = str(first_user_message.get("content", "") or "").strip()
+    preview_source = next(
+        (
+            str(message.get("content", "") or "").strip()
+            for message in reversed(normalized_messages)
+            if str(message.get("content", "") or "").strip()
+        ),
+        "",
+    )
+    preview = preview_source[:200]
+    updated_at = str(latest_message.get("created_at", "") or "").strip() or ""
+    title = title_candidate or fallback_conversation_title(prompt_for_title, preview_source)
+
+    return {
+        "id": session_id,
+        "title": title or "New chat",
+        "preview": preview,
+        "updatedAt": updated_at,
+        "archived": False,
+    }
+
+
+def list_conversation_summaries(
+    store: dict[str, Any],
+    user_id: str,
+    display_name: str | None = None,
+) -> list[dict[str, Any]]:
+    summaries: dict[str, dict[str, Any]] = {}
+
+    if store["mode"] == "memory":
+        for blob_name, messages in _MEMORY_STORE.items():
+            parts = blob_parts(blob_name)
+            if len(parts) != 3 or parts[0] != "conversations":
+                continue
+            if not segment_matches_id(parts[1], user_id):
+                continue
+            session_id = _extract_stable_id_from_segment(parts[2].removesuffix(".json"))
+            summaries[session_id] = _build_conversation_summary(session_id, list(messages))
+    else:
+        container: ContainerClient = store["memory_container"]
+        for blob_item in container.list_blobs(name_starts_with="conversations/"):
+            blob_name = str(getattr(blob_item, "name", "")).strip()
+            parts = blob_parts(blob_name)
+            if len(parts) != 3 or parts[0] != "conversations":
+                continue
+            if not segment_matches_id(parts[1], user_id):
+                continue
+            payload = read_blob_text(container, blob_name)
+            if payload is None:
+                continue
+            try:
+                messages = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(messages, list):
+                continue
+            session_id = _extract_stable_id_from_segment(parts[2].removesuffix(".json"))
+            summaries[session_id] = _build_conversation_summary(session_id, messages)
+
+    ordered_summaries = sorted(
+        summaries.values(),
+        key=lambda item: str(item.get("updatedAt", "") or ""),
+        reverse=True,
+    )
+    return ordered_summaries
 
 
 def init_store() -> dict[str, Any]:

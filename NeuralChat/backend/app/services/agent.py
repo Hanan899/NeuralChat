@@ -31,13 +31,27 @@ from app.services.cost_tracker import (
     DAILY_LIMIT_BLOCK_MESSAGE,
     MONTHLY_LIMIT_BLOCK_MESSAGE,
     TokenUsage,
+    get_usage_summary,
     get_usage_status,
     normalize_usage,
     resolve_daily_limit,
     resolve_monthly_limit,
 )
 from app.services.file_handler import get_relevant_chunks, list_user_files, load_parsed_chunks
-from app.services.memory import load_profile
+from app.services.memory import load_profile, upsert_profile_key
+from app.services.projects import (
+    clear_project_memory,
+    create_project,
+    create_project_chat,
+    get_all_projects,
+    get_project,
+    get_project_chats,
+    list_project_files,
+    load_project_chat_messages,
+    load_project_memory,
+    load_project_parsed_chunks,
+    save_project_memory,
+)
 from app.services.search import search_web
 
 LOGGER = logging.getLogger(__name__)
@@ -45,16 +59,43 @@ AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 DEFAULT_AGENTS_CONTAINER = "neurarchat-agents"
 MAX_AGENT_STEPS = 6
 AGENT_TIMEOUT_SECONDS = 60.0
-AVAILABLE_AGENT_TOOLS = ["web_search", "read_file", "memory_recall"]
+READ_ONLY_AGENT_TOOLS = [
+    "list_projects",
+    "get_project",
+    "list_project_chats",
+    "get_project_chat",
+    "list_project_files",
+    "read_project_file",
+    "read_memory",
+    "read_usage_summary",
+    "web_search",
+    "read_file",
+    "memory_recall",
+]
+WRITE_INTENT_AGENT_TOOLS = [
+    "create_project",
+    "create_project_chat",
+    "update_memory",
+    "clear_project_memory",
+]
+AVAILABLE_AGENT_TOOLS = READ_ONLY_AGENT_TOOLS + WRITE_INTENT_AGENT_TOOLS
 PLANNER_SYSTEM_PROMPT = (
-    "You are a task planner. Break this goal into clear steps. "
-    "Available tools: {available_tools}. "
+    "You are a task planner for NeuralChat Agent. Break the goal into clear steps. "
+    "Prefer workspace tools before web search. "
+    "Available tools: __AVAILABLE_TOOLS__. "
     "IMPORTANT TOOL RULES: "
-    "- Only use 'read_file' if the user explicitly mentions an uploaded file or attachment. "
-    "  Never invent or assume a filename — if no file was uploaded, do NOT use read_file. "
-    "- Only use 'web_search' for questions requiring current or external information. "
-    "- Use 'memory_recall' only if the step needs the user's stored preferences. "
+    "- Use workspace tools first for projects, project chats, project files, memory, and usage. "
+    "- Only use 'web_search' when current or external information is actually needed. "
+    "- Only use 'read_file' if the user explicitly refers to chat-uploaded files or attachments. "
     "- Use null for pure reasoning steps that need no external data. "
+    "- For tools that target a project, chat, file, or memory action, make tool_input a JSON object string. "
+    "- For write-intent tools ('create_project', 'create_project_chat', 'update_memory', 'clear_project_memory'), "
+    "  emit the action explicitly. These actions require user confirmation before execution. "
+    "- Use simple JSON inputs, for example: "
+    "  {\"project_name\":\"Marketing Site\"}, "
+    "  {\"project_name\":\"Marketing Site\",\"filename\":\"brief.md\",\"query\":\"launch goals\"}, "
+    "  {\"name\":\"New Workspace\",\"template\":\"custom\",\"description\":\"optional\"}, "
+    "  {\"scope\":\"project\",\"project_name\":\"Marketing Site\",\"facts\":{\"decision\":\"Use Azure Functions\"}}. "
     "Return JSON only: "
     '{{"plan_id": "uuid", "goal": "str", "steps": ['
     '{{"step_number": 1, "description": "str", "tool": "str or null", "tool_input": "str or null"}}'
@@ -221,6 +262,153 @@ def _extract_response_usage(response_object: Any) -> TokenUsage:
     return normalize_usage(response_object)
 
 
+def _normalize_tool_input_value(tool_input_value: Any) -> str | None:
+    if isinstance(tool_input_value, (dict, list)):
+        serialized = json.dumps(tool_input_value, ensure_ascii=True)
+        return serialized.strip() or None
+    if isinstance(tool_input_value, str):
+        stripped = tool_input_value.strip()
+        return stripped or None
+    if tool_input_value is None:
+        return None
+    stringified = str(tool_input_value).strip()
+    return stringified or None
+
+
+def _parse_tool_input_payload(tool_input: str | None) -> dict[str, Any] | str | None:
+    if not tool_input:
+        return None
+    try:
+        parsed_payload = json.loads(tool_input)
+    except json.JSONDecodeError:
+        return tool_input
+    if isinstance(parsed_payload, (dict, list)):
+        return parsed_payload
+    if parsed_payload is None:
+        return None
+    return str(parsed_payload).strip() or None
+
+
+def _format_structured_result(payload: Any) -> str:
+    return json.dumps(payload, ensure_ascii=True, indent=2)
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _humanize_tool_name(tool_name: str) -> str:
+    return str(tool_name or "").replace("_", " ").strip().title()
+
+
+def _match_identifier(candidate_value: Any, target_value: str) -> bool:
+    normalized_candidate = _clean_text(candidate_value).casefold()
+    normalized_target = _clean_text(target_value).casefold()
+    if not normalized_candidate or not normalized_target:
+        return False
+    return normalized_candidate == normalized_target or normalized_target in normalized_candidate
+
+
+def _resolve_project_selector(
+    user_id: str,
+    selector: str | None,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    projects = get_all_projects(user_id, display_name)
+    if selector:
+        for project_item in projects:
+            if _match_identifier(project_item.get("project_id"), selector):
+                return project_item
+        for project_item in projects:
+            if _match_identifier(project_item.get("name"), selector):
+                return project_item
+        raise ValueError(f"Project '{selector}' was not found.")
+    if len(projects) == 1:
+        return projects[0]
+    if not projects:
+        raise ValueError("No projects are available for this user.")
+    raise ValueError("Multiple projects are available. Specify a project name or project_id in tool_input.")
+
+
+def _resolve_project_from_payload(
+    user_id: str,
+    payload: dict[str, Any] | str | None,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        selector = (
+            _clean_text(payload.get("project_id"))
+            or _clean_text(payload.get("project_name"))
+            or _clean_text(payload.get("name"))
+            or _clean_text(payload.get("project"))
+            or None
+        )
+        return _resolve_project_selector(user_id, selector, display_name)
+    if isinstance(payload, str):
+        return _resolve_project_selector(user_id, payload, display_name)
+    return _resolve_project_selector(user_id, None, display_name)
+
+
+def _resolve_chat_from_payload(
+    user_id: str,
+    project_id: str,
+    payload: dict[str, Any] | str | None,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    chats = get_project_chats(user_id, project_id, display_name)
+    chat_selector = ""
+    if isinstance(payload, dict):
+        chat_selector = (
+            _clean_text(payload.get("session_id"))
+            or _clean_text(payload.get("chat_id"))
+            or _clean_text(payload.get("chat_title"))
+            or _clean_text(payload.get("title"))
+        )
+    elif isinstance(payload, str):
+        chat_selector = payload
+
+    if chat_selector:
+        for chat_item in chats:
+            if _match_identifier(chat_item.get("session_id"), chat_selector):
+                return chat_item
+        for chat_item in chats:
+            if _match_identifier(chat_item.get("title"), chat_selector):
+                return chat_item
+        raise ValueError(f"Project chat '{chat_selector}' was not found.")
+    if len(chats) == 1:
+        return chats[0]
+    if not chats:
+        raise ValueError("No project chats are available for this project.")
+    raise ValueError("Multiple project chats are available. Specify a session_id or chat title in tool_input.")
+
+
+def _resolve_file_from_payload(payload: dict[str, Any] | str | None) -> str:
+    if isinstance(payload, dict):
+        filename = _clean_text(payload.get("filename")) or _clean_text(payload.get("file"))
+        if filename:
+            return filename
+    elif isinstance(payload, str):
+        if payload.lower().endswith((".txt", ".md", ".pdf", ".docx", ".csv", ".json", ".py", ".ts", ".tsx")):
+            return payload
+    raise ValueError("A filename is required in tool_input for read_project_file.")
+
+
+def _build_confirmation_payload(
+    step: dict[str, Any],
+    action_payload: dict[str, Any],
+    risk_note: str,
+) -> dict[str, Any]:
+    tool_name = _clean_text(step.get("tool"))
+    return {
+        "step_number": int(step.get("step_number", 0) or 0),
+        "description": _clean_text(step.get("description")),
+        "action_type": tool_name,
+        "action_label": _humanize_tool_name(tool_name),
+        "action_payload": action_payload,
+        "risk_note": risk_note,
+    }
+
+
 # This helper returns a configured LangChain AzureChatOpenAI model for agent planning and reasoning.
 def _get_agent_model(temperature: float = 0.0, max_tokens: int | None = None) -> AzureChatOpenAI:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
@@ -267,9 +455,7 @@ def _normalize_plan(user_goal: str, raw_plan: Any) -> dict[str, Any]:
                 if normalized_tool not in {*AVAILABLE_AGENT_TOOLS, None}:
                     normalized_tool = None
                 tool_input_value = raw_step.get("tool_input")
-                normalized_tool_input = (
-                    str(tool_input_value).strip() if isinstance(tool_input_value, str) and str(tool_input_value).strip() else None
-                )
+                normalized_tool_input = _normalize_tool_input_value(tool_input_value)
                 steps_payload.append(
                     {
                         "step_number": step_index,
@@ -358,6 +544,316 @@ def _read_session_file_context(
     return "Relevant file context:\n" + "\n\n".join(relevant_chunks)
 
 
+def _read_workspace_step_result(
+    step: dict[str, Any],
+    user_id: str,
+    display_name: str | None = None,
+) -> str:
+    tool_name = _clean_text(step.get("tool"))
+    payload = _parse_tool_input_payload(_normalize_tool_input_value(step.get("tool_input")))
+
+    if tool_name == "list_projects":
+        projects = get_all_projects(user_id, display_name)
+        return _format_structured_result(
+            [
+                {
+                    "project_id": project_item.get("project_id"),
+                    "name": project_item.get("name"),
+                    "template": project_item.get("template"),
+                    "description": project_item.get("description"),
+                    "updated_at": project_item.get("updated_at"),
+                    "chat_count": project_item.get("chat_count"),
+                }
+                for project_item in projects
+            ]
+        )
+
+    if tool_name == "get_project":
+        project_item = _resolve_project_from_payload(user_id, payload, display_name)
+        return _format_structured_result(project_item)
+
+    if tool_name == "list_project_chats":
+        project_item = _resolve_project_from_payload(user_id, payload, display_name)
+        chats = get_project_chats(user_id, str(project_item.get("project_id")), display_name)
+        return _format_structured_result(
+            {
+                "project": {
+                    "project_id": project_item.get("project_id"),
+                    "name": project_item.get("name"),
+                },
+                "chats": chats,
+            }
+        )
+
+    if tool_name == "get_project_chat":
+        payload_dict = payload if isinstance(payload, dict) else None
+        project_item = _resolve_project_from_payload(user_id, payload_dict or payload, display_name)
+        chat_item = _resolve_chat_from_payload(user_id, str(project_item.get("project_id")), payload, display_name)
+        messages = load_project_chat_messages(
+            user_id,
+            str(project_item.get("project_id")),
+            str(chat_item.get("session_id")),
+            display_name,
+            str(chat_item.get("title") or "").strip() or None,
+        )
+        return _format_structured_result(
+            {
+                "project": {
+                    "project_id": project_item.get("project_id"),
+                    "name": project_item.get("name"),
+                },
+                "chat": chat_item,
+                "messages": messages[-12:],
+            }
+        )
+
+    if tool_name == "list_project_files":
+        project_item = _resolve_project_from_payload(user_id, payload, display_name)
+        files = list_project_files(user_id, str(project_item.get("project_id")), display_name)
+        return _format_structured_result(
+            {
+                "project": {
+                    "project_id": project_item.get("project_id"),
+                    "name": project_item.get("name"),
+                },
+                "files": files,
+            }
+        )
+
+    if tool_name == "read_project_file":
+        if not isinstance(payload, dict):
+            raise ValueError("read_project_file requires a JSON tool_input with project and filename.")
+        project_item = _resolve_project_from_payload(user_id, payload, display_name)
+        filename = _resolve_file_from_payload(payload)
+        parsed_chunks = load_project_parsed_chunks(user_id, str(project_item.get("project_id")), filename, display_name)
+        if not parsed_chunks:
+            raise ValueError(f"No parsed content found for project file '{filename}'.")
+        query_text = _clean_text(payload.get("query")) or _clean_text(step.get("description"))
+        relevant_chunks = get_relevant_chunks(parsed_chunks, query_text, max_chunks=3) if query_text else parsed_chunks[:3]
+        return _format_structured_result(
+            {
+                "project": {
+                    "project_id": project_item.get("project_id"),
+                    "name": project_item.get("name"),
+                },
+                "filename": filename,
+                "chunks": relevant_chunks,
+            }
+        )
+
+    if tool_name == "read_memory":
+        if isinstance(payload, dict) and (_clean_text(payload.get("scope")).lower() == "project" or payload.get("project_id") or payload.get("project_name")):
+            project_item = _resolve_project_from_payload(user_id, payload, display_name)
+            memory_payload = load_project_memory(user_id, str(project_item.get("project_id")), display_name)
+            return _format_structured_result(
+                {
+                    "scope": "project",
+                    "project": {
+                        "project_id": project_item.get("project_id"),
+                        "name": project_item.get("name"),
+                    },
+                    "memory": memory_payload,
+                }
+            )
+        profile = load_profile(user_id, display_name)
+        return _format_structured_result({"scope": "user", "memory": profile})
+
+    if tool_name == "read_usage_summary":
+        days = 30
+        if isinstance(payload, dict):
+            try:
+                days = max(1, int(payload.get("days", 30)))
+            except (TypeError, ValueError):
+                days = 30
+        usage_summary = get_usage_summary(user_id, days, display_name)
+        return _format_structured_result({"days": days, "summary": usage_summary})
+
+    raise ValueError(f"Unsupported workspace read tool '{tool_name}'.")
+
+
+def _build_write_intent(
+    step: dict[str, Any],
+    user_id: str,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    tool_name = _clean_text(step.get("tool"))
+    payload = _parse_tool_input_payload(_normalize_tool_input_value(step.get("tool_input")))
+
+    if tool_name == "create_project":
+        if isinstance(payload, dict):
+            project_name = _clean_text(payload.get("name")) or _clean_text(payload.get("project_name"))
+            template = _clean_text(payload.get("template")) or "custom"
+            description = _clean_text(payload.get("description"))
+            emoji = _clean_text(payload.get("emoji"))
+            color = _clean_text(payload.get("color"))
+            custom_system_prompt = _clean_text(payload.get("custom_system_prompt"))
+        else:
+            project_name = _clean_text(payload) or _clean_text(step.get("description"))
+            template = "custom"
+            description = ""
+            emoji = ""
+            color = ""
+            custom_system_prompt = ""
+        if not project_name:
+            raise ValueError("create_project requires a project name in tool_input.")
+        return _build_confirmation_payload(
+            step,
+            {
+                "name": project_name,
+                "template": template,
+                "description": description,
+                "emoji": emoji,
+                "color": color,
+                "custom_system_prompt": custom_system_prompt,
+            },
+            "This will create a new workspace project.",
+        )
+
+    if tool_name == "create_project_chat":
+        project_item = _resolve_project_from_payload(user_id, payload, display_name)
+        return _build_confirmation_payload(
+            step,
+            {
+                "project_id": project_item.get("project_id"),
+                "project_name": project_item.get("name"),
+            },
+            "This will create a new chat inside the selected project.",
+        )
+
+    if tool_name == "update_memory":
+        payload_dict = payload if isinstance(payload, dict) else {}
+        scope = _clean_text(payload_dict.get("scope")).lower() or "project"
+        facts = payload_dict.get("facts")
+        if not isinstance(facts, dict) or not facts:
+            if isinstance(payload, str) and payload.strip():
+                facts = {"note": payload.strip()}
+            else:
+                raise ValueError("update_memory requires a non-empty facts object in tool_input.")
+        normalized_facts = {str(key).strip(): _clean_text(value) for key, value in facts.items() if str(key).strip() and _clean_text(value)}
+        if not normalized_facts:
+            raise ValueError("update_memory requires at least one non-empty fact.")
+        action_payload: dict[str, Any] = {"scope": "user", "facts": normalized_facts}
+        risk_note = "This will update saved memory for the user."
+        if scope == "project" or payload_dict.get("project_id") or payload_dict.get("project_name"):
+            project_item = _resolve_project_from_payload(user_id, payload_dict, display_name)
+            action_payload = {
+                "scope": "project",
+                "project_id": project_item.get("project_id"),
+                "project_name": project_item.get("name"),
+                "facts": normalized_facts,
+            }
+            risk_note = "This will update the project's saved memory."
+        return _build_confirmation_payload(step, action_payload, risk_note)
+
+    if tool_name == "clear_project_memory":
+        project_item = _resolve_project_from_payload(user_id, payload, display_name)
+        return _build_confirmation_payload(
+            step,
+            {
+                "project_id": project_item.get("project_id"),
+                "project_name": project_item.get("name"),
+            },
+            "This will clear the project's saved Project Brain memory.",
+        )
+
+    raise ValueError(f"Unsupported write-intent tool '{tool_name}'.")
+
+
+def execute_confirmed_action(
+    pending_confirmation: dict[str, Any],
+    user_id: str,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    action_type = _clean_text(pending_confirmation.get("action_type"))
+    action_payload = pending_confirmation.get("action_payload")
+    if not isinstance(action_payload, dict):
+        raise ValueError("Pending action payload is invalid.")
+
+    step_number = int(pending_confirmation.get("step_number", 0) or 0)
+    description = _clean_text(pending_confirmation.get("description"))
+
+    if action_type == "create_project":
+        project_item = create_project(
+            user_id,
+            name=_clean_text(action_payload.get("name")),
+            template=_clean_text(action_payload.get("template")) or "custom",
+            description=_clean_text(action_payload.get("description")),
+            emoji=_clean_text(action_payload.get("emoji")),
+            color=_clean_text(action_payload.get("color")),
+            custom_system_prompt=_clean_text(action_payload.get("custom_system_prompt")),
+            display_name=display_name,
+        )
+        result_text = _format_structured_result({"created_project": project_item})
+    elif action_type == "create_project_chat":
+        session_id = create_project_chat(user_id, _clean_text(action_payload.get("project_id")), display_name)
+        result_text = _format_structured_result(
+            {
+                "project_id": action_payload.get("project_id"),
+                "project_name": action_payload.get("project_name"),
+                "session_id": session_id,
+            }
+        )
+    elif action_type == "update_memory":
+        facts = action_payload.get("facts")
+        if not isinstance(facts, dict) or not facts:
+            raise ValueError("No memory facts were provided.")
+        if _clean_text(action_payload.get("scope")).lower() == "project":
+            save_project_memory(
+                user_id,
+                _clean_text(action_payload.get("project_id")),
+                facts,
+                display_name,
+            )
+            result_text = _format_structured_result(
+                {
+                    "scope": "project",
+                    "project_id": action_payload.get("project_id"),
+                    "project_name": action_payload.get("project_name"),
+                    "updated_facts": facts,
+                }
+            )
+        else:
+            for fact_key, fact_value in facts.items():
+                upsert_profile_key(user_id, str(fact_key), str(fact_value), display_name)
+            result_text = _format_structured_result({"scope": "user", "updated_facts": facts})
+    elif action_type == "clear_project_memory":
+        clear_project_memory(user_id, _clean_text(action_payload.get("project_id")), display_name)
+        result_text = _format_structured_result(
+            {
+                "scope": "project",
+                "project_id": action_payload.get("project_id"),
+                "project_name": action_payload.get("project_name"),
+                "cleared": True,
+            }
+        )
+    else:
+        raise ValueError(f"Unsupported confirmed action '{action_type}'.")
+
+    return {
+        "step_number": step_number,
+        "description": description,
+        "tool": action_type,
+        "tool_input": _normalize_tool_input_value(action_payload),
+        "result": result_text,
+        "status": "approved",
+        "error": None,
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+
+
+def build_rejected_action_result(pending_confirmation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "step_number": int(pending_confirmation.get("step_number", 0) or 0),
+        "description": _clean_text(pending_confirmation.get("description")),
+        "tool": _clean_text(pending_confirmation.get("action_type")) or None,
+        "tool_input": _normalize_tool_input_value(pending_confirmation.get("action_payload")),
+        "result": "Action was not executed because the user declined the request.",
+        "status": "rejected",
+        "error": None,
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+
+
 # This helper runs one reasoning-only GPT call for steps that do not use an external tool.
 async def _run_reasoning_step_with_usage(
     goal: str,
@@ -397,7 +893,7 @@ async def _run_reasoning_step(goal: str, step: dict[str, Any], execution_log: li
 async def create_task_plan_with_usage(user_goal: str, available_tools: list[str]) -> tuple[dict[str, Any], TokenUsage]:
     model = _get_agent_model(temperature=0.0, max_tokens=500)
     prompt_text = (
-        PLANNER_SYSTEM_PROMPT.format(available_tools=", ".join(available_tools))
+        PLANNER_SYSTEM_PROMPT.replace("__AVAILABLE_TOOLS__", ", ".join(available_tools))
         + "\n\n"
         + f"Goal: {user_goal}\nKeep the plan under 6 steps."
     )
@@ -508,70 +1004,92 @@ async def execute_step(
     step_number = int(step.get("step_number", 0) or 0)
     description = str(step.get("description", "")).strip()
     tool = step.get("tool") if step.get("tool") in AVAILABLE_AGENT_TOOLS else None
-    tool_input = str(step.get("tool_input") or "").strip() or None
+    tool_input = _normalize_tool_input_value(step.get("tool_input"))
 
     try:
-        if tool == "web_search":
-            search_query = tool_input or description
-            results = await asyncio.to_thread(search_web, search_query)
-            return {
-                "step_number": step_number,
-                "description": description,
-                "tool": tool,
-                "tool_input": search_query,
-                "result": _format_search_step_result(results),
-                "status": "done",
-                "error": None,
-            }
+        if tool in READ_ONLY_AGENT_TOOLS:
+            if tool == "web_search":
+                search_query = tool_input or description
+                results = await asyncio.to_thread(search_web, search_query)
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": tool,
+                    "tool_input": search_query,
+                    "result": _format_search_step_result(results),
+                    "status": "done",
+                    "error": None,
+                }
 
-        if tool == "read_file":
-            try:
-                file_result = await asyncio.to_thread(
-                    _read_session_file_context, user_id, session_id, step, display_name, session_title
-                )
+            if tool == "read_file":
+                try:
+                    file_result = await asyncio.to_thread(
+                        _read_session_file_context, user_id, session_id, step, display_name, session_title
+                    )
+                    return {
+                        "step_number": step_number,
+                        "description": description,
+                        "tool": tool,
+                        "tool_input": tool_input,
+                        "result": file_result,
+                        "status": "done",
+                        "error": None,
+                    }
+                except ValueError:
+                    LOGGER.warning("read_file tool found no file for step %s — falling back to reasoning.", step_number)
+                    reasoning_result, reasoning_usage = await _run_reasoning_step_with_usage(
+                        goal=goal,
+                        step=step,
+                        execution_log=execution_log,
+                        user_id=user_id,
+                        display_name=display_name,
+                    )
+                    return {
+                        "step_number": step_number,
+                        "description": description,
+                        "tool": None,
+                        "tool_input": tool_input,
+                        "result": reasoning_result or "No file was available; reasoned through the step instead.",
+                        "status": "done",
+                        "error": None,
+                        "usage": reasoning_usage,
+                    }
+
+            if tool == "memory_recall":
+                profile = await asyncio.to_thread(load_profile, user_id, display_name)
+                memory_text = json.dumps(profile, ensure_ascii=True) if profile else "No stored memory found for this user."
                 return {
                     "step_number": step_number,
                     "description": description,
                     "tool": tool,
                     "tool_input": tool_input,
-                    "result": file_result,
+                    "result": memory_text,
                     "status": "done",
                     "error": None,
-                }
-            except ValueError:
-                # No uploaded file found — fall back to reasoning so the step still completes.
-                LOGGER.warning(
-                    "read_file tool found no file for step %s — falling back to reasoning.", step_number
-                )
-                reasoning_result, reasoning_usage = await _run_reasoning_step_with_usage(
-                    goal=goal,
-                    step=step,
-                    execution_log=execution_log,
-                    user_id=user_id,
-                    display_name=display_name,
-                )
-                return {
-                    "step_number": step_number,
-                    "description": description,
-                    "tool": None,
-                    "tool_input": tool_input,
-                    "result": reasoning_result or "No file was available; reasoned through the step instead.",
-                    "status": "done",
-                    "error": None,
-                    "usage": reasoning_usage,
                 }
 
-        if tool == "memory_recall":
-            profile = await asyncio.to_thread(load_profile, user_id, display_name)
-            memory_text = json.dumps(profile, ensure_ascii=True) if profile else "No stored memory found for this user."
+            workspace_result = await asyncio.to_thread(_read_workspace_step_result, step, user_id, display_name)
             return {
                 "step_number": step_number,
                 "description": description,
                 "tool": tool,
                 "tool_input": tool_input,
-                "result": memory_text,
+                "result": workspace_result,
                 "status": "done",
                 "error": None,
+            }
+
+        if tool in WRITE_INTENT_AGENT_TOOLS:
+            confirmation_payload = await asyncio.to_thread(_build_write_intent, step, user_id, display_name)
+            return {
+                "step_number": step_number,
+                "description": description,
+                "tool": tool,
+                "tool_input": tool_input,
+                "result": "",
+                "status": "awaiting_confirmation",
+                "error": None,
+                "confirmation": confirmation_payload,
             }
 
         reasoning_result, reasoning_usage = await _run_reasoning_step_with_usage(
@@ -687,12 +1205,14 @@ def list_task_plans(user_id: str) -> list[dict[str, Any]]:
         plan = load_task_plan(user_id, plan_id)
         if not plan:
             continue
+        execution_state = plan.get("execution_state") if isinstance(plan.get("execution_state"), dict) else {}
         tasks.append(
             {
                 "plan_id": plan.get("plan_id", plan_id),
                 "goal": str(plan.get("goal", "")).strip(),
                 "created_at": str(plan.get("created_at", "")).strip(),
                 "steps_count": len(plan.get("steps", [])) if isinstance(plan.get("steps"), list) else 0,
+                "status": "awaiting_confirmation" if isinstance(plan.get("pending_confirmation"), dict) else str(execution_state.get("status", "") or ""),
             }
         )
 
@@ -791,7 +1311,12 @@ async def build_final_summary_with_usage(
 
 
 # This function keeps the older summary-only interface for call sites that do not need usage details.
-async def build_final_summary(goal: str, execution_log: list[dict[str, Any]], user_id: str, display_name: str | None = None) -> str:
+async def build_final_summary(
+    goal: str,
+    execution_log: list[dict[str, Any]],
+    user_id: str = "agent-summary",
+    display_name: str | None = None,
+) -> str:
     summary_text, _usage = await build_final_summary_with_usage(goal, execution_log, user_id, display_name)
     return summary_text
 
@@ -985,8 +1510,10 @@ async def stream_agent_execution(
     session_id: str,
     display_name: str | None = None,
     session_title: str | None = None,
+    start_step_index: int = 0,
+    initial_execution_log: list[dict[str, Any]] | None = None,
+    initial_warning_message: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    compiled_graph = _build_agent_graph()
     plan_steps = plan.get("steps", [])
 
     if not isinstance(plan_steps, list) or len(plan_steps) == 0:
@@ -1033,56 +1560,97 @@ async def stream_agent_execution(
         }
         return
 
-    graph_state: AgentState = {
-        "plan": plan,
-        "total_steps": len(plan.get("steps", [])),
-        "user_id": user_id,
-        "display_name": display_name,
-        "session_id": session_id,
-        "session_title": session_title,
-        "current_step_index": 0,
-        "execution_log": [],
-        "stop_execution": False,
-        "warning_message": None,
-        "last_event": None,
-        "started_at": time.perf_counter(),
-    }
+    execution_log = list(initial_execution_log or [])
+    warning_message = initial_warning_message
+    started_at = time.perf_counter()
+    current_step_index = max(0, int(start_step_index or 0))
 
-    async for update in compiled_graph.astream(graph_state, stream_mode="updates"):
-        for partial_state in update.values():
-            if not isinstance(partial_state, dict):
-                continue
-            last_event = partial_state.get("last_event")
-            if isinstance(last_event, dict) and last_event.get("type"):
-                yield last_event
-            graph_state.update(partial_state)
+    while current_step_index < len(plan_steps):
+        elapsed_seconds = time.perf_counter() - started_at
+        if elapsed_seconds >= AGENT_TIMEOUT_SECONDS:
+            warning_message = f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds."
+            break
+
+        current_step = plan_steps[current_step_index]
+        yield {
+            "type": "step_start",
+            "step_number": current_step["step_number"],
+            "description": current_step["description"],
+        }
+
+        result = await execute_step(
+            current_step,
+            user_id=user_id,
+            session_id=session_id,
+            goal=str(plan.get("goal", "")),
+            execution_log=execution_log,
+            display_name=display_name,
+            session_title=session_title,
+        )
+
+        if result.get("status") == "awaiting_confirmation":
+            pending_confirmation = result.get("confirmation")
+            if isinstance(pending_confirmation, dict):
+                yield {
+                    "type": "confirmation_required",
+                    **pending_confirmation,
+                    "resume_step_index": current_step_index + 1,
+                    "execution_log": execution_log,
+                }
+                return
+
+        execution_log.append(result)
+        step_usage = result.get("usage", {"input_tokens": 0, "output_tokens": 0})
+        yield {
+            "type": "step_done",
+            "step_number": result["step_number"],
+            "description": result["description"],
+            "tool": result.get("tool"),
+            "tool_input": result.get("tool_input"),
+            "result": result["result"] or result.get("error") or "",
+            "status": result["status"],
+            "error": result.get("error"),
+            "usage": step_usage,
+        }
+
+        if _is_usage_limit_message(result.get("error")):
+            warning_message = str(result.get("error") or "")
+            yield {"type": "warning", "message": warning_message}
+            break
+
+        if check_for_loop(execution_log):
+            warning_message = "Agent stopped: repeated tool calls detected."
+            yield {"type": "warning", "message": warning_message}
+            break
+
+        current_step_index += 1
 
     final_summary = ""
     final_summary_usage: TokenUsage = {"input_tokens": 0, "output_tokens": 0}
-    if graph_state.get("warning_message") == f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds.":
+    if warning_message == f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds.":
         final_summary = (
             f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds. "
-            f"Completed {len(graph_state.get('execution_log', []))} step(s) before stopping."
+            f"Completed {len(execution_log)} step(s) before stopping."
         )
-    elif _is_usage_limit_message(graph_state.get("warning_message")):
-        final_summary = str(graph_state.get("warning_message") or "")
+    elif _is_usage_limit_message(warning_message):
+        final_summary = str(warning_message or "")
     else:
         try:
             final_summary, final_summary_usage = await build_final_summary_with_usage(
                 plan.get("goal", ""),
-                graph_state.get("execution_log", []),
+                execution_log,
                 user_id,
                 display_name,
             )
         except RuntimeError as budget_error:
             final_summary = str(budget_error)
-            graph_state["warning_message"] = str(budget_error)
+            warning_message = str(budget_error)
 
     yield {
         "type": "final_state",
         "plan": plan,
-        "execution_log": graph_state.get("execution_log", []),
-        "warning_message": graph_state.get("warning_message"),
+        "execution_log": execution_log,
+        "warning_message": warning_message,
         "summary": final_summary,
         "summary_usage": final_summary_usage,
     }

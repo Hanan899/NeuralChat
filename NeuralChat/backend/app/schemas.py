@@ -68,6 +68,27 @@ def validate_agent_run_request(payload: dict[str, Any]) -> dict[str, str]:
     return {"session_id": session_id}
 
 
+def validate_agent_confirm_request(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize POST /api/agent/confirm/{plan_id} payload."""
+    session_id = payload.get("session_id", "")
+    if not isinstance(session_id, str) or not (1 <= len(session_id) <= 128):
+        raise HTTPException(status_code=422, detail="session_id must be a non-empty string (max 128).")
+
+    step_number = payload.get("step_number")
+    if isinstance(step_number, bool) or not isinstance(step_number, int) or step_number <= 0:
+        raise HTTPException(status_code=422, detail="step_number must be a positive integer.")
+
+    approved = payload.get("approved")
+    if not isinstance(approved, bool):
+        raise HTTPException(status_code=422, detail="approved must be boolean true/false.")
+
+    return {
+        "session_id": session_id,
+        "step_number": step_number,
+        "approved": approved,
+    }
+
+
 def validate_title_request(payload: dict[str, Any]) -> dict[str, str]:
     """Validate and normalize POST /api/conversations/title payload."""
     prompt = payload.get("prompt", "")

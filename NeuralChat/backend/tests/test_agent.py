@@ -9,6 +9,7 @@ from azure.core.exceptions import ResourceNotFoundError
 
 os.environ.setdefault("NEURALCHAT_STORAGE_MODE", "memory")
 
+from app.access import AccessContext, AppRole, get_access_context
 from app.auth import require_user_id
 from app.main import app
 from app.services import agent
@@ -280,6 +281,12 @@ async def test_build_final_summary_includes_goal_in_prompt():
 @pytest.fixture
 def client():
     app.dependency_overrides[require_user_id] = lambda: "user_123"
+    app.dependency_overrides[get_access_context] = lambda: AccessContext(
+        user_id="user_123",
+        role=AppRole.OWNER,
+        display_name="Abdul Hanan",
+        email="abdul@example.com",
+    )
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -289,7 +296,7 @@ def client():
 def test_agent_run_streams_plan_chunk_first(client):
     plan = {"plan_id": "plan-1", "goal": "Research AI", "steps": [{"step_number": 1, "description": "Search", "tool": "web_search", "tool_input": "AI"}]}
 
-    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None, **_kwargs):
         yield {"type": "step_start", "step_number": 1, "description": "Search"}
         yield {"type": "step_done", "step_number": 1, "result": "done", "status": "done", "error": None}
         yield {"type": "final_state", "plan": plan, "execution_log": [{"step_number": 1, "result": "done", "status": "done"}], "warning_message": None, "summary": "Finished"}
@@ -312,7 +319,7 @@ def test_agent_run_streams_step_start_and_done_for_each_step(client):
         ],
     }
 
-    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None, **_kwargs):
         yield {"type": "step_start", "step_number": 1, "description": "Search"}
         yield {"type": "step_done", "step_number": 1, "result": "done 1", "status": "done", "error": None}
         yield {"type": "step_start", "step_number": 2, "description": "Summarize"}
@@ -331,7 +338,7 @@ def test_agent_run_streams_step_start_and_done_for_each_step(client):
 def test_agent_run_stops_on_loop_detection(client):
     plan = {"plan_id": "plan-1", "goal": "Research AI", "steps": [{"step_number": 1, "description": "Search", "tool": "web_search", "tool_input": "AI"}]}
 
-    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None, **_kwargs):
         yield {"type": "warning", "message": "Agent stopped: repeated tool calls detected."}
         yield {"type": "final_state", "plan": plan, "execution_log": [], "warning_message": "Agent stopped: repeated tool calls detected.", "summary": "Stopped"}
 
@@ -352,7 +359,7 @@ def test_agent_run_continues_after_failed_step(client):
         ],
     }
 
-    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None):
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None, **_kwargs):
         yield {"type": "step_start", "step_number": 1, "description": "Search"}
         yield {"type": "step_done", "step_number": 1, "result": "", "status": "failed", "error": "Tavily down"}
         yield {"type": "step_start", "step_number": 2, "description": "Summarize"}
@@ -389,3 +396,70 @@ def test_agent_history_detail_returns_plan_and_log(client):
     assert response.status_code == 200
     assert "plan" in response.json()
     assert "log" in response.json()
+    assert "pending_confirmation" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_execute_step_returns_confirmation_for_write_intent():
+    step = {
+        "tool": "create_project",
+        "tool_input": json.dumps({"name": "Launch Pad", "template": "custom"}),
+        "step_number": 2,
+        "description": "Create a new project for launch work",
+    }
+
+    result = await agent.execute_step(step, "user1", "sess1")
+
+    assert result["status"] == "awaiting_confirmation"
+    assert result["confirmation"]["action_type"] == "create_project"
+    assert result["confirmation"]["action_payload"]["name"] == "Launch Pad"
+
+
+def test_agent_confirm_executes_pending_action_and_streams_followup(client):
+    plan = {
+        "plan_id": "plan-1",
+        "goal": "Organize workspace",
+        "steps": [
+            {"step_number": 1, "description": "Create project", "tool": "create_project", "tool_input": json.dumps({"name": "Launch Pad"})},
+            {"step_number": 2, "description": "Summarize", "tool": None, "tool_input": None},
+        ],
+        "pending_confirmation": {
+            "step_number": 1,
+            "description": "Create project",
+            "action_type": "create_project",
+            "action_label": "Create project",
+            "action_payload": {"name": "Launch Pad"},
+            "risk_note": None,
+        },
+        "execution_state": {"status": "awaiting_confirmation", "resume_step_index": 1},
+    }
+
+    async def fake_stream(_plan, _user_id, _session_id, _display_name=None, _session_title=None, **_kwargs):
+        yield {"type": "step_start", "step_number": 2, "description": "Summarize"}
+        yield {"type": "step_done", "step_number": 2, "result": "done 2", "status": "done", "error": None}
+        yield {"type": "final_state", "plan": _plan, "execution_log": [], "warning_message": None, "summary": "Finished"}
+
+    with (
+        patch("app.main.load_task_plan", return_value=plan),
+        patch("app.main.load_execution_log", return_value=[]),
+        patch("app.main.execute_confirmed_action", return_value={
+            "step_number": 1,
+            "description": "Create project",
+            "tool": "create_project",
+            "tool_input": json.dumps({"name": "Launch Pad"}),
+            "result": "Created project 'Launch Pad'.",
+            "status": "approved",
+            "error": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        }),
+        patch("app.main.stream_agent_execution", fake_stream),
+        patch("app.main.save_execution_log"),
+        patch("app.main.save_task_plan"),
+        patch("app.main.log_usage"),
+    ):
+        response = client.post("/api/agent/confirm/plan-1", json={"session_id": "session-1", "step_number": 1, "approved": True})
+
+    chunks = [json.loads(line) for line in response.text.strip().splitlines()]
+    assert chunks[0]["type"] == "plan"
+    assert any(chunk["type"] == "step_done" and chunk["status"] == "approved" for chunk in chunks)
+    assert any(chunk["type"] == "done" for chunk in chunks)

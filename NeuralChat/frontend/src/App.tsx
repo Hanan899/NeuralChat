@@ -2,9 +2,19 @@ import { SignIn, SignedIn, SignedOut, useAuth, useClerk, useUser } from "@clerk/
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
-import { checkHealth, checkSearchStatus, deleteConversationSession, generateConversationTitle, getFiles, getProjectFiles, streamChat } from "./api";
+import {
+  checkHealth,
+  checkSearchStatus,
+  deleteConversationSession,
+  generateConversationTitle,
+  getConversationMessages,
+  getConversations,
+  getFiles,
+  getProjectFiles,
+  streamChat,
+} from "./api";
 import type { RequestNamingContext } from "./api";
-import { createAgentPlan, runAgent } from "./api/agent";
+import { confirmAgentAction, createAgentPlan, runAgent } from "./api/agent";
 import {
   createProjectChat,
   deleteProjectChat,
@@ -35,6 +45,7 @@ import { NewChatPage } from "./pages/NewChatPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import type {
+  AgentPendingConfirmation,
   AgentPlan,
   AgentStepResult,
   AgentTaskState,
@@ -394,6 +405,55 @@ function isConversationDraft(
   );
 }
 
+function normalizeConversationMessages(messages: Record<string, unknown>[] | undefined): ChatMessage[] {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+
+  return messages
+    .filter((message): message is Record<string, unknown> => Boolean(message) && typeof message === "object")
+    .map((message) => ({
+      id: String(message.id ?? message.request_id ?? buildId()),
+      role: String(message.role ?? "assistant") === "user" ? "user" : "assistant",
+      content: String(message.content ?? ""),
+      createdAt: String(message.created_at ?? message.createdAt ?? new Date().toISOString()),
+      model: "gpt-5",
+      projectId: typeof message.project_id === "string" ? message.project_id : undefined,
+      searchUsed: message.search_used === true,
+      fileContextUsed: message.file_context_used === true,
+      sources: Array.isArray(message.sources) ? (message.sources as SearchSource[]) : undefined,
+    }));
+}
+
+function mergeSyncedConversations(
+  remoteConversations: ConversationSummary[],
+  localConversations: ConversationSummary[],
+  messagesByConversation: Record<string, ChatMessage[]>,
+  fileCountsByConversation: Record<string, number>
+): ConversationSummary[] {
+  const remoteIds = new Set(remoteConversations.map((conversation) => conversation.id));
+  const localById = new Map(localConversations.map((conversation) => [conversation.id, conversation]));
+  const mergedRemote = remoteConversations.map((conversation) => {
+    const localMatch = localById.get(conversation.id);
+    return {
+      ...conversation,
+      archived: localMatch?.archived === true,
+    };
+  });
+
+  if (remoteConversations.length === 0) {
+    return localConversations;
+  }
+
+  const localDrafts = localConversations.filter(
+    (conversation) =>
+      !remoteIds.has(conversation.id) &&
+      isConversationDraft(conversation, messagesByConversation, fileCountsByConversation)
+  );
+
+  return [...mergedRemote, ...localDrafts];
+}
+
 function buildWorkspaceDescription(shortcutId: Exclude<ShortcutId, "new">): string {
   if (shortcutId === "images") {
     return "Image tools are not wired into NeuralChat yet, but this workspace is reserved for visual creation and image-first prompts.";
@@ -420,6 +480,7 @@ function buildAgentTaskState(plan: AgentPlan): AgentTaskState {
     status: "preview",
     error: "",
     stepsCompleted: 0,
+    pendingConfirmation: null,
   };
 }
 
@@ -557,6 +618,8 @@ function ChatShell() {
   const submitLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const conversationsRef = useRef<ConversationSummary[]>([]);
+  const messagesByConversationRef = useRef<Record<string, ChatMessage[]>>({});
+  const fileCountsByConversationRef = useRef<Record<string, number>>({});
   const typingQueueRef = useRef<string[]>([]);
   const typingTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const typingTargetRef = useRef<{ conversationId: string; assistantId: string } | null>(null);
@@ -988,10 +1051,9 @@ function ChatShell() {
     const serialized = window.localStorage.getItem(storageKey);
 
     if (!serialized) {
-      const summary = buildConversationSummary();
-      setConversations([summary]);
-      setMessagesByConversation({ [summary.id]: [] });
-      setActiveConversationId(summary.id);
+      setConversations([]);
+      setMessagesByConversation({});
+      setActiveConversationId("");
       return;
     }
 
@@ -1010,10 +1072,9 @@ function ChatShell() {
       }));
 
       if (normalizedConversations.length === 0) {
-        const summary = buildConversationSummary();
-        setConversations([summary]);
-        setMessagesByConversation({ [summary.id]: [] });
-        setActiveConversationId(summary.id);
+        setConversations([]);
+        setMessagesByConversation(loadedMessages);
+        setActiveConversationId("");
         return;
       }
 
@@ -1021,12 +1082,79 @@ function ChatShell() {
       setMessagesByConversation(loadedMessages);
       setActiveConversationId(parsed.activeConversationId ?? normalizedConversations[0].id);
     } catch {
-      const summary = buildConversationSummary();
-      setConversations([summary]);
-      setMessagesByConversation({ [summary.id]: [] });
-      setActiveConversationId(summary.id);
+      setConversations([]);
+      setMessagesByConversation({});
+      setActiveConversationId("");
     }
   }, [userId]);
+
+  useEffect(() => {
+    if (!userId || !sessionAuthToken) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function syncConversationsFromBackend() {
+      try {
+        const payload = await getConversations(sessionAuthToken, { userDisplayName });
+        if (isCancelled) {
+          return;
+        }
+
+        const remoteConversations = Array.isArray(payload.conversations) ? payload.conversations : [];
+        setConversations((previous) => {
+          const merged = mergeSyncedConversations(
+            remoteConversations,
+            previous,
+            messagesByConversationRef.current,
+            fileCountsByConversationRef.current
+          );
+
+          if (merged.length === 0) {
+            const draftConversation = buildConversationSummary();
+            setMessagesByConversation((previousMessages) => ({
+              ...previousMessages,
+              [draftConversation.id]: previousMessages[draftConversation.id] ?? [],
+            }));
+            setActiveConversationId((currentActiveId) => currentActiveId || draftConversation.id);
+            return [draftConversation];
+          }
+
+          setActiveConversationId((currentActiveId) => {
+            if (currentActiveId && merged.some((conversation) => conversation.id === currentActiveId)) {
+              return currentActiveId;
+            }
+            return merged[0]?.id ?? "";
+          });
+
+          return merged;
+        });
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+        setConversations((previous) => {
+          if (previous.length > 0) {
+            return previous;
+          }
+          const draftConversation = buildConversationSummary();
+          setMessagesByConversation((previousMessages) => ({
+            ...previousMessages,
+            [draftConversation.id]: previousMessages[draftConversation.id] ?? [],
+          }));
+          setActiveConversationId((currentActiveId) => currentActiveId || draftConversation.id);
+          return [draftConversation];
+        });
+      }
+    }
+
+    void syncConversationsFromBackend();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [sessionAuthToken, userDisplayName, userId]);
 
   useEffect(() => {
     if (!userId || !activeConversationId) {
@@ -1041,6 +1169,57 @@ function ChatShell() {
       })
     );
   }, [userId, conversations, messagesByConversation, activeConversationId]);
+
+  useEffect(() => {
+    if (!activeConversationId || !userId || !sessionAuthToken || isProjectOverviewRoute || isProjectChatRoute) {
+      return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(messagesByConversation, activeConversationId)) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function loadConversationHistory() {
+      try {
+        const activeSummary = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
+        const payload = await getConversationMessages(sessionAuthToken, activeConversationId, {
+          userDisplayName,
+          sessionTitle: activeSummary?.title,
+        });
+        if (isCancelled) {
+          return;
+        }
+
+        const normalizedMessages = normalizeConversationMessages(payload.messages as Record<string, unknown>[]);
+        setMessagesByConversation((previous) => {
+          const currentMessages = previous[activeConversationId];
+          if (Array.isArray(currentMessages) && currentMessages.length > 0) {
+            return previous;
+          }
+          return {
+            ...previous,
+            [activeConversationId]: normalizedMessages,
+          };
+        });
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+        setMessagesByConversation((previous) => ({
+          ...previous,
+          [activeConversationId]: previous[activeConversationId] ?? [],
+        }));
+      }
+    }
+
+    void loadConversationHistory();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeConversationId, conversations, isProjectChatRoute, isProjectOverviewRoute, messagesByConversation, sessionAuthToken, userDisplayName, userId]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1108,6 +1287,14 @@ function ChatShell() {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    messagesByConversationRef.current = messagesByConversation;
+  }, [messagesByConversation]);
+
+  useEffect(() => {
+    fileCountsByConversationRef.current = fileCountsByConversation;
+  }, [fileCountsByConversation]);
 
   function updateConversationSummary(conversationId: string, prompt: string, replyPreview: string) {
     const localTitle = buildLocalConversationTitle(prompt);
@@ -1280,6 +1467,101 @@ function ChatShell() {
       }));
     },
     []
+  );
+
+  const buildAgentStreamCallbacks = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      streamState: { awaitingConfirmation: boolean; completed: boolean }
+    ) => ({
+      onPlan: (plan: AgentPlan) => {
+        updateAgentMessageState(conversationId, messageId, (currentTask) => ({ ...currentTask, plan }));
+      },
+      onStepStart: ({ step_number }: { step_number: number; description: string }) => {
+        updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+          ...currentTask,
+          status: "running",
+          runningStepNumber: step_number,
+        }));
+      },
+      onStepDone: (payload: AgentStepResult) => {
+        updateAgentMessageState(conversationId, messageId, (currentTask) => {
+          const stepTemplate = currentTask.plan.steps.find((step) => step.step_number === payload.step_number);
+          const nextStepResult: AgentStepResult = {
+            step_number: payload.step_number,
+            description: payload.description || stepTemplate?.description || "",
+            tool: payload.tool ?? stepTemplate?.tool ?? null,
+            tool_input: payload.tool_input ?? stepTemplate?.tool_input ?? null,
+            result: payload.result,
+            status: payload.status,
+            error: payload.error ?? null,
+          };
+          const remainingResults = currentTask.stepResults.filter((entry) => entry.step_number !== payload.step_number);
+          return {
+            ...currentTask,
+            stepResults: [...remainingResults, nextStepResult].sort((left, right) => left.step_number - right.step_number),
+            runningStepNumber: null,
+            pendingConfirmation:
+              currentTask.pendingConfirmation?.step_number === payload.step_number ? null : currentTask.pendingConfirmation,
+            status: payload.status === "failed" ? "failed" : currentTask.status,
+          };
+        });
+      },
+      onConfirmationRequired: (payload: AgentPendingConfirmation) => {
+        streamState.awaitingConfirmation = true;
+        updateAgentMessageState(conversationId, messageId, (currentTask) => {
+          const stepTemplate = currentTask.plan.steps.find((step) => step.step_number === payload.step_number);
+          const nextStepResult: AgentStepResult = {
+            step_number: payload.step_number,
+            description: payload.description || stepTemplate?.description || "",
+            tool: payload.action_type ?? stepTemplate?.tool ?? null,
+            tool_input: JSON.stringify(payload.action_payload),
+            result: "",
+            status: "awaiting_confirmation",
+            error: null,
+          };
+          const remainingResults = currentTask.stepResults.filter((entry) => entry.step_number !== payload.step_number);
+          return {
+            ...currentTask,
+            status: "awaiting_confirmation",
+            runningStepNumber: null,
+            pendingConfirmation: payload,
+            stepResults: [...remainingResults, nextStepResult].sort((left, right) => left.step_number - right.step_number),
+          };
+        });
+      },
+      onWarning: (message: string) => {
+        updateAgentMessageState(conversationId, messageId, (currentTask) => ({ ...currentTask, warning: message }));
+      },
+      onSummaryToken: (token: string) => {
+        updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+          ...currentTask,
+          summary: `${currentTask.summary}${token}`,
+        }));
+      },
+      onDone: ({ steps_completed, warning }: { steps_completed: number; warning?: string }) => {
+        streamState.completed = true;
+        updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+          ...currentTask,
+          status: "completed",
+          stepsCompleted: steps_completed,
+          warning: warning ?? currentTask.warning,
+          runningStepNumber: null,
+          pendingConfirmation: null,
+        }));
+      },
+      onError: (message: string) => {
+        updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+          ...currentTask,
+          status: "failed",
+          error: message,
+          runningStepNumber: null,
+        }));
+        setErrorText(message);
+      },
+    }),
+    [updateAgentMessageState]
   );
 
   function removeNotification(notificationId: string) {
@@ -2244,6 +2526,7 @@ function ChatShell() {
       runningStepNumber: null,
       stepResults: [],
       stepsCompleted: 0,
+      pendingConfirmation: null,
     }));
 
     try {
@@ -2252,81 +2535,104 @@ function ChatShell() {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
 
+      const streamState = { awaitingConfirmation: false, completed: false };
       await runAgent(
         authToken,
         agentTask.plan.plan_id,
         conversationId,
-        {
-          onPlan: (plan) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({ ...currentTask, plan }));
-          },
-          onStepStart: ({ step_number }) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
-              ...currentTask,
-              status: "running",
-              runningStepNumber: step_number,
-            }));
-          },
-          onStepDone: (payload) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => {
-              const stepTemplate = currentTask.plan.steps.find((step) => step.step_number === payload.step_number);
-              const nextStepResult: AgentStepResult = {
-                step_number: payload.step_number,
-                description: stepTemplate?.description ?? "",
-                tool: stepTemplate?.tool ?? null,
-                tool_input: stepTemplate?.tool_input ?? null,
-                result: payload.result,
-                status: payload.status,
-                error: payload.error ?? null,
-              };
-              const remainingResults = currentTask.stepResults.filter((entry) => entry.step_number !== payload.step_number);
-              return {
-                ...currentTask,
-                stepResults: [...remainingResults, nextStepResult].sort((left, right) => left.step_number - right.step_number),
-                runningStepNumber: null,
-              };
-            });
-          },
-          onWarning: (message) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({ ...currentTask, warning: message }));
-          },
-          onSummaryToken: (token) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
-              ...currentTask,
-              summary: `${currentTask.summary}${token}`,
-            }));
-          },
-          onDone: ({ steps_completed, warning }) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
-              ...currentTask,
-              status: "completed",
-              stepsCompleted: steps_completed,
-              warning: warning ?? currentTask.warning,
-              runningStepNumber: null,
-            }));
-          },
-          onError: (message) => {
-            updateAgentMessageState(conversationId, messageId, (currentTask) => ({
-              ...currentTask,
-              status: "failed",
-              error: message,
-              runningStepNumber: null,
-            }));
-            setErrorText(message);
-          },
-        },
+        buildAgentStreamCallbacks(conversationId, messageId, streamState),
         controller.signal,
         { userDisplayName, sessionTitle: requestSessionTitle }
       );
 
-      setStreamStatus("completed");
-      updateConversationSummary(conversationId, agentTask.plan.goal, "Agent task completed");
+      if (streamState.awaitingConfirmation) {
+        setStreamStatus("ready");
+        updateConversationSummary(conversationId, agentTask.plan.goal, "Agent action waiting for approval");
+      } else if (streamState.completed) {
+        setStreamStatus("completed");
+        updateConversationSummary(conversationId, agentTask.plan.goal, "Agent task completed");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Agent run failed.";
       setErrorText(message);
       updateAgentMessageState(conversationId, messageId, (currentTask) => ({
         ...currentTask,
         status: "failed",
+        error: message,
+        runningStepNumber: null,
+      }));
+      setStreamStatus("failed");
+    } finally {
+      abortControllerRef.current = null;
+      submitLockRef.current = false;
+      setIsSending(false);
+      setActiveStreamingAssistantId(null);
+    }
+  }
+
+  async function handleAgentConfirmation(messageId: string, approved: boolean) {
+    if (!activeSessionId || isSending) {
+      return;
+    }
+
+    const conversationId = activeSessionId;
+    const requestSessionTitle = isProjectChatRoute
+      ? activeProjectChat?.title?.trim() || "Project chat"
+      : activeConversation?.title?.trim() || "New chat";
+    const targetMessage = (messagesByConversation[conversationId] ?? []).find((message) => message.id === messageId);
+    const agentTask = targetMessage?.agentTask;
+    const pendingConfirmation = agentTask?.pendingConfirmation;
+    if (!agentTask || !pendingConfirmation) {
+      return;
+    }
+
+    submitLockRef.current = true;
+    setIsSending(true);
+    setErrorText("");
+    setStreamStatus("running");
+    setActiveStreamingAssistantId(messageId);
+
+    updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+      ...currentTask,
+      status: "running",
+      runningStepNumber: pendingConfirmation.step_number,
+      error: "",
+    }));
+
+    try {
+      const authToken = await getToken();
+      if (!authToken) {
+        throw new Error("Authentication token unavailable. Please sign in again.");
+      }
+
+      const streamState = { awaitingConfirmation: false, completed: false };
+      await confirmAgentAction(
+        authToken,
+        agentTask.plan.plan_id,
+        {
+          session_id: conversationId,
+          step_number: pendingConfirmation.step_number,
+          approved,
+        },
+        buildAgentStreamCallbacks(conversationId, messageId, streamState),
+        undefined,
+        { userDisplayName, sessionTitle: requestSessionTitle }
+      );
+
+      if (streamState.awaitingConfirmation) {
+        setStreamStatus("ready");
+      } else if (streamState.completed) {
+        setStreamStatus("completed");
+        updateConversationSummary(conversationId, agentTask.plan.goal, "Agent task completed");
+      } else {
+        setStreamStatus("ready");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent confirmation failed.";
+      setErrorText(message);
+      updateAgentMessageState(conversationId, messageId, (currentTask) => ({
+        ...currentTask,
+        status: "awaiting_confirmation",
         error: message,
         runningStepNumber: null,
       }));
@@ -2847,6 +3153,7 @@ function ChatShell() {
                   streamingMessageId={activeStreamingAssistantId}
                   onRetryPrompt={handleRetryPrompt}
                   onRunAgentPlan={handleRunAgentPlan}
+                  onConfirmAgentAction={handleAgentConfirmation}
                   footer={<BrainActivityIndicator activityToken={projectBrainActivityToken} enabled={isProjectChatRoute} />}
                 />
               </section>
@@ -2915,6 +3222,7 @@ function ChatShell() {
               streamingMessageId={activeStreamingAssistantId}
               onRetryPrompt={handleRetryPrompt}
               onRunAgentPlan={handleRunAgentPlan}
+              onConfirmAgentAction={handleAgentConfirmation}
             />
           )}
         </div>

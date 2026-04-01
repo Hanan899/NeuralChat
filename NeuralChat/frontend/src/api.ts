@@ -1,5 +1,5 @@
 import type { EffectiveAccessProfile } from "./access";
-import type { ChatRequest, SearchSource, StreamChunk, UploadedFileItem } from "./types";
+import type { ChatMessage, ChatRequest, ConversationSummary, SearchSource, StreamChunk, UploadedFileItem } from "./types";
 
 // Default to Azure Functions local runtime (`func start`).
 // Override with VITE_API_BASE_URL for hosted backends like Azure App Service.
@@ -33,6 +33,14 @@ export interface DeleteConversationResponse {
   parsed_deleted: number;
   plans_deleted: number;
   logs_deleted: number;
+}
+
+export interface ConversationsResponse {
+  conversations: ConversationSummary[];
+}
+
+export interface ConversationMessagesResponse {
+  messages: ChatMessage[];
 }
 
 export interface RequestNamingContext {
@@ -242,6 +250,32 @@ export async function generateConversationTitle(
     throw new Error(errorText);
   }
   return (await response.json()) as ConversationTitleResponse;
+}
+
+export async function getConversations(authToken: string, naming?: RequestNamingContext): Promise<ConversationsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+    headers: buildProtectedHeaders(authToken, naming),
+  });
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response, "Failed to load conversations.");
+    throw new Error(errorText);
+  }
+  return (await response.json()) as ConversationsResponse;
+}
+
+export async function getConversationMessages(
+  authToken: string,
+  sessionId: string,
+  naming?: RequestNamingContext
+): Promise<ConversationMessagesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/${encodeURIComponent(sessionId)}`, {
+    headers: buildProtectedHeaders(authToken, naming),
+  });
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response, "Failed to load conversation.");
+    throw new Error(errorText);
+  }
+  return (await response.json()) as ConversationMessagesResponse;
 }
 
 export async function patchMemory(authToken: string, key: string, value: string, naming?: RequestNamingContext): Promise<MeResponse> {
