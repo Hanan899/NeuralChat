@@ -18,7 +18,23 @@ export interface UploadedFileItem {
 export interface AgentPlanStep {
   step_number: number;
   description: string;
-  tool: "web_search" | "read_file" | "memory_recall" | null;
+  tool:
+    | "list_projects"
+    | "get_project"
+    | "list_project_chats"
+    | "get_project_chat"
+    | "list_project_files"
+    | "read_project_file"
+    | "read_memory"
+    | "read_usage_summary"
+    | "web_search"
+    | "read_file"
+    | "memory_recall"
+    | "create_project"
+    | "create_project_chat"
+    | "update_memory"
+    | "clear_project_memory"
+    | null;
   tool_input: string | null;
 }
 
@@ -29,13 +45,22 @@ export interface AgentPlan {
   steps: AgentPlanStep[];
 }
 
+export interface AgentPendingConfirmation {
+  step_number: number;
+  description: string;
+  action_type: Exclude<AgentPlanStep["tool"], null>;
+  action_label: string;
+  action_payload: Record<string, unknown>;
+  risk_note?: string | null;
+}
+
 export interface AgentStepResult {
   step_number: number;
   description: string;
-  tool: "web_search" | "read_file" | "memory_recall" | null;
+  tool: AgentPlanStep["tool"];
   tool_input: string | null;
   result: string;
-  status: "done" | "failed";
+  status: "done" | "failed" | "awaiting_confirmation" | "approved" | "rejected";
   error?: string | null;
 }
 
@@ -44,6 +69,7 @@ export interface AgentTaskSummary {
   goal: string;
   created_at: string;
   steps_count: number;
+  status?: string;
 }
 
 export type UsageFeature =
@@ -125,9 +151,10 @@ export interface AgentTaskState {
   runningStepNumber: number | null;
   summary: string;
   warning: string;
-  status: "preview" | "running" | "completed" | "failed";
+  status: "preview" | "running" | "awaiting_confirmation" | "completed" | "failed";
   error: string;
   stepsCompleted: number;
+  pendingConfirmation: AgentPendingConfirmation | null;
 }
 
 export interface ChatMessage {

@@ -9,6 +9,7 @@ interface ChatWindowProps {
   streamingMessageId?: string | null;
   onRetryPrompt?: (prompt: string) => void;
   onRunAgentPlan?: (messageId: string) => void;
+  onConfirmAgentAction?: (messageId: string, approved: boolean) => void;
   footer?: ReactNode;
 }
 
@@ -21,7 +22,7 @@ function findPreviousUserPrompt(messages: ChatMessage[], assistantIndex: number)
   return null;
 }
 
-export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunAgentPlan, footer }: ChatWindowProps) {
+export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunAgentPlan, onConfirmAgentAction, footer }: ChatWindowProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -92,6 +93,9 @@ export function ChatWindow({ messages, streamingMessageId, onRetryPrompt, onRunA
                     : undefined
                 }
                 onRunAgentPlan={message.agentTask && onRunAgentPlan ? () => onRunAgentPlan(message.id) : undefined}
+                onConfirmAgentAction={
+                  message.agentTask && onConfirmAgentAction ? (approved) => onConfirmAgentAction(message.id, approved) : undefined
+                }
               />
             </motion.div>
           ))}

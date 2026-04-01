@@ -1,15 +1,27 @@
 import { getApiBaseUrl, readErrorMessage } from "../api";
 import type { RequestNamingContext } from "../api";
-import type { AgentPlan, AgentStepResult, AgentTaskSummary } from "../types";
+import type {
+  AgentPendingConfirmation,
+  AgentPlan,
+  AgentStepResult,
+  AgentTaskSummary,
+} from "../types";
 
 export interface AgentRunCallbacks {
   onPlan?: (plan: AgentPlan) => void;
   onStepStart?: (payload: { step_number: number; description: string }) => void;
   onStepDone?: (payload: AgentStepResult) => void;
+  onConfirmationRequired?: (payload: AgentPendingConfirmation) => void;
   onWarning?: (message: string) => void;
   onSummaryToken?: (token: string) => void;
   onDone?: (payload: { plan_id: string; steps_completed: number; warning?: string }) => void;
   onError?: (message: string) => void;
+}
+
+export interface AgentConfirmationRequest {
+  session_id: string;
+  step_number: number;
+  approved: boolean;
 }
 
 interface AgentPlanResponse {
@@ -23,6 +35,7 @@ interface AgentHistoryResponse {
 interface AgentTaskDetailResponse {
   plan: AgentPlan;
   log: AgentStepResult[];
+  pending_confirmation?: AgentPendingConfirmation | null;
 }
 
 export async function createAgentPlan(
@@ -69,20 +82,20 @@ export async function createAgentPlanWithNaming(
   return payload.plan;
 }
 
-export async function runAgent(
+async function streamAgentExecution(
+  endpoint: string,
   authToken: string,
-  planId: string,
-  sessionId: string,
+  body: Record<string, unknown>,
   callbacks: AgentRunCallbacks,
   signal?: AbortSignal,
   naming?: RequestNamingContext
 ): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`${getApiBaseUrl()}/api/agent/run/${encodeURIComponent(planId)}`, {
+    response = await fetch(endpoint, {
       method: "POST",
       headers: buildAgentHeaders(authToken, naming),
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify(body),
       signal,
     });
   } catch (error) {
@@ -137,12 +150,23 @@ export async function runAgent(
         if (chunkType === "step_done") {
           callbacks.onStepDone?.({
             step_number: Number(chunk.step_number),
-            description: "",
-            tool: null,
-            tool_input: null,
+            description: String(chunk.description || ""),
+            tool: (chunk.tool as AgentStepResult["tool"]) ?? null,
+            tool_input: typeof chunk.tool_input === "string" ? chunk.tool_input : null,
             result: String(chunk.result || ""),
-            status: chunk.status === "failed" ? "failed" : "done",
+            status: (chunk.status as AgentStepResult["status"]) ?? "done",
             error: typeof chunk.error === "string" ? chunk.error : null,
+          });
+          continue;
+        }
+        if (chunkType === "confirmation_required") {
+          callbacks.onConfirmationRequired?.({
+            step_number: Number(chunk.step_number),
+            description: String(chunk.description || ""),
+            action_type: chunk.action_type as AgentPendingConfirmation["action_type"],
+            action_label: String(chunk.action_label || "Workspace action"),
+            action_payload: (chunk.action_payload as Record<string, unknown>) ?? {},
+            risk_note: typeof chunk.risk_note === "string" ? chunk.risk_note : null,
           });
           continue;
         }
@@ -156,7 +180,7 @@ export async function runAgent(
         }
         if (chunkType === "done") {
           callbacks.onDone?.({
-            plan_id: String(chunk.plan_id || planId),
+            plan_id: String(chunk.plan_id || ""),
             steps_completed: Number(chunk.steps_completed || 0),
             warning: typeof chunk.warning === "string" ? chunk.warning : undefined,
           });
@@ -178,12 +202,48 @@ export async function runAgent(
     const chunk = JSON.parse(buffer) as Record<string, unknown>;
     if (chunk.type === "done") {
       callbacks.onDone?.({
-        plan_id: String(chunk.plan_id || planId),
+        plan_id: String(chunk.plan_id || ""),
         steps_completed: Number(chunk.steps_completed || 0),
         warning: typeof chunk.warning === "string" ? chunk.warning : undefined,
       });
     }
   }
+}
+
+export async function runAgent(
+  authToken: string,
+  planId: string,
+  sessionId: string,
+  callbacks: AgentRunCallbacks,
+  signal?: AbortSignal,
+  naming?: RequestNamingContext
+): Promise<void> {
+  await streamAgentExecution(
+    `${getApiBaseUrl()}/api/agent/run/${encodeURIComponent(planId)}`,
+    authToken,
+    { session_id: sessionId },
+    callbacks,
+    signal,
+    naming
+  );
+}
+
+export async function confirmAgentAction(
+  authToken: string,
+  planId: string,
+  request: AgentConfirmationRequest,
+  callbacks: AgentRunCallbacks,
+  signal?: AbortSignal,
+  naming?: RequestNamingContext
+): Promise<void> {
+  await streamAgentExecution(
+    `${getApiBaseUrl()}/api/agent/confirm/${encodeURIComponent(planId)}`,
+    authToken,
+    request,
+    callbacks,
+    signal,
+    naming
+  );
 }
 
 export async function getAgentHistory(authToken: string, naming?: RequestNamingContext): Promise<AgentTaskSummary[]> {

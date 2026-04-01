@@ -1,4 +1,5 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ const {
   generateConversationTitleMock,
   createAgentPlanMock,
   runAgentMock,
+  confirmAgentActionMock,
   getAgentHistoryMock,
   getAgentTaskMock,
 } = vi.hoisted(() => ({
@@ -38,6 +40,7 @@ const {
     callbacks.onSummaryToken?.("summary");
     callbacks.onDone?.({ plan_id: "plan-1", steps_completed: 1 });
   }),
+  confirmAgentActionMock: vi.fn(),
   getAgentHistoryMock: vi.fn().mockResolvedValue([]),
   getAgentTaskMock: vi.fn().mockResolvedValue({ plan: { plan_id: "plan-1", goal: "Test", steps: [] }, log: [] }),
 }));
@@ -48,6 +51,7 @@ vi.mock("@clerk/clerk-react", () => ({
   SignIn: () => <div>Clerk Sign In</div>,
   useAuth: () => ({ userId: "user_1", getToken: getTokenMock }),
   useUser: () => ({
+    isLoaded: true,
     user: {
       fullName: "Abdul Hanan",
       firstName: "Abdul",
@@ -83,17 +87,76 @@ vi.mock("../api", async (importOriginal) => {
 vi.mock("../api/agent", () => ({
   createAgentPlan: createAgentPlanMock,
   runAgent: runAgentMock,
+  confirmAgentAction: confirmAgentActionMock,
   getAgentHistory: getAgentHistoryMock,
   getAgentTask: getAgentTaskMock,
+}));
+
+vi.mock("../hooks/useAccess", () => ({
+  useAccess: () => ({
+    role: "owner",
+    roleLabel: "Owner",
+    access: {
+      role: "owner",
+      role_label: "Owner",
+      is_owner: true,
+      feature_overrides: {},
+      effective_features: [
+        "chat:create",
+        "project:create",
+        "project:delete",
+        "agent:run",
+        "file:upload",
+        "memory:read",
+        "memory:write",
+        "usage:read",
+        "usage:manage",
+        "billing:manage",
+      ],
+      usage_limits: {
+        daily_limit_usd: 1,
+        monthly_limit_usd: 30,
+      },
+      email: "hanan@example.com",
+      display_name: "Abdul Hanan",
+      seeded_owner: false,
+    },
+    features: [
+      "chat:create",
+      "project:create",
+      "project:delete",
+      "agent:run",
+      "file:upload",
+      "memory:read",
+      "memory:write",
+      "usage:read",
+      "usage:manage",
+      "billing:manage",
+    ],
+    isOwner: true,
+    can: () => true,
+    hasFeature: () => true,
+    isLoaded: true,
+    limits: null,
+  }),
 }));
 
 import App from "../App";
 
 function renderApp() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
   return render(
-    <MemoryRouter>
-      <App />
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
@@ -171,6 +234,69 @@ describe("Agent mode UI", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Final summary")).toBeInTheDocument();
+    });
+  });
+
+  it("test_agent_progress_requests_confirmation_for_workspace_write_actions", async () => {
+    runAgentMock.mockImplementationOnce(async (_token, _planId, _sessionId, callbacks) => {
+      callbacks.onPlan?.({
+        plan_id: "plan-1",
+        goal: "Create a launch workspace",
+        steps: [
+          {
+            step_number: 1,
+            description: "Create the launch project",
+            tool: "create_project",
+            tool_input: '{"name":"Launch Pad"}',
+          },
+        ],
+      });
+      callbacks.onConfirmationRequired?.({
+        step_number: 1,
+        description: "Create the launch project",
+        action_type: "create_project",
+        action_label: "Create project",
+        action_payload: { name: "Launch Pad" },
+        risk_note: "This will add a new project to the workspace.",
+      });
+    });
+    confirmAgentActionMock.mockImplementationOnce(async (_token, _planId, payload, callbacks) => {
+      callbacks.onStepDone?.({
+        step_number: payload.step_number,
+        description: "Create the launch project",
+        tool: "create_project",
+        tool_input: '{"name":"Launch Pad"}',
+        result: "Created project 'Launch Pad'.",
+        status: payload.approved ? "approved" : "rejected",
+        error: null,
+      });
+      callbacks.onDone?.({ plan_id: "plan-1", steps_completed: 1 });
+    });
+
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Create a launch workspace");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Run plan" }));
+
+    expect(await screen.findByText("Workspace action requested")).toBeInTheDocument();
+    expect(screen.getByText("Create project")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirm action" }));
+
+    await waitFor(() => {
+      expect(confirmAgentActionMock).toHaveBeenCalledWith(
+        "token",
+        "plan-1",
+        {
+          session_id: expect.any(String),
+          step_number: 1,
+          approved: true,
+        },
+        expect.any(Object),
+        undefined,
+        expect.any(Object)
+      );
     });
   });
 

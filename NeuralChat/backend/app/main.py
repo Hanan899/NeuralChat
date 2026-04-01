@@ -38,6 +38,7 @@ from app.schemas import (
     build_chat_json_response,
     build_health_response,
     validate_agent_plan_request,
+    validate_agent_confirm_request,
     validate_project_chat_title_request,
     validate_agent_run_request,
     validate_chat_request,
@@ -48,9 +49,11 @@ from app.schemas import (
 from app.services.agent import (
     AGENT_TIMEOUT_SECONDS,
     AVAILABLE_AGENT_TOOLS,
+    build_rejected_action_result,
     create_task_plan,
     create_task_plan_with_usage,
     delete_session_agent_artifacts,
+    execute_confirmed_action,
     list_task_plans,
     load_execution_log,
     load_task_plan,
@@ -1150,6 +1153,232 @@ async def post_agent_plan(
     return {"plan": plan}
 
 
+def _persisted_agent_plan(
+    plan: dict[str, Any],
+    status: str,
+    resume_step_index: int = 0,
+    pending_confirmation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    next_plan = dict(plan)
+    if pending_confirmation is None:
+        next_plan.pop("pending_confirmation", None)
+    else:
+        next_plan["pending_confirmation"] = pending_confirmation
+    next_plan["execution_state"] = {
+        "status": status,
+        "resume_step_index": max(0, int(resume_step_index)),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    return next_plan
+
+
+def _agent_step_log_entry(plan: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "step_number": event.get("step_number"),
+        "description": next(
+            (
+                step.get("description")
+                for step in plan.get("steps", [])
+                if step.get("step_number") == event.get("step_number")
+            ),
+            str(event.get("description", "")).strip(),
+        ),
+        "tool": event.get("tool"),
+        "tool_input": event.get("tool_input"),
+        "result": event.get("result", ""),
+        "status": event.get("status", "failed"),
+        "error": event.get("error"),
+    }
+
+
+async def _stream_agent_run_response(
+    plan: dict[str, Any],
+    plan_id: str,
+    user_id: str,
+    session_id: str,
+    naming: dict[str, str | None],
+    start_step_index: int = 0,
+    execution_log_seed: list[dict[str, Any]] | None = None,
+    warning_seed: str | None = None,
+    prelude_events: list[dict[str, Any]] | None = None,
+):
+    async def stream() -> AsyncIterator[str]:
+        execution_log: list[dict[str, Any]] = list(execution_log_seed or [])
+        warning_message: str | None = warning_seed
+
+        yield json.dumps({"type": "plan", "plan": plan}, ensure_ascii=True) + "\n"
+        for prelude_event in prelude_events or []:
+            yield json.dumps(prelude_event, ensure_ascii=True) + "\n"
+
+        try:
+            async with asyncio.timeout(AGENT_TIMEOUT_SECONDS):
+                async for event in stream_agent_execution(
+                    plan,
+                    user_id,
+                    session_id,
+                    naming["display_name"],
+                    naming["session_title"],
+                    start_step_index=start_step_index,
+                    initial_execution_log=execution_log,
+                    initial_warning_message=warning_message,
+                ):
+                    event_type = str(event.get("type", "")).strip()
+
+                    if event_type == "confirmation_required":
+                        pending_confirmation = {
+                            "step_number": event.get("step_number"),
+                            "description": event.get("description"),
+                            "action_type": event.get("action_type"),
+                            "action_label": event.get("action_label"),
+                            "action_payload": event.get("action_payload"),
+                            "risk_note": event.get("risk_note"),
+                        }
+                        persisted_plan = _persisted_agent_plan(
+                            plan,
+                            "awaiting_confirmation",
+                            int(event.get("resume_step_index", start_step_index)),
+                            pending_confirmation,
+                        )
+                        await asyncio.to_thread(
+                            save_task_plan,
+                            user_id,
+                            persisted_plan,
+                            naming["display_name"],
+                            session_id,
+                            naming["session_title"],
+                        )
+                        await asyncio.to_thread(
+                            save_execution_log,
+                            user_id,
+                            plan_id,
+                            execution_log,
+                            naming["display_name"],
+                            session_id,
+                            naming["session_title"],
+                        )
+                        yield json.dumps({"type": "confirmation_required", **pending_confirmation}, ensure_ascii=True) + "\n"
+                        return
+
+                    if event_type == "final_state":
+                        execution_log = list(event.get("execution_log", execution_log))
+                        warning_message = event.get("warning_message") if isinstance(event.get("warning_message"), str) else warning_message
+                        await asyncio.to_thread(
+                            save_execution_log,
+                            user_id,
+                            plan_id,
+                            execution_log,
+                            naming["display_name"],
+                            session_id,
+                            naming["session_title"],
+                        )
+                        await asyncio.to_thread(
+                            save_task_plan,
+                            user_id,
+                            _persisted_agent_plan(plan, "completed", len(plan.get("steps", []))),
+                            naming["display_name"],
+                            session_id,
+                            naming["session_title"],
+                        )
+                        summary_text = str(event.get("summary", "")).strip()
+                        summary_usage = event.get("summary_usage", {"input_tokens": 0, "output_tokens": 0})
+                        if isinstance(summary_usage, dict):
+                            summary_input_tokens = int(summary_usage.get("input_tokens", 0) or 0)
+                            summary_output_tokens = int(summary_usage.get("output_tokens", 0) or 0)
+                            if summary_input_tokens or summary_output_tokens:
+                                asyncio.create_task(
+                                    asyncio.to_thread(
+                                        log_usage,
+                                        user_id,
+                                        "agent_summary",
+                                        summary_input_tokens,
+                                        summary_output_tokens,
+                                        naming["display_name"],
+                                    )
+                                )
+                        for token in tokenize_text(summary_text):
+                            yield json.dumps({"type": "summary", "content": token}, ensure_ascii=True) + "\n"
+                        yield json.dumps(
+                            {
+                                "type": "done",
+                                "plan_id": plan_id,
+                                "steps_completed": len(execution_log),
+                                "warning": warning_message,
+                            },
+                            ensure_ascii=True,
+                        ) + "\n"
+                        return
+
+                    if event_type == "step_done":
+                        step_usage = event.get("usage", {"input_tokens": 0, "output_tokens": 0})
+                        if isinstance(step_usage, dict):
+                            step_input_tokens = int(step_usage.get("input_tokens", 0) or 0)
+                            step_output_tokens = int(step_usage.get("output_tokens", 0) or 0)
+                            if step_input_tokens or step_output_tokens:
+                                asyncio.create_task(
+                                    asyncio.to_thread(
+                                        log_usage,
+                                        user_id,
+                                        "agent_step",
+                                        step_input_tokens,
+                                        step_output_tokens,
+                                        naming["display_name"],
+                                    )
+                                )
+                        execution_log = [
+                            entry for entry in execution_log if int(entry.get("step_number", 0) or 0) != int(event.get("step_number", 0) or 0)
+                        ] + [_agent_step_log_entry(plan, event)]
+                        execution_log.sort(key=lambda entry: int(entry.get("step_number", 0) or 0))
+
+                    if event_type == "warning":
+                        warning_message = str(event.get("message", "")).strip() or warning_message
+
+                    yield json.dumps(event, ensure_ascii=True) + "\n"
+        except TimeoutError:
+            warning_message = f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds."
+            await asyncio.to_thread(
+                save_execution_log,
+                user_id,
+                plan_id,
+                execution_log,
+                naming["display_name"],
+                session_id,
+                naming["session_title"],
+            )
+            await asyncio.to_thread(
+                save_task_plan,
+                user_id,
+                _persisted_agent_plan(plan, "failed", start_step_index),
+                naming["display_name"],
+                session_id,
+                naming["session_title"],
+            )
+            yield json.dumps({"type": "warning", "message": warning_message}, ensure_ascii=True) + "\n"
+            yield json.dumps({"type": "summary", "content": warning_message}, ensure_ascii=True) + "\n"
+            yield json.dumps({"type": "done", "plan_id": plan_id, "steps_completed": len(execution_log), "warning": warning_message}, ensure_ascii=True) + "\n"
+        except Exception as agent_error:
+            await asyncio.to_thread(
+                save_execution_log,
+                user_id,
+                plan_id,
+                execution_log,
+                naming["display_name"],
+                session_id,
+                naming["session_title"],
+            )
+            await asyncio.to_thread(
+                save_task_plan,
+                user_id,
+                _persisted_agent_plan(plan, "failed", start_step_index),
+                naming["display_name"],
+                session_id,
+                naming["session_title"],
+            )
+            LOGGER.exception("Agent run failed for user=%s plan=%s", user_id, plan_id)
+            yield json.dumps({"type": "error", "message": f"Agent run failed: {agent_error}"}, ensure_ascii=True) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
 @app.post("/api/agent/run/{plan_id}")
 async def post_agent_run(
     plan_id: str,
@@ -1174,148 +1403,124 @@ async def post_agent_run(
     )
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent plan not found.")
+    active_plan = _persisted_agent_plan(plan, "running", 0)
+    await asyncio.to_thread(
+        save_task_plan,
+        user_id,
+        active_plan,
+        naming["display_name"],
+        request["session_id"],
+        naming["session_title"],
+    )
+    return await _stream_agent_run_response(
+        active_plan,
+        plan_id,
+        user_id,
+        request["session_id"],
+        naming,
+    )
 
-    async def stream() -> AsyncIterator[str]:
-        execution_log: list[dict[str, Any]] = []
-        warning_message: str | None = None
 
-        yield json.dumps({"type": "plan", "plan": plan}, ensure_ascii=True) + "\n"
+@app.post("/api/agent/confirm/{plan_id}")
+async def post_agent_confirm(
+    plan_id: str,
+    payload: dict[str, Any] = Body(...),
+    access_context: AccessContext = Depends(require_feature(AppFeature.AGENT_RUN)),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+):
+    user_id = access_context.user_id
+    request = validate_agent_confirm_request(payload)
+    plan = await asyncio.to_thread(
+        load_task_plan,
+        user_id,
+        plan_id,
+        naming["display_name"],
+        request["session_id"],
+        naming["session_title"],
+    )
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent plan not found.")
 
+    pending_confirmation = plan.get("pending_confirmation")
+    if not isinstance(pending_confirmation, dict):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This agent plan is not waiting for confirmation.")
+    if int(pending_confirmation.get("step_number", 0) or 0) != int(request["step_number"]):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The requested step is not the pending confirmation step.")
+
+    execution_state = plan.get("execution_state") if isinstance(plan.get("execution_state"), dict) else {}
+    resume_step_index = int(execution_state.get("resume_step_index", request["step_number"]) or request["step_number"])
+    existing_log = await asyncio.to_thread(
+        load_execution_log,
+        user_id,
+        plan_id,
+        naming["display_name"],
+        request["session_id"],
+        naming["session_title"],
+    )
+
+    if request["approved"]:
         try:
-            async with asyncio.timeout(AGENT_TIMEOUT_SECONDS):
-                async for event in stream_agent_execution(
-                    plan,
-                    user_id,
-                    request["session_id"],
-                    naming["display_name"],
-                    naming["session_title"],
-                ):
-                    event_type = str(event.get("type", "")).strip()
-                    if event_type == "final_state":
-                        execution_log = list(event.get("execution_log", []))
-                        warning_message = event.get("warning_message") if isinstance(event.get("warning_message"), str) else warning_message
-                        await asyncio.to_thread(
-                            save_execution_log,
-                            user_id,
-                            plan_id,
-                            execution_log,
-                            naming["display_name"],
-                            request["session_id"],
-                            naming["session_title"],
-                        )
-                        summary_text = str(event.get("summary", "")).strip()
-                        summary_usage = event.get("summary_usage", {"input_tokens": 0, "output_tokens": 0})
-                        if isinstance(summary_usage, dict):
-                            summary_input_tokens = int(summary_usage.get("input_tokens", 0) or 0)
-                            summary_output_tokens = int(summary_usage.get("output_tokens", 0) or 0)
-                            if summary_input_tokens or summary_output_tokens:
-                                asyncio.create_task(
-                                    asyncio.to_thread(
-                                        log_usage,
-                                        user_id,
-                                        "agent_summary",
-                                        summary_input_tokens,
-                                        summary_output_tokens,
-                                        naming["display_name"],
-                                    )
-                                )
-                        for token in tokenize_text(summary_text):
-                            yield json.dumps({"type": "summary", "content": token}, ensure_ascii=True) + "\n"
-                        yield (
-                            json.dumps(
-                                {
-                                    "type": "done",
-                                    "plan_id": plan_id,
-                                    "steps_completed": len(execution_log),
-                                    "warning": warning_message,
-                                },
-                                ensure_ascii=True,
-                            )
-                            + "\n"
-                        )
-                        return
-
-                    if event_type == "step_done":
-                        step_usage = event.get("usage", {"input_tokens": 0, "output_tokens": 0})
-                        if isinstance(step_usage, dict):
-                            step_input_tokens = int(step_usage.get("input_tokens", 0) or 0)
-                            step_output_tokens = int(step_usage.get("output_tokens", 0) or 0)
-                            if step_input_tokens or step_output_tokens:
-                                asyncio.create_task(
-                                    asyncio.to_thread(
-                                        log_usage,
-                                        user_id,
-                                        "agent_step",
-                                        step_input_tokens,
-                                        step_output_tokens,
-                                        naming["display_name"],
-                                    )
-                                )
-                        execution_log.append(
-                            {
-                                "step_number": event.get("step_number"),
-                                "description": next(
-                                    (
-                                        step.get("description")
-                                        for step in plan.get("steps", [])
-                                        if step.get("step_number") == event.get("step_number")
-                                    ),
-                                    "",
-                                ),
-                                "tool": next(
-                                    (
-                                        step.get("tool")
-                                        for step in plan.get("steps", [])
-                                        if step.get("step_number") == event.get("step_number")
-                                    ),
-                                    None,
-                                ),
-                                "tool_input": next(
-                                    (
-                                        step.get("tool_input")
-                                        for step in plan.get("steps", [])
-                                        if step.get("step_number") == event.get("step_number")
-                                    ),
-                                    None,
-                                ),
-                                "result": event.get("result", ""),
-                                "status": event.get("status", "failed"),
-                                "error": event.get("error"),
-                            }
-                        )
-
-                    if event_type == "warning":
-                        warning_message = str(event.get("message", "")).strip() or warning_message
-
-                    yield json.dumps(event, ensure_ascii=True) + "\n"
-        except TimeoutError:
-            warning_message = f"Agent timed out after {int(AGENT_TIMEOUT_SECONDS)} seconds."
-            await asyncio.to_thread(
-                save_execution_log,
+            confirmation_result = await asyncio.to_thread(
+                execute_confirmed_action,
+                pending_confirmation,
                 user_id,
-                plan_id,
-                execution_log,
                 naming["display_name"],
-                request["session_id"],
-                naming["session_title"],
             )
-            yield json.dumps({"type": "warning", "message": warning_message}, ensure_ascii=True) + "\n"
-            yield json.dumps({"type": "summary", "content": warning_message}, ensure_ascii=True) + "\n"
-            yield json.dumps({"type": "done", "plan_id": plan_id, "steps_completed": len(execution_log)}, ensure_ascii=True) + "\n"
-        except Exception as agent_error:
-            await asyncio.to_thread(
-                save_execution_log,
-                user_id,
-                plan_id,
-                execution_log,
-                naming["display_name"],
-                request["session_id"],
-                naming["session_title"],
-            )
-            LOGGER.exception("Agent run failed for user=%s plan=%s", user_id, plan_id)
-            yield json.dumps({"type": "error", "message": f"Agent run failed: {agent_error}"}, ensure_ascii=True) + "\n"
+        except Exception as confirmation_error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unable to apply the requested action: {confirmation_error}",
+            ) from confirmation_error
+    else:
+        confirmation_result = build_rejected_action_result(pending_confirmation)
 
-    return StreamingResponse(stream(), media_type="application/x-ndjson")
+    updated_log = [entry for entry in existing_log if int(entry.get("step_number", 0) or 0) != int(confirmation_result["step_number"])] + [confirmation_result]
+    updated_log.sort(key=lambda entry: int(entry.get("step_number", 0) or 0))
+    resumed_plan = _persisted_agent_plan(plan, "running", resume_step_index)
+    prelude_events: list[dict[str, Any]] = [
+        {
+            "type": "step_done",
+            "step_number": confirmation_result["step_number"],
+            "description": confirmation_result["description"],
+            "tool": confirmation_result.get("tool"),
+            "tool_input": confirmation_result.get("tool_input"),
+            "result": confirmation_result["result"],
+            "status": confirmation_result["status"],
+            "error": confirmation_result.get("error"),
+            "usage": confirmation_result.get("usage", {"input_tokens": 0, "output_tokens": 0}),
+        }
+    ]
+    if not request["approved"]:
+        prelude_events.insert(0, {"type": "warning", "message": "Action rejected by user. Continuing with remaining steps."})
+    await asyncio.to_thread(
+        save_task_plan,
+        user_id,
+        resumed_plan,
+        naming["display_name"],
+        request["session_id"],
+        naming["session_title"],
+    )
+    await asyncio.to_thread(
+        save_execution_log,
+        user_id,
+        plan_id,
+        updated_log,
+        naming["display_name"],
+        request["session_id"],
+        naming["session_title"],
+    )
+
+    return await _stream_agent_run_response(
+        resumed_plan,
+        plan_id,
+        user_id,
+        request["session_id"],
+        naming,
+        start_step_index=resume_step_index,
+        execution_log_seed=updated_log,
+        warning_seed="Action rejected by user. Continuing with remaining steps." if not request["approved"] else None,
+        prelude_events=prelude_events,
+    )
 
 
 @app.get("/api/agent/history")
@@ -1346,7 +1551,15 @@ async def get_agent_history_detail(plan_id: str, user_id: str = Depends(require_
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent plan not found.")
 
     log = await asyncio.to_thread(load_execution_log, user_id, plan_id)
-    return _cached_json_response(cache_key, {"plan": plan, "log": log}, HOT_CACHE_TTL_SECONDS)
+    return _cached_json_response(
+        cache_key,
+        {
+            "plan": plan,
+            "log": log,
+            "pending_confirmation": plan.get("pending_confirmation"),
+        },
+        HOT_CACHE_TTL_SECONDS,
+    )
 
 
 @app.post("/api/chat")

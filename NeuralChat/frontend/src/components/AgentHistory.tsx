@@ -23,6 +23,8 @@ function StatusDot({ status }: { status: string }) {
       ? "#22c55e"
       : status === "failed"
       ? "#ef4444"
+      : status === "awaiting_confirmation"
+      ? "#2563eb"
       : status === "running"
       ? "#d97706"
       : "var(--text-secondary)";
@@ -135,7 +137,22 @@ export function AgentHistory({ authToken, open, naming, onClose }: AgentHistoryP
     setTaskDetails((prev) => ({ ...prev, [planId]: { loading: true, log: [], error: "" } }));
     try {
       const payload = await getAgentTask(authToken, planId, naming);
-      setTaskDetails((prev) => ({ ...prev, [planId]: { loading: false, log: payload.log, error: "" } }));
+      const pendingStep = payload.pending_confirmation
+        ? [
+            {
+              step_number: payload.pending_confirmation.step_number,
+              description: payload.pending_confirmation.description,
+              tool: payload.pending_confirmation.action_type,
+              tool_input: JSON.stringify(payload.pending_confirmation.action_payload),
+              result: payload.pending_confirmation.risk_note || "Waiting for user confirmation.",
+              status: "awaiting_confirmation" as const,
+              error: null,
+            },
+          ]
+        : [];
+      const mergedLog = [...payload.log.filter((entry) => !pendingStep.some((pending) => pending.step_number === entry.step_number)), ...pendingStep]
+        .sort((left, right) => left.step_number - right.step_number);
+      setTaskDetails((prev) => ({ ...prev, [planId]: { loading: false, log: mergedLog, error: "" } }));
     } catch (err) {
       setTaskDetails((prev) => ({
         ...prev,
@@ -204,7 +221,7 @@ export function AgentHistory({ authToken, open, naming, onClose }: AgentHistoryP
                 <path d="M24 10V18M20 36H28M18 42H30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity="0.3"/>
               </svg>
               <p className="nc-ah-empty__title">No agent tasks yet</p>
-              <p className="nc-ah-empty__sub">Turn on Agent Mode and give me a goal to get started</p>
+              <p className="nc-ah-empty__sub">Turn on Agent Mode to inspect projects, files, memory, and proposed workspace actions</p>
             </div>
           ) : (
             <div className="nc-ah-list">

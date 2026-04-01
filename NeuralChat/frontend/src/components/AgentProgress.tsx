@@ -11,6 +11,7 @@ import type { AgentTaskState } from "../types";
 interface AgentProgressProps {
   task: AgentTaskState;
   onRun?: () => void;
+  onConfirmAction?: (approved: boolean) => void;
 }
 
 // Copy-to-clipboard button shown in the top-right corner of every code block.
@@ -38,7 +39,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function StatusIcon({ status }: { status: "pending" | "running" | "done" | "failed" }) {
+function StatusIcon({ status }: { status: "pending" | "running" | "done" | "failed" | "awaiting_confirmation" | "approved" | "rejected" }) {
   if (status === "done") {
     return (
       <span className="nc-step-badge nc-step-badge--done">
@@ -67,6 +68,15 @@ function StatusIcon({ status }: { status: "pending" | "running" | "done" | "fail
       </span>
     );
   }
+  if (status === "awaiting_confirmation") {
+    return <span className="nc-step-badge nc-step-badge--running">Needs approval</span>;
+  }
+  if (status === "approved") {
+    return <span className="nc-step-badge nc-step-badge--done">Approved</span>;
+  }
+  if (status === "rejected") {
+    return <span className="nc-step-badge nc-step-badge--failed">Rejected</span>;
+  }
   return (
     <span className="nc-step-badge nc-step-badge--pending">
       Pending
@@ -78,9 +88,21 @@ function StatusIcon({ status }: { status: "pending" | "running" | "done" | "fail
 function ToolBadge({ tool }: { tool: string | null | undefined }) {
   if (!tool) return null;
   const labels: Record<string, { icon: string; label: string }> = {
-    web_search:    { icon: "🔍", label: "Web search" },
-    read_file:     { icon: "📄", label: "File" },
+    list_projects: { icon: "📚", label: "Projects" },
+    get_project: { icon: "🗂", label: "Project" },
+    list_project_chats: { icon: "💬", label: "Project chats" },
+    get_project_chat: { icon: "🗨️", label: "Project chat" },
+    list_project_files: { icon: "🗃", label: "Project files" },
+    read_project_file: { icon: "📄", label: "Project file" },
+    read_memory: { icon: "🧠", label: "Memory" },
+    read_usage_summary: { icon: "📊", label: "Usage" },
+    web_search: { icon: "🔍", label: "Web search" },
+    read_file: { icon: "📄", label: "File" },
     memory_recall: { icon: "🧠", label: "Memory" },
+    create_project: { icon: "➕", label: "Create project" },
+    create_project_chat: { icon: "➕", label: "Create chat" },
+    update_memory: { icon: "✍️", label: "Update memory" },
+    clear_project_memory: { icon: "🧹", label: "Clear Project Brain" },
   };
   const meta = labels[tool];
   if (!meta) return null;
@@ -214,7 +236,7 @@ function MarkdownContent({ content, className = "" }: { content: string; classNa
   );
 }
 
-export function AgentProgress({ task, onRun }: AgentProgressProps) {
+export function AgentProgress({ task, onRun, onConfirmAction }: AgentProgressProps) {
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
 
   const steps = useMemo(
@@ -223,7 +245,7 @@ export function AgentProgress({ task, onRun }: AgentProgressProps) {
         const result = task.stepResults.find((item) => item.step_number === step.step_number);
         const status = (
           result?.status ?? (task.runningStepNumber === step.step_number ? "running" : "pending")
-        ) as "done" | "running" | "failed" | "pending";
+        ) as "done" | "running" | "failed" | "pending" | "awaiting_confirmation" | "approved" | "rejected";
         return {
           ...step,
           status,
@@ -234,12 +256,13 @@ export function AgentProgress({ task, onRun }: AgentProgressProps) {
     [task]
   );
 
-  const completedCount = steps.filter((s) => s.status === "done").length;
+  const completedCount = steps.filter((s) => s.status === "done" || s.status === "approved" || s.status === "rejected").length;
   const totalCount = steps.length;
   const progressPct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
   const isRunning = task.status === "running";
   const isCompleted = task.status === "completed";
   const isFailed = task.status === "failed";
+  const isAwaitingConfirmation = task.status === "awaiting_confirmation";
 
   return (
     <section className="nc-agent-card" data-testid="agent-progress">
@@ -285,7 +308,15 @@ export function AgentProgress({ task, onRun }: AgentProgressProps) {
             </button>
           ) : (
             <span className={`nc-agent-status-pill nc-agent-status-pill--${task.status}`}>
-              {isCompleted ? "✓ Completed" : isFailed ? "✗ Failed" : isRunning ? "Running…" : task.status}
+              {isCompleted
+                ? "✓ Completed"
+                : isFailed
+                ? "✗ Failed"
+                : isAwaitingConfirmation
+                ? "Waiting for approval"
+                : isRunning
+                ? "Running…"
+                : task.status}
             </span>
           )}
         </div>
@@ -336,10 +367,20 @@ export function AgentProgress({ task, onRun }: AgentProgressProps) {
                       <svg viewBox="0 0 12 12" fill="none" width="9" height="9">
                         <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
+                    ) : step.status === "approved" ? (
+                      <svg viewBox="0 0 12 12" fill="none" width="9" height="9">
+                        <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    ) : step.status === "rejected" ? (
+                      <svg viewBox="0 0 12 12" fill="none" width="9" height="9">
+                        <path d="M3 6H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
                     ) : step.status === "failed" ? (
                       <svg viewBox="0 0 12 12" fill="none" width="9" height="9">
                         <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                       </svg>
+                    ) : step.status === "awaiting_confirmation" ? (
+                      <span style={{ fontSize: "9px", fontWeight: 700, lineHeight: 1 }}>!</span>
                     ) : step.status === "running" ? (
                       <span style={{ width: 7, height: 7, borderRadius: "999px", background: "currentColor", display: "inline-block", animation: "nc-pulse-dot 1.2s ease-in-out infinite" }} />
                     ) : (
@@ -390,6 +431,68 @@ export function AgentProgress({ task, onRun }: AgentProgressProps) {
         })}
       </ol>
 
+      {task.pendingConfirmation ? (
+        <div
+          className="nc-agent-warning-v2"
+          style={{
+            display: "grid",
+            gap: "0.8rem",
+            alignItems: "stretch",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.25rem" }}>
+              Workspace action requested
+            </div>
+            <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.35rem" }}>
+              {task.pendingConfirmation.action_label}
+            </div>
+            <div style={{ fontSize: "0.88rem", color: "var(--text-secondary)" }}>
+              {task.pendingConfirmation.description}
+            </div>
+            {task.pendingConfirmation.risk_note ? (
+              <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.5rem" }}>
+                {task.pendingConfirmation.risk_note}
+              </div>
+            ) : null}
+            <pre
+              style={{
+                margin: "0.75rem 0 0",
+                padding: "0.75rem",
+                borderRadius: "12px",
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-subtle)",
+                overflowX: "auto",
+                fontSize: "0.75rem",
+                lineHeight: 1.5,
+                color: "var(--text-secondary)",
+              }}
+            >
+              {JSON.stringify(task.pendingConfirmation.action_payload, null, 2)}
+            </pre>
+          </div>
+          {onConfirmAction ? (
+            <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+              <button type="button" className="nc-agent-run-btn" onClick={() => onConfirmAction(true)}>
+                Confirm action
+              </button>
+              <button
+                type="button"
+                className="nc-agent-run-btn"
+                style={{
+                  background: "transparent",
+                  color: "var(--text-secondary)",
+                  borderColor: "var(--border-subtle)",
+                }}
+                onClick={() => onConfirmAction(false)}
+              >
+                Reject and continue
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* ── Warning ── */}
       {task.warning ? (
         <div className="nc-agent-warning-v2">
@@ -427,7 +530,7 @@ export function AgentProgress({ task, onRun }: AgentProgressProps) {
               </div>
             ) : (
               <p className="nc-agent-summary-v2__placeholder">
-                Run the plan to see results here.
+                Run the plan to inspect projects, files, memory, and any proposed workspace actions here.
               </p>
             )}
           </div>
