@@ -124,7 +124,7 @@ from app.services.projects import (
     update_project,
 )
 from app.services.search import cache_search_results, format_search_context, load_cached_results, search_web
-from app.services.storage import delete_conversation_session, init_store
+from app.services.storage import delete_conversation_session, init_store, list_conversation_summaries, load_messages
 from app.services.titles import generate_conversation_title, generate_conversation_title_with_usage
 
 APP_VERSION = "0.3.0"
@@ -1017,6 +1017,54 @@ async def get_files(
     return _cached_json_response(cache_key, {"files": files}, HOT_CACHE_TTL_SECONDS)
 
 
+@app.get("/api/conversations")
+async def get_conversations(
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, list[dict[str, Any]]]:
+    cache_key = _cache_key("conversations", user_id, naming["display_name"] or "", "index")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
+
+    try:
+        conversations = await asyncio.to_thread(list_conversation_summaries, STORE, user_id, naming["display_name"])
+    except Exception as conversation_error:
+        LOGGER.exception("Conversation list load failed for user=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load conversations: {conversation_error}",
+        ) from conversation_error
+
+    return _cached_json_response(cache_key, {"conversations": conversations}, READ_CACHE_TTL_SECONDS)
+
+
+@app.get("/api/conversations/{session_id}")
+async def get_conversation_messages(
+    session_id: str,
+    user_id: str = Depends(require_user_id),
+    naming: dict[str, str | None] = Depends(get_request_naming),
+) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_id is required.")
+
+    cache_key = _cache_key("conversations", user_id, naming["display_name"] or "", session_id, "messages")
+    cached_response = _read_cached_json_response(cache_key)
+    if cached_response is not None:
+        return cached_response
+
+    try:
+        messages = await asyncio.to_thread(load_messages, STORE, user_id, session_id, naming["display_name"], naming["session_title"])
+    except Exception as conversation_error:
+        LOGGER.exception("Conversation load failed for user=%s session=%s", user_id, session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load conversation: {conversation_error}",
+        ) from conversation_error
+
+    return _cached_json_response(cache_key, {"messages": messages}, READ_CACHE_TTL_SECONDS)
+
+
 @app.delete("/api/files/{filename}")
 async def delete_file(
     filename: str,
@@ -1100,7 +1148,11 @@ async def delete_conversation(
             _cache_key("projects", user_id, naming["display_name"] or "", clean_project_id, "chat", session_id),
         )
     else:
-        _invalidate_cache_prefixes(_cache_key("files", user_id, naming["display_name"] or "", session_id))
+        _invalidate_cache_prefixes(
+            _cache_key("files", user_id, naming["display_name"] or "", session_id),
+            _cache_key("conversations", user_id, naming["display_name"] or "", "index"),
+            _cache_key("conversations", user_id, naming["display_name"] or "", session_id, "messages"),
+        )
 
     return {
         "message": "Conversation deleted successfully",
@@ -1121,7 +1173,12 @@ async def post_agent_plan(
     request = validate_agent_plan_request(payload)
 
     try:
-        plan, usage = await create_task_plan_with_usage(request["goal"], AVAILABLE_AGENT_TOOLS)
+        plan, usage = await create_task_plan_with_usage(
+            request["goal"],
+            AVAILABLE_AGENT_TOOLS,
+            request.get("recent_context"),
+            request.get("session_mode"),
+        )
         save_task_plan(
             user_id,
             plan,
@@ -1621,6 +1678,10 @@ async def post_chat(
         )
         memory_prompt = await asyncio.to_thread(build_project_system_prompt, user_id, request["project_id"], naming["display_name"])
     else:
+        _invalidate_cache_prefixes(
+            _cache_key("conversations", user_id, naming["display_name"] or "", "index"),
+            _cache_key("conversations", user_id, naming["display_name"] or "", request["session_id"], "messages"),
+        )
         save_user_message(
             request=request,
             request_id=request_id,

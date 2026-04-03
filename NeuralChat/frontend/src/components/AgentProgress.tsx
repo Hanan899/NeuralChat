@@ -88,6 +88,7 @@ function StatusIcon({ status }: { status: "pending" | "running" | "done" | "fail
 function ToolBadge({ tool }: { tool: string | null | undefined }) {
   if (!tool) return null;
   const labels: Record<string, { icon: string; label: string }> = {
+    clarify: { icon: "❓", label: "Clarify" },
     list_projects: { icon: "📚", label: "Projects" },
     get_project: { icon: "🗂", label: "Project" },
     list_project_chats: { icon: "💬", label: "Project chats" },
@@ -99,6 +100,11 @@ function ToolBadge({ tool }: { tool: string | null | undefined }) {
     web_search: { icon: "🔍", label: "Web search" },
     read_file: { icon: "📄", label: "File" },
     memory_recall: { icon: "🧠", label: "Memory" },
+    inspect_repo: { icon: "🧭", label: "Repo map" },
+    read_code_file: { icon: "📄", label: "Code file" },
+    search_codebase: { icon: "🧪", label: "Code search" },
+    run_command: { icon: "⌘", label: "Command" },
+    run_tests: { icon: "✅", label: "Tests" },
     create_project: { icon: "➕", label: "Create project" },
     create_project_chat: { icon: "➕", label: "Create chat" },
     update_memory: { icon: "✍️", label: "Update memory" },
@@ -238,6 +244,20 @@ function MarkdownContent({ content, className = "" }: { content: string; classNa
 
 export function AgentProgress({ task, onRun, onConfirmAction }: AgentProgressProps) {
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
+  const modeLabel = useMemo(() => {
+    switch (task.plan.mode) {
+      case "coding":
+        return "Coding";
+      case "workspace_read":
+      case "workspace_write":
+        return "Workspace";
+      case "clarify":
+        return "Needs clarification";
+      case "research":
+      default:
+        return "Research";
+    }
+  }, [task.plan.mode]);
 
   const steps = useMemo(
     () =>
@@ -295,6 +315,12 @@ export function AgentProgress({ task, onRun, onConfirmAction }: AgentProgressPro
           <div className="nc-agent-header__meta">
             <span className="nc-agent-header__label">Agent plan</span>
             <h3 className="nc-agent-header__goal">{task.plan.goal}</h3>
+            <div style={{ display: "flex", gap: "0.45rem", alignItems: "center", flexWrap: "wrap" }}>
+              <span className="nc-agent-status-pill nc-agent-status-pill--preview">{modeLabel}</span>
+              {task.plan.classification_reason ? (
+                <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{task.plan.classification_reason}</span>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -304,7 +330,7 @@ export function AgentProgress({ task, onRun, onConfirmAction }: AgentProgressPro
               <svg viewBox="0 0 20 20" fill="none" width="13" height="13">
                 <path d="M6 4L16 10L6 16V4Z" fill="currentColor"/>
               </svg>
-              Run plan
+              {task.plan.mode === "clarify" ? "Ask follow-up" : "Run plan"}
             </button>
           ) : (
             <span className={`nc-agent-status-pill nc-agent-status-pill--${task.status}`}>
@@ -444,7 +470,7 @@ export function AgentProgress({ task, onRun, onConfirmAction }: AgentProgressPro
             <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.25rem" }}>
               Workspace action requested
             </div>
-            <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.35rem" }}>
+          <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.35rem" }}>
               {task.pendingConfirmation.action_label}
             </div>
             <div style={{ fontSize: "0.88rem", color: "var(--text-secondary)" }}>
@@ -530,7 +556,11 @@ export function AgentProgress({ task, onRun, onConfirmAction }: AgentProgressPro
               </div>
             ) : (
               <p className="nc-agent-summary-v2__placeholder">
-                Run the plan to inspect projects, files, memory, and any proposed workspace actions here.
+                {task.plan.mode === "coding"
+                  ? "Run the plan to inspect code, verify commands/tests, and summarize what was confirmed."
+                  : task.plan.mode === "clarify"
+                  ? "Run the plan to ask the next clarifying question before doing unnecessary work."
+                  : "Run the plan to research, inspect workspace context, and summarize the best next steps here."}
               </p>
             )}
           </div>

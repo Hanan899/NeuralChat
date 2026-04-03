@@ -20,6 +20,7 @@ const {
   createAgentPlanMock: vi.fn().mockResolvedValue({
     plan_id: "plan-1",
     goal: "Research top Python AI libraries",
+    mode: "research",
     steps: [
       { step_number: 1, description: "Search libraries", tool: "web_search", tool_input: "Python AI libraries" },
       { step_number: 2, description: "Summarize findings", tool: null, tool_input: null },
@@ -27,12 +28,13 @@ const {
     ],
   }),
   runAgentMock: vi.fn().mockImplementation(async (_token, _planId, _sessionId, callbacks) => {
-    callbacks.onPlan?.({
-      plan_id: "plan-1",
-      goal: "Research top Python AI libraries",
-      steps: [
-        { step_number: 1, description: "Search libraries", tool: "web_search", tool_input: "Python AI libraries" },
-      ],
+      callbacks.onPlan?.({
+        plan_id: "plan-1",
+        goal: "Research top Python AI libraries",
+        mode: "research",
+        steps: [
+          { step_number: 1, description: "Search libraries", tool: "web_search", tool_input: "Python AI libraries" },
+        ],
     });
     callbacks.onStepStart?.({ step_number: 1, description: "Search libraries" });
     callbacks.onStepDone?.({ step_number: 1, description: "", tool: null, tool_input: null, result: "LangChain", status: "done", error: null });
@@ -197,6 +199,26 @@ describe("Agent mode UI", () => {
     expect(await screen.findByText("Search libraries")).toBeInTheDocument();
     expect(screen.getByText("Summarize findings")).toBeInTheDocument();
     expect(screen.getByText("Write final answer")).toBeInTheDocument();
+    expect(screen.getByText("Research")).toBeInTheDocument();
+  });
+
+  it("test_agent_progress_shows_coding_mode_badge", async () => {
+    createAgentPlanMock.mockResolvedValueOnce({
+      plan_id: "plan-code",
+      goal: "Debug App.tsx errors",
+      mode: "coding",
+      steps: [
+        { step_number: 1, description: "Inspect repo files", tool: "inspect_repo", tool_input: '{"path":"frontend/src"}' },
+      ],
+    });
+
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Debug App.tsx errors");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByText("Coding")).toBeInTheDocument();
+    expect(screen.getByText("Inspect repo files")).toBeInTheDocument();
   });
 
   it("test_agent_progress_step_status_updates_correctly", async () => {

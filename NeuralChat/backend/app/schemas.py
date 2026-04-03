@@ -47,7 +47,7 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_agent_plan_request(payload: dict[str, Any]) -> dict[str, str]:
+def validate_agent_plan_request(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize POST /api/agent/plan payload."""
     session_id = payload.get("session_id", "")
     if not isinstance(session_id, str) or not (1 <= len(session_id) <= 128):
@@ -57,7 +57,54 @@ def validate_agent_plan_request(payload: dict[str, Any]) -> dict[str, str]:
     if not isinstance(goal, str) or not (1 <= len(goal) <= 12000):
         raise HTTPException(status_code=422, detail="goal must be a non-empty string (max 12000).")
 
-    return {"session_id": session_id, "goal": goal}
+    session_mode = payload.get("session_mode")
+    if session_mode is not None and (not isinstance(session_mode, str) or len(session_mode.strip()) > 64):
+        raise HTTPException(status_code=422, detail="session_mode must be a string (max 64).")
+
+    project_id = payload.get("project_id")
+    if project_id is not None and (not isinstance(project_id, str) or not (1 <= len(project_id.strip()) <= 128)):
+        raise HTTPException(status_code=422, detail="project_id must be a non-empty string (max 128).")
+
+    recent_context = payload.get("recent_context", [])
+    if recent_context is None:
+        recent_context = []
+    if not isinstance(recent_context, list):
+        raise HTTPException(status_code=422, detail="recent_context must be an array.")
+    if len(recent_context) > 12:
+        raise HTTPException(status_code=422, detail="recent_context must contain 12 items or fewer.")
+
+    normalized_context: list[dict[str, str]] = []
+    for item in recent_context:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=422, detail="recent_context entries must be objects.")
+        role = item.get("role", "")
+        if role is not None and not isinstance(role, str):
+            raise HTTPException(status_code=422, detail="recent_context.role must be a string.")
+        content = item.get("content", "")
+        if content is not None and not isinstance(content, str):
+            raise HTTPException(status_code=422, detail="recent_context.content must be a string.")
+        summary = item.get("summary", "")
+        if summary is not None and not isinstance(summary, str):
+            raise HTTPException(status_code=422, detail="recent_context.summary must be a string.")
+        source = item.get("source", "")
+        if source is not None and not isinstance(source, str):
+            raise HTTPException(status_code=422, detail="recent_context.source must be a string.")
+        normalized_context.append(
+            {
+                "role": (role or "").strip(),
+                "content": (content or "").strip(),
+                "summary": (summary or "").strip(),
+                "source": (source or "").strip(),
+            }
+        )
+
+    return {
+        "session_id": session_id,
+        "goal": goal,
+        "session_mode": session_mode.strip() if isinstance(session_mode, str) and session_mode.strip() else None,
+        "project_id": project_id.strip() if isinstance(project_id, str) and project_id.strip() else None,
+        "recent_context": normalized_context,
+    }
 
 
 def validate_agent_run_request(payload: dict[str, Any]) -> dict[str, str]:

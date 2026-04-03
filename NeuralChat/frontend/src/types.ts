@@ -15,10 +15,20 @@ export interface UploadedFileItem {
   blob_path: string;
 }
 
+export type AgentMode = "research" | "coding" | "workspace_read" | "workspace_write" | "clarify";
+
+export interface AgentContextMessage {
+  role: ChatRole;
+  content?: string;
+  summary?: string;
+  source?: "session" | "agent";
+}
+
 export interface AgentPlanStep {
   step_number: number;
   description: string;
   tool:
+    | "clarify"
     | "list_projects"
     | "get_project"
     | "list_project_chats"
@@ -30,6 +40,11 @@ export interface AgentPlanStep {
     | "web_search"
     | "read_file"
     | "memory_recall"
+    | "inspect_repo"
+    | "read_code_file"
+    | "search_codebase"
+    | "run_command"
+    | "run_tests"
     | "create_project"
     | "create_project_chat"
     | "update_memory"
@@ -41,6 +56,9 @@ export interface AgentPlanStep {
 export interface AgentPlan {
   plan_id: string;
   goal: string;
+  mode?: AgentMode;
+  classification_reason?: string;
+  clarification_question?: string;
   created_at?: string;
   steps: AgentPlanStep[];
 }
