@@ -119,6 +119,28 @@ async def test_create_task_plan_truncates_to_6_steps_max():
     assert len(plan["steps"]) == 6
 
 
+def test_classify_agent_request_prefers_research_for_broad_requests():
+    classification = agent._classify_agent_request("make a crawler to get different website data", [])
+    assert classification["mode"] == "research"
+
+
+def test_classify_agent_request_uses_current_session_context_for_short_follow_up():
+    classification = agent._classify_agent_request(
+        "MCP + Playwright",
+        [{"role": "assistant", "content": "We were discussing coding libraries and crawler implementation.", "source": "session"}],
+    )
+    assert classification["mode"] == "coding"
+
+
+@pytest.mark.asyncio
+async def test_create_task_plan_returns_clarify_mode_for_short_vague_prompt_without_context():
+    plan, usage = await agent.create_task_plan_with_usage("Playwright?", agent.AVAILABLE_AGENT_TOOLS, [])
+    assert usage == {"input_tokens": 0, "output_tokens": 0}
+    assert plan["mode"] == "clarify"
+    assert plan["steps"][0]["tool"] == "clarify"
+    assert "clarify" in plan["steps"][0]["description"].lower() or "what would you like" in plan["steps"][0]["description"].lower()
+
+
 # This test checks web_search routing because tool steps must call the correct backend integration.
 @pytest.mark.asyncio
 async def test_execute_step_routes_to_web_search():
@@ -150,6 +172,36 @@ async def test_execute_step_routes_to_memory_recall():
 
     assert result["status"] == "done"
     assert "Ali" in result["result"]
+
+
+@pytest.mark.asyncio
+async def test_execute_step_reads_code_file_from_repo(tmp_path):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    file_path = repo_root / "sample.py"
+    file_path.write_text("print('hello')\n", encoding="utf-8")
+
+    step = {"tool": "read_code_file", "tool_input": json.dumps({"path": "sample.py"}), "step_number": 4, "description": "Inspect sample"}
+    with patch.dict(os.environ, {"NEURALCHAT_AGENT_REPO_ROOT": str(repo_root)}, clear=False):
+        result = await agent.execute_step(step, "user1", "sess1")
+
+    assert result["status"] == "done"
+    assert "print('hello')" in result["result"]
+
+
+@pytest.mark.asyncio
+async def test_execute_step_reports_when_trusted_command_execution_is_disabled():
+    step = {
+        "tool": "run_tests",
+        "tool_input": json.dumps({"command": ["pytest", "-q"]}),
+        "step_number": 5,
+        "description": "Run tests",
+    }
+    with patch.dict(os.environ, {"NEURALCHAT_AGENT_TRUSTED_EXECUTION": "false"}, clear=False):
+        result = await agent.execute_step(step, "user1", "sess1")
+
+    assert result["status"] == "done"
+    assert "disabled" in result["result"].lower()
 
 
 # This test checks null-tool reasoning because the agent needs a no-tool reasoning path.

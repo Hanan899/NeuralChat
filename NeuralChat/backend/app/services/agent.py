@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import time
 import uuid
 import asyncio
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional, TypedDict
+from typing import Any, AsyncIterator, Literal, Optional, TypedDict
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContainerClient
@@ -59,6 +61,18 @@ AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 DEFAULT_AGENTS_CONTAINER = "neurarchat-agents"
 MAX_AGENT_STEPS = 6
 AGENT_TIMEOUT_SECONDS = 60.0
+DEFAULT_AGENT_CONTEXT_TURNS = 8
+MAX_AGENT_COMMAND_OUTPUT_CHARS = 12000
+AGENT_REPO_ROOT = Path(__file__).resolve().parents[3]
+AgentMode = Literal["research", "coding", "workspace_read", "workspace_write", "clarify"]
+
+CODING_AGENT_TOOLS = [
+    "inspect_repo",
+    "read_code_file",
+    "search_codebase",
+    "run_command",
+    "run_tests",
+]
 READ_ONLY_AGENT_TOOLS = [
     "list_projects",
     "get_project",
@@ -71,6 +85,8 @@ READ_ONLY_AGENT_TOOLS = [
     "web_search",
     "read_file",
     "memory_recall",
+    *CODING_AGENT_TOOLS,
+    "clarify",
 ]
 WRITE_INTENT_AGENT_TOOLS = [
     "create_project",
@@ -81,23 +97,31 @@ WRITE_INTENT_AGENT_TOOLS = [
 AVAILABLE_AGENT_TOOLS = READ_ONLY_AGENT_TOOLS + WRITE_INTENT_AGENT_TOOLS
 PLANNER_SYSTEM_PROMPT = (
     "You are a task planner for NeuralChat Agent. Break the goal into clear steps. "
-    "Prefer workspace tools before web search. "
+    "Default to research and analysis first. "
     "Available tools: __AVAILABLE_TOOLS__. "
     "IMPORTANT TOOL RULES: "
-    "- Use workspace tools first for projects, project chats, project files, memory, and usage. "
+    "- Use the provided request classification and current session context when planning. "
+    "- Prefer research, repo inspection, and code verification before any workspace write action. "
+    "- Only use workspace write tools when the user explicitly asked for a project/chat/memory change. "
     "- Only use 'web_search' when current or external information is actually needed. "
     "- Only use 'read_file' if the user explicitly refers to chat-uploaded files or attachments. "
+    "- Use coding tools for debugging, verification, and implementation research inside the repo. "
+    "- Use 'clarify' when the request is too vague to plan safely and the next best action is to ask one short follow-up question. "
     "- Use null for pure reasoning steps that need no external data. "
     "- For tools that target a project, chat, file, or memory action, make tool_input a JSON object string. "
+    "- For coding tools, prefer JSON tool_input so paths, queries, and commands are explicit. "
     "- For write-intent tools ('create_project', 'create_project_chat', 'update_memory', 'clear_project_memory'), "
     "  emit the action explicitly. These actions require user confirmation before execution. "
     "- Use simple JSON inputs, for example: "
     "  {\"project_name\":\"Marketing Site\"}, "
     "  {\"project_name\":\"Marketing Site\",\"filename\":\"brief.md\",\"query\":\"launch goals\"}, "
     "  {\"name\":\"New Workspace\",\"template\":\"custom\",\"description\":\"optional\"}, "
-    "  {\"scope\":\"project\",\"project_name\":\"Marketing Site\",\"facts\":{\"decision\":\"Use Azure Functions\"}}. "
+    "  {\"scope\":\"project\",\"project_name\":\"Marketing Site\",\"facts\":{\"decision\":\"Use Azure Functions\"}}, "
+    "  {\"path\":\"frontend/src/App.tsx\"}, "
+    "  {\"query\":\"SearchSource\",\"path\":\"frontend/src\"}, "
+    "  {\"command\":[\"npm\",\"run\",\"build\"],\"cwd\":\"frontend\"}. "
     "Return JSON only: "
-    '{{"plan_id": "uuid", "goal": "str", "steps": ['
+    '{{"plan_id": "uuid", "goal": "str", "mode": "research|coding|workspace_read|workspace_write|clarify", "steps": ['
     '{{"step_number": 1, "description": "str", "tool": "str or null", "tool_input": "str or null"}}'
     "]}}"
 )
@@ -144,6 +168,258 @@ class AgentState(TypedDict, total=False):
     warning_message: Optional[str]
     last_event: Optional[dict]
     started_at: float
+
+
+class AgentContextEntry(TypedDict, total=False):
+    role: str
+    content: str
+    source: str
+    summary: str
+
+
+def _normalize_agent_context_entry(raw_entry: Any) -> AgentContextEntry | None:
+    if not isinstance(raw_entry, dict):
+        return None
+
+    role = _clean_text(raw_entry.get("role")).lower()
+    if role not in {"user", "assistant"}:
+        role = "assistant"
+
+    content = _clean_text(raw_entry.get("content"))
+    summary = _clean_text(raw_entry.get("summary"))
+    source = _clean_text(raw_entry.get("source")) or "session"
+
+    if not content and not summary:
+        return None
+
+    entry: AgentContextEntry = {
+        "role": role,
+        "source": source,
+    }
+    if content:
+        entry["content"] = content
+    if summary:
+        entry["summary"] = summary
+    return entry
+
+
+def _normalize_recent_context(raw_context: Any, max_items: int = DEFAULT_AGENT_CONTEXT_TURNS) -> list[AgentContextEntry]:
+    if not isinstance(raw_context, list):
+        return []
+
+    normalized: list[AgentContextEntry] = []
+    for raw_entry in raw_context[-max_items:]:
+        entry = _normalize_agent_context_entry(raw_entry)
+        if entry is not None:
+            normalized.append(entry)
+    return normalized
+
+
+def _render_agent_context_text(recent_context: Sequence[AgentContextEntry]) -> str:
+    if not recent_context:
+        return "No prior session context was provided."
+
+    rendered_lines: list[str] = []
+    for index, entry in enumerate(recent_context, start=1):
+        role_label = "User" if entry.get("role") == "user" else "Assistant"
+        summary_prefix = "Summary: " if entry.get("summary") else ""
+        body = entry.get("summary") or entry.get("content") or ""
+        rendered_lines.append(f"{index}. {role_label}: {summary_prefix}{body}")
+    return "\n".join(rendered_lines)
+
+
+def _contains_any(text: str, needles: Sequence[str]) -> bool:
+    normalized_text = text.casefold()
+    return any(needle.casefold() in normalized_text for needle in needles)
+
+
+def _classify_agent_request(user_goal: str, recent_context: Sequence[AgentContextEntry]) -> dict[str, str | None]:
+    goal_text = _clean_text(user_goal)
+    goal_lower = goal_text.casefold()
+    context_text = " ".join(
+        _clean_text(entry.get("summary") or entry.get("content") or "")
+        for entry in recent_context
+    )
+    combined_text = f"{context_text}\n{goal_text}".strip()
+    combined_lower = combined_text.casefold()
+
+    explicit_workspace_write = _contains_any(
+        goal_lower,
+        (
+            "create project",
+            "new project",
+            "make project",
+            "create chat",
+            "new chat in project",
+            "update memory",
+            "save to memory",
+            "remember this",
+            "clear project brain",
+            "clear project memory",
+        ),
+    )
+    if explicit_workspace_write:
+        return {
+            "mode": "workspace_write",
+            "reason": "The request explicitly asks for a workspace change.",
+            "clarification_question": None,
+        }
+
+    explicit_workspace_read = _contains_any(
+        goal_lower,
+        (
+            "list projects",
+            "show project",
+            "project files",
+            "project chats",
+            "read memory",
+            "usage summary",
+            "project brain",
+        ),
+    )
+    if explicit_workspace_read:
+        return {
+            "mode": "workspace_read",
+            "reason": "The request explicitly asks to inspect workspace data.",
+            "clarification_question": None,
+        }
+
+    word_count = len([part for part in goal_text.split() if part.strip()])
+    research_verbs = {
+        "research",
+        "analyze",
+        "analyse",
+        "explain",
+        "summarize",
+        "summarise",
+        "compare",
+        "investigate",
+        "explore",
+        "review",
+        "study",
+        "plan",
+        "outline",
+        "design",
+    }
+    coding_verbs = {
+        "fix",
+        "debug",
+        "implement",
+        "build",
+        "create",
+        "update",
+        "refactor",
+        "test",
+        "compile",
+        "run",
+        "inspect",
+        "read",
+        "search",
+    }
+    first_word = goal_text.split(maxsplit=1)[0].strip(".,:;!?").lower() if goal_text.strip() else ""
+
+    if word_count <= 3 and not context_text and first_word not in {*research_verbs, *coding_verbs}:
+        return {
+            "mode": "clarify",
+            "reason": "The request is too short to plan safely without more context.",
+            "clarification_question": f"What would you like me to do with '{goal_text}'? For example: research it, design it, or implement it.",
+        }
+
+    coding_signals = (
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".json",
+        "code",
+        "bug",
+        "error",
+        "stack trace",
+        "exception",
+        "failing",
+        "fix",
+        "debug",
+        "implement",
+        "compile",
+        "test",
+        "build",
+        "app.tsx",
+        "main.py",
+        "function_app.py",
+        "playwright",
+        "mcp",
+        "typescript",
+        "python",
+        "react",
+        "fastapi",
+    )
+    if _contains_any(combined_lower, coding_signals):
+        return {
+            "mode": "coding",
+            "reason": "The request is code-oriented and should use repo inspection and verification tools.",
+            "clarification_question": None,
+        }
+
+    if word_count <= 3 and first_word in research_verbs:
+        return {
+            "mode": "research",
+            "reason": "The request is short but still has a clear analytical verb, so research-first planning is appropriate.",
+            "clarification_question": None,
+        }
+
+    if word_count <= 3 and context_text:
+        return {
+            "mode": "research",
+            "reason": "The request is short, but prior session context provides enough signal to continue with research-first planning.",
+            "clarification_question": None,
+        }
+
+    return {
+        "mode": "research",
+        "reason": "The request is broad or analytical, so research-first planning is the safest default.",
+        "clarification_question": None,
+    }
+
+
+def _allowed_tools_for_mode(mode: AgentMode) -> list[str]:
+    if mode == "coding":
+        return [
+            "inspect_repo",
+            "search_codebase",
+            "read_code_file",
+            "run_command",
+            "run_tests",
+            "read_file",
+            "read_memory",
+            "read_usage_summary",
+            "web_search",
+        ]
+    if mode == "workspace_read":
+        return [
+            "list_projects",
+            "get_project",
+            "list_project_chats",
+            "get_project_chat",
+            "list_project_files",
+            "read_project_file",
+            "read_memory",
+            "read_usage_summary",
+            "web_search",
+        ]
+    if mode == "workspace_write":
+        return AVAILABLE_AGENT_TOOLS
+    if mode == "clarify":
+        return ["clarify"]
+    return [
+        "web_search",
+        "read_memory",
+        "read_usage_summary",
+        "read_file",
+        "inspect_repo",
+        "search_codebase",
+        "read_code_file",
+    ]
 
 
 # This helper builds the Azure Blob container used for storing agent plans and execution logs.
@@ -409,6 +685,204 @@ def _build_confirmation_payload(
     }
 
 
+def _agent_repo_root() -> Path:
+    root_override = _clean_text(os.getenv("NEURALCHAT_AGENT_REPO_ROOT"))
+    if root_override:
+        return Path(root_override).expanduser().resolve()
+    return AGENT_REPO_ROOT.resolve()
+
+
+def _trusted_repo_execution_enabled() -> bool:
+    explicit = os.getenv("NEURALCHAT_AGENT_TRUSTED_EXECUTION")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+    # Default to local development only. In hosted environments this stays off unless explicitly enabled.
+    return not bool(os.getenv("WEBSITE_SITE_NAME"))
+
+
+def _resolve_repo_path(path_value: str | None = None) -> Path:
+    repo_root = _agent_repo_root()
+    candidate = repo_root if not path_value else (repo_root / path_value).resolve()
+    if candidate != repo_root and repo_root not in candidate.parents:
+        raise ValueError("Requested path is outside the allowed repository root.")
+    return candidate
+
+
+def _safe_json_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _read_text_file_excerpt(file_path: Path, max_lines: int = 220) -> str:
+    raw_text = file_path.read_text(encoding="utf-8", errors="replace")
+    lines = raw_text.splitlines()
+    selected = lines[:max_lines]
+    rendered = "\n".join(f"{index + 1:>4}: {line}" for index, line in enumerate(selected))
+    if len(lines) > max_lines:
+        rendered += f"\n... ({len(lines) - max_lines} more lines not shown)"
+    return rendered
+
+
+def _inspect_repo_tree(payload: dict[str, Any] | str | None) -> str:
+    payload_dict = payload if isinstance(payload, dict) else {}
+    relative_path = _clean_text(payload_dict.get("path")) if payload_dict else _clean_text(payload)
+    target_path = _resolve_repo_path(relative_path or None)
+    if target_path.is_file():
+        return _format_structured_result(
+            {
+                "path": str(target_path.relative_to(_agent_repo_root())),
+                "type": "file",
+                "size_bytes": target_path.stat().st_size,
+            }
+        )
+
+    if not target_path.exists():
+        raise ValueError(f"Path '{relative_path}' was not found in the repository.")
+
+    entries: list[dict[str, Any]] = []
+    for child in sorted(target_path.iterdir(), key=lambda item: (item.is_file(), item.name.lower()))[:80]:
+        if child.name.startswith(".") and child.name not in {".env.example", ".gitignore"}:
+            continue
+        entries.append(
+            {
+                "name": child.name,
+                "type": "file" if child.is_file() else "directory",
+            }
+        )
+    return _format_structured_result(
+        {
+            "path": "." if target_path == _agent_repo_root() else str(target_path.relative_to(_agent_repo_root())),
+            "entries": entries,
+        }
+    )
+
+
+def _search_codebase(payload: dict[str, Any] | str | None) -> str:
+    payload_dict = payload if isinstance(payload, dict) else {}
+    query = _clean_text(payload_dict.get("query")) or (_clean_text(payload) if isinstance(payload, str) else "")
+    if not query:
+        raise ValueError("search_codebase requires a non-empty query.")
+
+    relative_path = _clean_text(payload_dict.get("path"))
+    search_root = _resolve_repo_path(relative_path or None)
+    command = [
+        "rg",
+        "--line-number",
+        "--hidden",
+        "--glob",
+        "!node_modules",
+        "--glob",
+        "!.git",
+        query,
+        str(search_root),
+    ]
+    completed = asyncio.run(_run_repo_command_async(command, None, allow_readonly_tools=True))
+    return completed
+
+
+def _read_code_file(payload: dict[str, Any] | str | None) -> str:
+    payload_dict = payload if isinstance(payload, dict) else {}
+    relative_path = _clean_text(payload_dict.get("path")) or (_clean_text(payload) if isinstance(payload, str) else "")
+    if not relative_path:
+        raise ValueError("read_code_file requires a repository-relative path.")
+    target_path = _resolve_repo_path(relative_path)
+    if not target_path.exists() or not target_path.is_file():
+        raise ValueError(f"File '{relative_path}' was not found in the repository.")
+    return _read_text_file_excerpt(target_path)
+
+
+def _allowed_repo_command(parts: Sequence[str]) -> bool:
+    if not parts:
+        return False
+    if parts[0] == "rg":
+        return True
+    if parts[0] in {"pytest", "python", "python3"}:
+        if parts[0] == "pytest":
+            return True
+        return len(parts) >= 3 and parts[1] == "-m" and parts[2] in {"pytest", "py_compile"}
+    if parts[0] in {"npm", "pnpm", "yarn"}:
+        joined = " ".join(parts[1:])
+        return any(token in joined for token in ("build", "test", "lint", "vitest", "tsc"))
+    if parts[0] == "npx":
+        return len(parts) >= 2 and parts[1] in {"vitest", "tsc", "playwright"}
+    if parts[0] == "uv":
+        return len(parts) >= 3 and parts[1] == "run" and parts[2] in {"pytest", "python"}
+    return False
+
+
+async def _run_repo_command_async(
+    command_parts: Sequence[str],
+    cwd: str | None,
+    *,
+    allow_readonly_tools: bool = False,
+) -> str:
+    if not command_parts:
+        raise ValueError("No command was provided.")
+
+    normalized_parts = [str(part).strip() for part in command_parts if str(part).strip()]
+    if not normalized_parts:
+        raise ValueError("No command was provided.")
+
+    if not allow_readonly_tools and not _trusted_repo_execution_enabled():
+        return "Trusted command execution is disabled in this environment. Static analysis is still available."
+
+    if not _allowed_repo_command(normalized_parts):
+        raise ValueError("This command is not allowed for Agent Mode.")
+
+    repo_root = _agent_repo_root()
+    working_directory = _resolve_repo_path(cwd or None)
+
+    process = await asyncio.create_subprocess_exec(
+        *normalized_parts,
+        cwd=str(working_directory),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "CI": "1"},
+    )
+    stdout, stderr = await process.communicate()
+    output_text = "\n".join(
+        part for part in [
+            stdout.decode("utf-8", errors="replace").strip(),
+            stderr.decode("utf-8", errors="replace").strip(),
+        ]
+        if part
+    ).strip()
+    if not output_text:
+        output_text = "(no output)"
+    if len(output_text) > MAX_AGENT_COMMAND_OUTPUT_CHARS:
+        output_text = output_text[:MAX_AGENT_COMMAND_OUTPUT_CHARS] + "\n... output truncated ..."
+    return _format_structured_result(
+        {
+            "cwd": "." if working_directory == repo_root else str(working_directory.relative_to(repo_root)),
+            "command": normalized_parts,
+            "exit_code": process.returncode,
+            "output": output_text,
+        }
+    )
+
+
+async def _run_repo_command_from_payload(payload: dict[str, Any] | str | None, tool_name: str) -> str:
+    if isinstance(payload, dict):
+        raw_command = payload.get("command")
+        cwd = _clean_text(payload.get("cwd")) or None
+    else:
+        raw_command = payload
+        cwd = None
+
+    if isinstance(raw_command, list):
+        command_parts = [str(item).strip() for item in raw_command if str(item).strip()]
+    else:
+        command_text = _clean_text(raw_command)
+        if not command_text:
+            if tool_name == "run_tests":
+                raise ValueError("run_tests requires an explicit command, for example {'command':['pytest','-q']}.")
+            raise ValueError("run_command requires a non-empty command.")
+        command_parts = shlex.split(command_text)
+
+    return await _run_repo_command_async(command_parts, cwd)
+
+
 # This helper returns a configured LangChain AzureChatOpenAI model for agent planning and reasoning.
 def _get_agent_model(temperature: float = 0.0, max_tokens: int | None = None) -> AzureChatOpenAI:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
@@ -432,9 +906,17 @@ def _get_agent_model(temperature: float = 0.0, max_tokens: int | None = None) ->
 
 
 # This helper normalizes planner output into the exact persisted plan shape used by the app.
-def _normalize_plan(user_goal: str, raw_plan: Any) -> dict[str, Any]:
+def _normalize_plan(
+    user_goal: str,
+    raw_plan: Any,
+    *,
+    default_mode: AgentMode = "research",
+    classification_reason: str | None = None,
+    clarification_question: str | None = None,
+) -> dict[str, Any]:
     normalized_plan_id = str(uuid.uuid4())
     steps_payload: list[dict[str, Any]] = []
+    normalized_mode: AgentMode = default_mode
 
     if isinstance(raw_plan, dict):
         candidate_plan_id = str(raw_plan.get("plan_id", "")).strip()
@@ -442,6 +924,9 @@ def _normalize_plan(user_goal: str, raw_plan: Any) -> dict[str, Any]:
             normalized_plan_id = candidate_plan_id
 
         normalized_goal = str(raw_plan.get("goal", user_goal)).strip() or user_goal
+        candidate_mode = _clean_text(raw_plan.get("mode")).lower()
+        if candidate_mode in {"research", "coding", "workspace_read", "workspace_write", "clarify"}:
+            normalized_mode = candidate_mode  # type: ignore[assignment]
         raw_steps = raw_plan.get("steps", [])
         if isinstance(raw_steps, list):
             for step_index, raw_step in enumerate(raw_steps[:MAX_AGENT_STEPS], start=1):
@@ -452,7 +937,7 @@ def _normalize_plan(user_goal: str, raw_plan: Any) -> dict[str, Any]:
                     continue
                 tool_value = raw_step.get("tool")
                 normalized_tool = str(tool_value).strip() if isinstance(tool_value, str) and tool_value.strip() else None
-                if normalized_tool not in {*AVAILABLE_AGENT_TOOLS, None}:
+                if normalized_tool not in {*AVAILABLE_AGENT_TOOLS, *CODING_AGENT_TOOLS, "clarify", None}:
                     normalized_tool = None
                 tool_input_value = raw_step.get("tool_input")
                 normalized_tool_input = _normalize_tool_input_value(tool_input_value)
@@ -473,18 +958,24 @@ def _normalize_plan(user_goal: str, raw_plan: Any) -> dict[str, Any]:
         steps_payload = [
             {
                 "step_number": 1,
-                "description": "Reason through the goal and produce a complete answer.",
-                "tool": None,
+                "description": clarification_question or "Reason through the goal and produce a complete answer.",
+                "tool": "clarify" if default_mode == "clarify" else None,
                 "tool_input": user_goal.strip() or None,
             }
         ]
 
-    return {
+    plan_payload = {
         "plan_id": normalized_plan_id,
         "goal": normalized_goal,
+        "mode": normalized_mode,
         "created_at": datetime.now(UTC).isoformat(),
         "steps": steps_payload,
     }
+    if classification_reason:
+        plan_payload["classification_reason"] = classification_reason
+    if clarification_question:
+        plan_payload["clarification_question"] = clarification_question
+    return plan_payload
 
 
 # This helper renders Tavily results into concise plain text for one completed agent step.
@@ -890,11 +1381,39 @@ async def _run_reasoning_step(goal: str, step: dict[str, Any], execution_log: li
 
 
 # This function creates a step-by-step task plan from a user goal using LangChain and returns usage too.
-async def create_task_plan_with_usage(user_goal: str, available_tools: list[str]) -> tuple[dict[str, Any], TokenUsage]:
+async def create_task_plan_with_usage(
+    user_goal: str,
+    available_tools: list[str],
+    recent_context: list[AgentContextEntry] | None = None,
+    session_mode: str | None = None,
+) -> tuple[dict[str, Any], TokenUsage]:
+    normalized_context = _normalize_recent_context(recent_context)
+    classification = _classify_agent_request(user_goal, normalized_context)
+    mode = classification["mode"] or "research"
+    if mode not in {"research", "coding", "workspace_read", "workspace_write", "clarify"}:
+        mode = "research"
+    allowed_tools = [tool for tool in available_tools if tool in _allowed_tools_for_mode(mode)] or ["web_search"]
+
+    if mode == "clarify":
+        return (
+            _normalize_plan(
+                user_goal,
+                {"goal": user_goal, "mode": "clarify", "steps": []},
+                default_mode="clarify",
+                classification_reason=classification["reason"],
+                clarification_question=classification["clarification_question"],
+            ),
+            {"input_tokens": 0, "output_tokens": 0},
+        )
+
     model = _get_agent_model(temperature=0.0, max_tokens=500)
     prompt_text = (
-        PLANNER_SYSTEM_PROMPT.replace("__AVAILABLE_TOOLS__", ", ".join(available_tools))
+        PLANNER_SYSTEM_PROMPT.replace("__AVAILABLE_TOOLS__", ", ".join(allowed_tools))
         + "\n\n"
+        + f"Request classification: {mode}\n"
+        + f"Classification reason: {classification['reason']}\n"
+        + f"Session mode: {session_mode or 'chat'}\n"
+        + f"Current session context:\n{_render_agent_context_text(normalized_context)}\n\n"
         + f"Goal: {user_goal}\nKeep the plan under 6 steps."
     )
 
@@ -908,12 +1427,25 @@ async def create_task_plan_with_usage(user_goal: str, available_tools: list[str]
         )
         raw_text = _extract_message_text(response.content)
         raw_plan = json.loads(raw_text)
-        usage = _extract_response_usage(response)
     except Exception:
-        raw_plan = {"goal": user_goal, "steps": []}
+        raw_plan = {"goal": user_goal, "mode": mode, "steps": []}
         usage = {"input_tokens": 0, "output_tokens": 0}
+    else:
+        try:
+            usage = _extract_response_usage(response)
+        except Exception:
+            usage = {"input_tokens": 0, "output_tokens": 0}
 
-    return _normalize_plan(user_goal, raw_plan), usage
+    return (
+        _normalize_plan(
+            user_goal,
+            raw_plan,
+            default_mode=mode,
+            classification_reason=classification["reason"],
+            clarification_question=classification["clarification_question"],
+        ),
+        usage,
+    )
 
 
 # This function keeps the older plan-only interface for call sites that do not need usage details.
@@ -1008,6 +1540,18 @@ async def execute_step(
 
     try:
         if tool in READ_ONLY_AGENT_TOOLS:
+            if tool == "clarify":
+                question = _clean_text(step.get("description")) or "Could you clarify what you want me to do next?"
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": tool,
+                    "tool_input": tool_input,
+                    "result": question,
+                    "status": "done",
+                    "error": None,
+                }
+
             if tool == "web_search":
                 search_query = tool_input or description
                 results = await asyncio.to_thread(search_web, search_query)
@@ -1064,6 +1608,54 @@ async def execute_step(
                     "tool": tool,
                     "tool_input": tool_input,
                     "result": memory_text,
+                    "status": "done",
+                    "error": None,
+                }
+
+            if tool == "inspect_repo":
+                repo_result = await asyncio.to_thread(_inspect_repo_tree, _parse_tool_input_payload(tool_input))
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": tool,
+                    "tool_input": tool_input,
+                    "result": repo_result,
+                    "status": "done",
+                    "error": None,
+                }
+
+            if tool == "read_code_file":
+                file_result = await asyncio.to_thread(_read_code_file, _parse_tool_input_payload(tool_input))
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": tool,
+                    "tool_input": tool_input,
+                    "result": file_result,
+                    "status": "done",
+                    "error": None,
+                }
+
+            if tool == "search_codebase":
+                search_result = await asyncio.to_thread(_search_codebase, _parse_tool_input_payload(tool_input))
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": tool,
+                    "tool_input": tool_input,
+                    "result": search_result,
+                    "status": "done",
+                    "error": None,
+                }
+
+            if tool in {"run_command", "run_tests"}:
+                command_result = await _run_repo_command_from_payload(_parse_tool_input_payload(tool_input), tool)
+                return {
+                    "step_number": step_number,
+                    "description": description,
+                    "tool": tool,
+                    "tool_input": tool_input,
+                    "result": command_result,
                     "status": "done",
                     "error": None,
                 }

@@ -45,6 +45,7 @@ import { NewChatPage } from "./pages/NewChatPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import type {
+  AgentContextMessage,
   AgentPendingConfirmation,
   AgentPlan,
   AgentStepResult,
@@ -52,6 +53,7 @@ import type {
   ChatMessage,
   ChatModel,
   ConversationSummary,
+  SearchSource,
   StreamChunk,
   ThemeMode,
   UploadedFileItem,
@@ -405,7 +407,9 @@ function isConversationDraft(
   );
 }
 
-function normalizeConversationMessages(messages: Record<string, unknown>[] | undefined): ChatMessage[] {
+function normalizeConversationMessages(
+  messages: ChatMessage[] | Record<string, unknown>[] | undefined
+): ChatMessage[] {
   if (!Array.isArray(messages)) {
     return [];
   }
@@ -482,6 +486,28 @@ function buildAgentTaskState(plan: AgentPlan): AgentTaskState {
     stepsCompleted: 0,
     pendingConfirmation: null,
   };
+}
+
+function buildAgentRecentContext(messages: ChatMessage[], maxItems = 8): AgentContextMessage[] {
+  const normalizedMessages = messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => {
+      const summary = message.agentTask?.summary?.trim() || undefined;
+      const content = message.content.trim() || undefined;
+      if (!summary && !content) {
+        return null;
+      }
+      const entry: AgentContextMessage | null = (!summary && !content) ? null : {
+        role: message.role,
+        content,
+        summary,
+        source: message.agentTask ? "agent" : "session",
+      };
+      return entry;
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null) as AgentContextMessage[];
+
+  return normalizedMessages.slice(-maxItems);
 }
 
 function resolveDisplayName(
@@ -583,6 +609,7 @@ function ChatShell() {
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messagesByConversation, setMessagesByConversation] = useState<Record<string, ChatMessage[]>>({});
+  const [hydratedConversationIds, setHydratedConversationIds] = useState<Record<string, boolean>>({});
   const [fileCountsByConversation, setFileCountsByConversation] = useState<Record<string, number>>({});
   const [filesByConversation, setFilesByConversation] = useState<Record<string, UploadedFileItem[]>>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -742,6 +769,43 @@ function ChatShell() {
       cancelled = true;
     };
   }, [getToken, userId]);
+
+  useEffect(() => {
+    if (!userId || isProjectsIndexRoute || isProjectOverviewRoute || isProjectChatRoute) {
+      return;
+    }
+
+    if (conversations.length > 0 || activeConversationId) {
+      return;
+    }
+
+    const draftConversation = buildConversationSummary();
+    setConversations([draftConversation]);
+    setMessagesByConversation((previous) => ({
+      ...previous,
+      [draftConversation.id]: previous[draftConversation.id] ?? [],
+    }));
+    setHydratedConversationIds((previous) => ({
+      ...previous,
+      [draftConversation.id]: true,
+    }));
+    setFilesByConversation((previous) => ({
+      ...previous,
+      [draftConversation.id]: previous[draftConversation.id] ?? [],
+    }));
+    setFileCountsByConversation((previous) => ({
+      ...previous,
+      [draftConversation.id]: previous[draftConversation.id] ?? 0,
+    }));
+    setActiveConversationId(draftConversation.id);
+  }, [
+    activeConversationId,
+    conversations.length,
+    isProjectChatRoute,
+    isProjectOverviewRoute,
+    isProjectsIndexRoute,
+    userId,
+  ]);
 
   useEffect(() => {
     if (isProjectsIndexRoute || isProjectOverviewRoute || isProjectChatRoute) {
@@ -1074,16 +1138,33 @@ function ChatShell() {
       if (normalizedConversations.length === 0) {
         setConversations([]);
         setMessagesByConversation(loadedMessages);
+        setHydratedConversationIds(
+          Object.fromEntries(
+            Object.entries(loadedMessages).map(([conversationId, loadedHistory]) => [
+              conversationId,
+              Array.isArray(loadedHistory) && loadedHistory.length > 0,
+            ])
+          )
+        );
         setActiveConversationId("");
         return;
       }
 
       setConversations(normalizedConversations);
       setMessagesByConversation(loadedMessages);
+      setHydratedConversationIds(
+        Object.fromEntries(
+          Object.entries(loadedMessages).map(([conversationId, loadedHistory]) => [
+            conversationId,
+            Array.isArray(loadedHistory) && loadedHistory.length > 0,
+          ])
+        )
+      );
       setActiveConversationId(parsed.activeConversationId ?? normalizedConversations[0].id);
     } catch {
       setConversations([]);
       setMessagesByConversation({});
+      setHydratedConversationIds({});
       setActiveConversationId("");
     }
   }, [userId]);
@@ -1111,15 +1192,19 @@ function ChatShell() {
             fileCountsByConversationRef.current
           );
 
-          if (merged.length === 0) {
-            const draftConversation = buildConversationSummary();
-            setMessagesByConversation((previousMessages) => ({
-              ...previousMessages,
-              [draftConversation.id]: previousMessages[draftConversation.id] ?? [],
-            }));
-            setActiveConversationId((currentActiveId) => currentActiveId || draftConversation.id);
-            return [draftConversation];
-          }
+        if (merged.length === 0) {
+          const draftConversation = buildConversationSummary();
+          setMessagesByConversation((previousMessages) => ({
+            ...previousMessages,
+            [draftConversation.id]: previousMessages[draftConversation.id] ?? [],
+          }));
+          setHydratedConversationIds((previousHydrated) => ({
+            ...previousHydrated,
+            [draftConversation.id]: true,
+          }));
+          setActiveConversationId((currentActiveId) => currentActiveId || draftConversation.id);
+          return [draftConversation];
+        }
 
           setActiveConversationId((currentActiveId) => {
             if (currentActiveId && merged.some((conversation) => conversation.id === currentActiveId)) {
@@ -1142,6 +1227,10 @@ function ChatShell() {
           setMessagesByConversation((previousMessages) => ({
             ...previousMessages,
             [draftConversation.id]: previousMessages[draftConversation.id] ?? [],
+          }));
+          setHydratedConversationIds((previousHydrated) => ({
+            ...previousHydrated,
+            [draftConversation.id]: true,
           }));
           setActiveConversationId((currentActiveId) => currentActiveId || draftConversation.id);
           return [draftConversation];
@@ -1175,7 +1264,16 @@ function ChatShell() {
       return;
     }
 
-    if (Object.prototype.hasOwnProperty.call(messagesByConversation, activeConversationId)) {
+    if (hydratedConversationIds[activeConversationId]) {
+      return;
+    }
+
+    const existingMessages = messagesByConversation[activeConversationId];
+    if (Array.isArray(existingMessages) && existingMessages.length > 0) {
+      setHydratedConversationIds((previous) => ({
+        ...previous,
+        [activeConversationId]: true,
+      }));
       return;
     }
 
@@ -1192,7 +1290,7 @@ function ChatShell() {
           return;
         }
 
-        const normalizedMessages = normalizeConversationMessages(payload.messages as Record<string, unknown>[]);
+        const normalizedMessages = normalizeConversationMessages(payload.messages);
         setMessagesByConversation((previous) => {
           const currentMessages = previous[activeConversationId];
           if (Array.isArray(currentMessages) && currentMessages.length > 0) {
@@ -1203,13 +1301,17 @@ function ChatShell() {
             [activeConversationId]: normalizedMessages,
           };
         });
+        setHydratedConversationIds((previous) => ({
+          ...previous,
+          [activeConversationId]: true,
+        }));
       } catch {
         if (isCancelled) {
           return;
         }
-        setMessagesByConversation((previous) => ({
+        setHydratedConversationIds((previous) => ({
           ...previous,
-          [activeConversationId]: previous[activeConversationId] ?? [],
+          [activeConversationId]: false,
         }));
       }
     }
@@ -1219,7 +1321,7 @@ function ChatShell() {
     return () => {
       isCancelled = true;
     };
-  }, [activeConversationId, conversations, isProjectChatRoute, isProjectOverviewRoute, messagesByConversation, sessionAuthToken, userDisplayName, userId]);
+  }, [activeConversationId, conversations, hydratedConversationIds, isProjectChatRoute, isProjectOverviewRoute, messagesByConversation, sessionAuthToken, userDisplayName, userId]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1642,11 +1744,16 @@ function ChatShell() {
     );
 
     if (reusableDraftConversation) {
+      setHydratedConversationIds((previous) => ({
+        ...previous,
+        [reusableDraftConversation.id]: true,
+      }));
       setActiveConversationId(reusableDraftConversation.id);
     } else {
       const next = buildConversationSummary();
       setConversations((previous) => [next, ...previous]);
       setMessagesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+      setHydratedConversationIds((previous) => ({ ...previous, [next.id]: true }));
       setFilesByConversation((previous) => ({ ...previous, [next.id]: [] }));
       setFileCountsByConversation((previous) => ({ ...previous, [next.id]: 0 }));
       setActiveConversationId(next.id);
@@ -2057,6 +2164,10 @@ function ChatShell() {
             ...previousMessages,
             [createdConversation.id]: []
           }));
+          setHydratedConversationIds((previousHydrated) => ({
+            ...previousHydrated,
+            [createdConversation.id]: true,
+          }));
           setActiveConversationId(createdConversation.id);
           return [createdConversation];
         }
@@ -2075,6 +2186,11 @@ function ChatShell() {
       delete next[conversationId];
       return next;
     });
+    setHydratedConversationIds((previous) => {
+      const next = { ...previous };
+      delete next[conversationId];
+      return next;
+    });
 
     setConversations((previous) => {
       let next = previous.filter((conversation) => conversation.id !== conversationId);
@@ -2087,6 +2203,12 @@ function ChatShell() {
             Object.entries(previousMessages).filter(([existingConversationId]) => existingConversationId !== conversationId)
           ),
           [createdConversation.id]: []
+        }));
+        setHydratedConversationIds((previousHydrated) => ({
+          ...Object.fromEntries(
+            Object.entries(previousHydrated).filter(([existingConversationId]) => existingConversationId !== conversationId)
+          ),
+          [createdConversation.id]: true,
         }));
         setFilesByConversation((previousFiles) => ({
           ...Object.fromEntries(
@@ -2188,9 +2310,51 @@ function ChatShell() {
     }
   }
 
+  function ensureActiveChatSessionId(): string | null {
+    if (isProjectChatRoute) {
+      return activeProjectChatId ?? null;
+    }
+
+    if (activeConversationId) {
+      return activeConversationId;
+    }
+
+    const existingConversationId = conversationsRef.current[0]?.id;
+    if (existingConversationId) {
+      setActiveConversationId(existingConversationId);
+      return existingConversationId;
+    }
+
+    const draftConversation = buildConversationSummary();
+    setConversations((previous) => [draftConversation, ...previous]);
+    setMessagesByConversation((previous) => ({
+      ...previous,
+      [draftConversation.id]: previous[draftConversation.id] ?? [],
+    }));
+    setHydratedConversationIds((previous) => ({
+      ...previous,
+      [draftConversation.id]: true,
+    }));
+    setFilesByConversation((previous) => ({
+      ...previous,
+      [draftConversation.id]: previous[draftConversation.id] ?? [],
+    }));
+    setFileCountsByConversation((previous) => ({
+      ...previous,
+      [draftConversation.id]: previous[draftConversation.id] ?? 0,
+    }));
+    setActiveConversationId(draftConversation.id);
+    return draftConversation.id;
+  }
+
   async function submitChatPrompt(rawPrompt: string) {
     const trimmed = rawPrompt.trim();
-    if (!trimmed || isSending || !activeSessionId || submitLockRef.current) {
+    if (!trimmed || isSending || submitLockRef.current) {
+      return;
+    }
+
+    const resolvedSessionId = ensureActiveChatSessionId();
+    if (!resolvedSessionId) {
       return;
     }
     if (isUsageBlocked) {
@@ -2205,12 +2369,14 @@ function ChatShell() {
     setTokensEmitted(0);
     setFirstTokenMs(null);
 
-    const conversationId = activeSessionId;
+    const conversationId = resolvedSessionId;
+    const resolvedConversation =
+      conversationsRef.current.find((conversation) => conversation.id === conversationId) ?? activeConversation;
     const requestSessionTitle = isProjectChatRoute
       ? activeProjectChat?.title?.trim() || buildLocalConversationTitle(trimmed)
-      : activeConversation?.title === "New chat" || !activeConversation?.title
+      : resolvedConversation?.title === "New chat" || !resolvedConversation?.title
       ? buildLocalConversationTitle(trimmed)
-      : activeConversation.title;
+      : resolvedConversation.title;
     if (isProjectChatRoute) {
       setProjectChatLocalTitle(conversationId, requestSessionTitle);
     }
@@ -2247,6 +2413,10 @@ function ChatShell() {
     setMessagesByConversation((previous) => ({
       ...previous,
       [conversationId]: [...(previous[conversationId] ?? []), userMessage, assistantMessage]
+    }));
+    setHydratedConversationIds((previous) => ({
+      ...previous,
+      [conversationId]: true,
     }));
     if (!isProjectChatRoute) {
       updateConversationSummary(conversationId, trimmed, trimmed);
@@ -2391,7 +2561,12 @@ function ChatShell() {
 
   async function submitAgentGoal(rawPrompt: string) {
     const trimmed = rawPrompt.trim();
-    if (!trimmed || isSending || !activeSessionId || submitLockRef.current) {
+    if (!trimmed || isSending || submitLockRef.current) {
+      return;
+    }
+
+    const resolvedSessionId = ensureActiveChatSessionId();
+    if (!resolvedSessionId) {
       return;
     }
     if (!can("agent:run")) {
@@ -2408,12 +2583,14 @@ function ChatShell() {
     setIsSending(true);
     setStreamStatus("planning");
 
-    const conversationId = activeSessionId;
+    const conversationId = resolvedSessionId;
+    const resolvedConversation =
+      conversationsRef.current.find((conversation) => conversation.id === conversationId) ?? activeConversation;
     const requestSessionTitle = isProjectChatRoute
       ? activeProjectChat?.title?.trim() || buildLocalConversationTitle(trimmed)
-      : activeConversation?.title === "New chat" || !activeConversation?.title
+      : resolvedConversation?.title === "New chat" || !resolvedConversation?.title
       ? buildLocalConversationTitle(trimmed)
-      : activeConversation.title;
+      : resolvedConversation.title;
     if (isProjectChatRoute) {
       setProjectChatLocalTitle(conversationId, requestSessionTitle);
     }
@@ -2458,10 +2635,24 @@ function ChatShell() {
         throw new Error("Authentication token unavailable. Please sign in again.");
       }
 
-      const plan = await createAgentPlan(authToken, trimmed, conversationId, {
-        userDisplayName,
-        sessionTitle: requestSessionTitle,
-      });
+      const recentContext = buildAgentRecentContext([
+        ...(messagesByConversationRef.current[conversationId] ?? []),
+        userMessage,
+      ]);
+      const plan = await createAgentPlan(
+        authToken,
+        trimmed,
+        conversationId,
+        {
+          recent_context: recentContext,
+          session_mode: isProjectChatRoute ? "project_chat" : "chat",
+          project_id: activeProjectId ?? undefined,
+        },
+        {
+          userDisplayName,
+          sessionTitle: requestSessionTitle,
+        }
+      );
       updateAgentMessageState(conversationId, assistantId, () => buildAgentTaskState(plan));
       if (!isProjectChatRoute) {
         updateConversationSummary(conversationId, trimmed, `Agent plan ready: ${plan.steps.length} steps`);

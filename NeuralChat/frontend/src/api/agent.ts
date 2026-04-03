@@ -1,6 +1,7 @@
 import { getApiBaseUrl, readErrorMessage } from "../api";
 import type { RequestNamingContext } from "../api";
 import type {
+  AgentContextMessage,
   AgentPendingConfirmation,
   AgentPlan,
   AgentStepResult,
@@ -24,6 +25,12 @@ export interface AgentConfirmationRequest {
   approved: boolean;
 }
 
+export interface AgentPlanRequestContext {
+  recent_context?: AgentContextMessage[];
+  session_mode?: "chat" | "project_chat";
+  project_id?: string;
+}
+
 interface AgentPlanResponse {
   plan: AgentPlan;
 }
@@ -42,9 +49,10 @@ export async function createAgentPlan(
   authToken: string,
   goal: string,
   sessionId: string,
+  context?: AgentPlanRequestContext,
   naming?: RequestNamingContext
 ): Promise<AgentPlan> {
-  return createAgentPlanWithNaming(authToken, goal, sessionId, naming);
+  return createAgentPlanWithNaming(authToken, goal, sessionId, context, naming);
 }
 
 function buildAgentHeaders(authToken: string, naming?: RequestNamingContext): HeadersInit {
@@ -65,12 +73,19 @@ export async function createAgentPlanWithNaming(
   authToken: string,
   goal: string,
   sessionId: string,
+  context?: AgentPlanRequestContext,
   naming?: RequestNamingContext
 ): Promise<AgentPlan> {
   const response = await fetch(`${getApiBaseUrl()}/api/agent/plan`, {
     method: "POST",
     headers: buildAgentHeaders(authToken, naming),
-    body: JSON.stringify({ goal, session_id: sessionId }),
+    body: JSON.stringify({
+      goal,
+      session_id: sessionId,
+      recent_context: context?.recent_context ?? [],
+      session_mode: context?.session_mode,
+      project_id: context?.project_id,
+    }),
   });
 
   if (!response.ok) {

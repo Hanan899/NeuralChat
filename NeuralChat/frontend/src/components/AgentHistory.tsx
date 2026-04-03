@@ -221,7 +221,7 @@ export function AgentHistory({ authToken, open, naming, onClose }: AgentHistoryP
                 <path d="M24 10V18M20 36H28M18 42H30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity="0.3"/>
               </svg>
               <p className="nc-ah-empty__title">No agent tasks yet</p>
-              <p className="nc-ah-empty__sub">Turn on Agent Mode to inspect projects, files, memory, and proposed workspace actions</p>
+              <p className="nc-ah-empty__sub">Turn on Agent Mode to research, inspect code, verify commands, and propose workspace actions when needed</p>
             </div>
           ) : (
             <div className="nc-ah-list">
