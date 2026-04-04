@@ -2503,6 +2503,160 @@ select {
   border-color: var(--border-subtle);
 }
 
+.nc-token-meter {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.nc-token-meter__trigger {
+  height: 32px;
+  min-width: 128px;
+  max-width: 190px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0 10px 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, color 150ms ease;
+}
+
+.nc-token-meter__trigger:hover {
+  background: var(--control-hover-bg);
+  border-color: color-mix(in srgb, var(--accent-primary) 28%, var(--border-subtle));
+}
+
+.nc-token-meter__trigger:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--border-subtle));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.nc-token-meter__trigger--healthy .nc-token-meter__fill {
+  background: linear-gradient(90deg, #78dfb8 0%, #6bc8ff 100%);
+}
+
+.nc-token-meter__trigger--warning .nc-token-meter__fill {
+  background: linear-gradient(90deg, #f6c96a 0%, #f0a45b 100%);
+}
+
+.nc-token-meter__trigger--high .nc-token-meter__fill {
+  background: linear-gradient(90deg, #f38d8d 0%, #e76565 100%);
+}
+
+.nc-token-meter__trigger--quiet {
+  color: var(--text-secondary);
+}
+
+.nc-token-meter__text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.nc-token-meter__bar {
+  position: relative;
+  width: 56px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-tertiary));
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.nc-token-meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  width: 0;
+  background: color-mix(in srgb, var(--accent-primary) 40%, var(--accent-secondary));
+  transition: width 180ms ease;
+}
+
+.nc-token-meter__popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(320px, calc(100vw - 24px));
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-card);
+  padding: 14px;
+  z-index: 30;
+}
+
+.nc-token-meter__header,
+.nc-token-meter__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nc-token-meter__header {
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.nc-token-meter__header strong,
+.nc-token-meter__row strong {
+  color: var(--text-heading);
+  font-weight: 600;
+}
+
+.nc-token-meter__rows,
+.nc-token-meter__session {
+  display: grid;
+  gap: 8px;
+}
+
+.nc-token-meter__row {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.nc-token-meter__row--total {
+  padding-top: 6px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.nc-token-meter__divider {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 12px 0;
+}
+
+.nc-token-meter__section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-bottom: 2px;
+}
+
+.nc-token-meter__empty {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.nc-token-meter__empty strong {
+  color: var(--text-heading);
+  font-size: 13px;
+}
+
 .nc-right-panel {
   border-left: 1px solid var(--border-subtle);
   background: var(--bg-primary);
@@ -6746,7 +6900,8 @@ select {
 
   .nc-topbar-btn,
   .nc-notif-btn,
-  .nc-model-pill {
+  .nc-model-pill,
+  .nc-token-meter__trigger {
     min-height: 34px;
   }
 
@@ -6847,7 +7002,8 @@ select {
 
   .nc-topbar-btn,
   .nc-notif-btn,
-  .nc-model-pill {
+  .nc-model-pill,
+  .nc-token-meter__trigger {
     min-width: 32px;
     height: 32px;
     padding-inline: 10px;
@@ -6855,8 +7011,24 @@ select {
 
   .nc-topbar-btn,
   .nc-topbar h1,
-  .nc-model-pill select {
+  .nc-model-pill select,
+  .nc-token-meter__text {
     font-size: 13px;
+  }
+
+  .nc-token-meter__trigger {
+    min-width: 96px;
+    max-width: 140px;
+    gap: 8px;
+  }
+
+  .nc-token-meter__bar {
+    width: 42px;
+  }
+
+  .nc-token-meter__popover {
+    right: -36px;
+    width: min(300px, calc(100vw - 24px));
   }
 
   .nc-topbar-btn--icon-label {

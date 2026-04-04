@@ -37,6 +37,7 @@ import { FileUpload } from "./components/FileUpload";
 import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
+import { TokenContextMeter } from "./components/TokenContextMeter";
 import type { ShortcutId } from "./components/Sidebar";
 import { useAccess } from "./hooks/useAccess";
 import { useApiQuery } from "./hooks/useApi";
@@ -414,6 +415,10 @@ function normalizeConversationMessages(
     return [];
   }
 
+  const readNumber = (value: unknown): number | undefined => {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  };
+
   return messages
     .filter((message): message is Record<string, unknown> => Boolean(message) && typeof message === "object")
     .map((message) => ({
@@ -423,6 +428,11 @@ function normalizeConversationMessages(
       createdAt: String(message.created_at ?? message.createdAt ?? new Date().toISOString()),
       model: "gpt-5",
       projectId: typeof message.project_id === "string" ? message.project_id : undefined,
+      inputTokens: readNumber(message.input_tokens ?? message.inputTokens),
+      outputTokens: readNumber(message.output_tokens ?? message.outputTokens),
+      totalTokens: readNumber(message.total_tokens ?? message.totalTokens),
+      contextWindowTokens: readNumber(message.context_window_tokens ?? message.contextWindowTokens),
+      contextPercentageUsed: readNumber(message.context_percentage_used ?? message.contextPercentageUsed),
       searchUsed: message.search_used === true,
       fileContextUsed: message.file_context_used === true,
       sources: Array.isArray(message.sources) ? (message.sources as SearchSource[]) : undefined,
@@ -715,6 +725,41 @@ function ChatShell() {
     () => buildProjectChatDisplayTitle(activeProjectChat ?? null, currentMessages),
     [activeProjectChat, currentMessages]
   );
+  const latestTokenUsage = useMemo(
+    () =>
+      [...currentMessages]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === "assistant" &&
+            (typeof message.totalTokens === "number" ||
+              typeof message.inputTokens === "number" ||
+              typeof message.outputTokens === "number")
+        ) ?? null,
+    [currentMessages]
+  );
+  const sessionTokenTotals = useMemo(
+    () =>
+      currentMessages.reduce(
+        (totals, message) => {
+          if (message.role !== "assistant") {
+            return totals;
+          }
+          totals.inputTokens += message.inputTokens ?? 0;
+          totals.outputTokens += message.outputTokens ?? 0;
+          totals.totalTokens += message.totalTokens ?? (message.inputTokens ?? 0) + (message.outputTokens ?? 0);
+          return totals;
+        },
+        { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+      ),
+    [currentMessages]
+  );
+  const showTokenMeter =
+    !isSettingsOpen &&
+    !isProjectsIndexRoute &&
+    !isProjectOverviewRoute &&
+    activeWorkspaceShortcut === null &&
+    Boolean(activeSessionId);
   const healthQuery = useApiQuery<boolean>(["health"], "/api/health", { queryFn: checkHealth });
   const searchStatusQuery = useApiQuery<boolean>(["search-status"], "/api/search/status", { queryFn: checkSearchStatus });
   const projectTemplatesQuery = useApiQuery<Record<string, ProjectTemplate>>(
@@ -967,12 +1012,11 @@ function ChatShell() {
           sessionTitle: activeProjectChat?.title?.trim() || "Project chat",
         });
         if (!cancelled) {
-          const normalizedMessages = messages.map((message, index) => ({
-              ...message,
-              id: message.id || `project-${projectChatId}-${index}`,
-              createdAt: message.createdAt || (message as unknown as Record<string, string>).created_at || new Date().toISOString(),
-              projectId,
-            }));
+          const normalizedMessages = normalizeConversationMessages(messages).map((message, index) => ({
+            ...message,
+            id: message.id || `project-${projectChatId}-${index}`,
+            projectId,
+          }));
           setMessagesByConversation((previous) => ({
             ...previous,
             [projectChatId]: normalizedMessages,
@@ -2484,6 +2528,17 @@ function ChatShell() {
               message.id === assistantId
                 ? {
                     ...message,
+                    inputTokens: typeof chunk.input_tokens === "number" ? chunk.input_tokens : message.inputTokens,
+                    outputTokens: typeof chunk.output_tokens === "number" ? chunk.output_tokens : message.outputTokens,
+                    totalTokens: typeof chunk.total_tokens === "number" ? chunk.total_tokens : message.totalTokens,
+                    contextWindowTokens:
+                      typeof chunk.context_window_tokens === "number"
+                        ? chunk.context_window_tokens
+                        : message.contextWindowTokens,
+                    contextPercentageUsed:
+                      typeof chunk.context_percentage_used === "number"
+                        ? chunk.context_percentage_used
+                        : message.contextPercentageUsed,
                     searchUsed: chunk.search_used === true,
                     fileContextUsed: chunk.file_context_used === true,
                     sources: Array.isArray(chunk.sources) ? chunk.sources : []
@@ -2502,6 +2557,24 @@ function ChatShell() {
       setFirstTokenMs(result.firstTokenMs);
       setTokensEmitted(result.tokensEmitted);
       setStreamStatus("completed");
+      setMessagesByConversation((previous) => ({
+        ...previous,
+        [conversationId]: (previous[conversationId] ?? []).map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                inputTokens: result.inputTokens ?? message.inputTokens,
+                outputTokens: result.outputTokens ?? message.outputTokens,
+                totalTokens: result.totalTokens ?? message.totalTokens,
+                contextWindowTokens: result.contextWindowTokens ?? message.contextWindowTokens,
+                contextPercentageUsed: result.contextPercentageUsed ?? message.contextPercentageUsed,
+                searchUsed: result.searchUsed,
+                fileContextUsed: result.fileContextUsed,
+                sources: result.sources,
+              }
+            : message
+        ),
+      }));
 
       setMessagesByConversation((previous) => ({
         ...previous,
@@ -3127,6 +3200,22 @@ function ChatShell() {
 
             {/* Model selector */}
             <ModelSelector value={model} onChange={setModel} variant="topbar" />
+            {showTokenMeter ? (
+              <TokenContextMeter
+                latestUsage={
+                  latestTokenUsage
+                    ? {
+                        inputTokens: latestTokenUsage.inputTokens,
+                        outputTokens: latestTokenUsage.outputTokens,
+                        totalTokens: latestTokenUsage.totalTokens,
+                        contextWindowTokens: latestTokenUsage.contextWindowTokens,
+                        contextPercentageUsed: latestTokenUsage.contextPercentageUsed,
+                      }
+                    : null
+                }
+                sessionTotals={sessionTokenTotals}
+              />
+            ) : null}
 
             {/* Notification bell */}
             <div className="nc-notif-wrap">

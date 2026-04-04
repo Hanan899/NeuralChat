@@ -166,6 +166,11 @@ def save_assistant_message(
     response_ms: int | None = None,
     first_token_ms: int | None = None,
     tokens_emitted: int | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    total_tokens: int | None = None,
+    context_window_tokens: int | None = None,
+    context_percentage_used: float | None = None,
     search_used: bool | None = None,
     file_context_used: bool | None = None,
     sources: list[dict[str, str]] | None = None,
@@ -188,6 +193,16 @@ def save_assistant_message(
         payload["first_token_ms"] = first_token_ms
     if tokens_emitted is not None:
         payload["tokens_emitted"] = tokens_emitted
+    if input_tokens is not None:
+        payload["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        payload["output_tokens"] = output_tokens
+    if total_tokens is not None:
+        payload["total_tokens"] = total_tokens
+    if context_window_tokens is not None:
+        payload["context_window_tokens"] = context_window_tokens
+    if context_percentage_used is not None:
+        payload["context_percentage_used"] = context_percentage_used
     if search_used is not None:
         payload["search_used"] = search_used
     if file_context_used is not None:

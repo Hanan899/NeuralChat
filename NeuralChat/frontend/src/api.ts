@@ -105,6 +105,11 @@ export async function streamChat(
   responseMs: number;
   firstTokenMs: number | null;
   tokensEmitted: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  contextWindowTokens: number | null;
+  contextPercentageUsed: number | null;
   searchUsed: boolean;
   fileContextUsed: boolean;
   sources: SearchSource[];
@@ -198,6 +203,13 @@ export async function streamChat(
   const requestId = doneChunk?.request_id ?? response.headers.get("x-request-id") ?? "unknown-request";
   const firstTokenMs = typeof doneChunk?.first_token_ms === "number" ? doneChunk.first_token_ms : null;
   const tokensEmitted = typeof doneChunk?.tokens_emitted === "number" ? doneChunk.tokens_emitted : 0;
+  const inputTokens = typeof doneChunk?.input_tokens === "number" ? doneChunk.input_tokens : null;
+  const outputTokens = typeof doneChunk?.output_tokens === "number" ? doneChunk.output_tokens : null;
+  const totalTokens = typeof doneChunk?.total_tokens === "number" ? doneChunk.total_tokens : null;
+  const contextWindowTokens =
+    typeof doneChunk?.context_window_tokens === "number" ? doneChunk.context_window_tokens : null;
+  const contextPercentageUsed =
+    typeof doneChunk?.context_percentage_used === "number" ? doneChunk.context_percentage_used : null;
   const responseMsFromDone = typeof doneChunk?.response_ms === "number" ? doneChunk.response_ms : responseMs;
   const searchUsed = doneChunk?.search_used === true;
   const fileContextUsed = doneChunk?.file_context_used === true;
@@ -208,6 +220,11 @@ export async function streamChat(
     responseMs: responseMsFromDone,
     firstTokenMs,
     tokensEmitted,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    contextWindowTokens,
+    contextPercentageUsed,
     searchUsed,
     fileContextUsed,
     sources
