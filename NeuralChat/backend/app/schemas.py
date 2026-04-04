@@ -209,6 +209,11 @@ def build_chat_json_response(
     reply: str,
     model: ChatModel,
     response_ms: int,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    total_tokens: int | None = None,
+    context_window_tokens: int | None = None,
+    context_percentage_used: float | None = None,
     search_used: bool = False,
     file_context_used: bool = False,
     sources: list[dict[str, str]] | None = None,
@@ -222,4 +227,14 @@ def build_chat_json_response(
         "file_context_used": file_context_used,
         "sources": sources or [],
     }
+    if input_tokens is not None:
+        payload["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        payload["output_tokens"] = output_tokens
+    if total_tokens is not None:
+        payload["total_tokens"] = total_tokens
+    if context_window_tokens is not None:
+        payload["context_window_tokens"] = context_window_tokens
+    if context_percentage_used is not None:
+        payload["context_percentage_used"] = context_percentage_used
     return payload

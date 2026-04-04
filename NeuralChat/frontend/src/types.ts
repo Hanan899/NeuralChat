@@ -183,6 +183,11 @@ export interface ChatMessage {
   model: ChatModel;
   projectId?: string;
   attachedFiles?: UploadedFileItem[];
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  contextWindowTokens?: number;
+  contextPercentageUsed?: number;
   searchUsed?: boolean;
   fileContextUsed?: boolean;
   sources?: SearchSource[];
@@ -205,6 +210,11 @@ export interface StreamChunk {
   response_ms?: number;
   first_token_ms?: number;
   tokens_emitted?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  context_window_tokens?: number;
+  context_percentage_used?: number;
   status?: "completed" | "interrupted";
   search_used?: boolean;
   file_context_used?: boolean;

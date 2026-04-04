@@ -163,6 +163,45 @@ def get_request_naming(
     }
 
 
+def _resolve_context_window_tokens(model: str) -> int | None:
+    default_windows = {
+        "gpt-5": 262_144,
+    }
+    candidate_env_keys = [f"{model.upper().replace('-', '_')}_CONTEXT_WINDOW_TOKENS"]
+    if model == "gpt-5":
+        candidate_env_keys.insert(0, "GPT5_CONTEXT_WINDOW_TOKENS")
+
+    for env_key in candidate_env_keys:
+        raw_override = os.getenv(env_key, "").strip()
+        if not raw_override:
+            continue
+        try:
+            parsed_override = int(raw_override)
+        except ValueError:
+            LOGGER.warning("Ignoring invalid %s value: %s", env_key, raw_override)
+            continue
+        if parsed_override > 0:
+            return parsed_override
+    return default_windows.get(model)
+
+
+def _build_token_usage_payload(model: str, usage: dict[str, Any] | None) -> dict[str, int | float | None]:
+    input_tokens = int((usage or {}).get("input_tokens", 0) or 0)
+    output_tokens = int((usage or {}).get("output_tokens", 0) or 0)
+    total_tokens = input_tokens + output_tokens
+    context_window_tokens = _resolve_context_window_tokens(model)
+    context_percentage_used: float | None = None
+    if context_window_tokens and total_tokens > 0:
+        context_percentage_used = round((total_tokens / context_window_tokens) * 100, 1)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "context_window_tokens": context_window_tokens,
+        "context_percentage_used": context_percentage_used,
+    }
+
+
 def _visible_project_memory_payload(project: dict[str, Any], memory: dict[str, Any]) -> dict[str, str]:
     visible_memory: dict[str, str] = {}
     for memory_key in get_template_memory_keys(str(project.get("template", "custom"))):
@@ -1795,6 +1834,7 @@ async def post_chat(
             )
         response_ms = int((time.perf_counter() - start) * 1000)
         tokens_emitted = len(tokenize_text(reply))
+        token_usage_payload = _build_token_usage_payload(request["model"], usage)
         if request["project_id"]:
             await asyncio.to_thread(
                 append_project_chat_message,
@@ -1817,6 +1857,11 @@ async def post_chat(
                     "response_ms": response_ms,
                     "first_token_ms": response_ms,
                     "tokens_emitted": tokens_emitted,
+                    "input_tokens": token_usage_payload["input_tokens"],
+                    "output_tokens": token_usage_payload["output_tokens"],
+                    "total_tokens": token_usage_payload["total_tokens"],
+                    "context_window_tokens": token_usage_payload["context_window_tokens"],
+                    "context_percentage_used": token_usage_payload["context_percentage_used"],
                     "search_used": search_used,
                     "file_context_used": file_context_used,
                     "sources": sources,
@@ -1838,6 +1883,11 @@ async def post_chat(
                 response_ms=response_ms,
                 first_token_ms=response_ms,
                 tokens_emitted=tokens_emitted,
+                input_tokens=token_usage_payload["input_tokens"],
+                output_tokens=token_usage_payload["output_tokens"],
+                total_tokens=token_usage_payload["total_tokens"],
+                context_window_tokens=token_usage_payload["context_window_tokens"],
+                context_percentage_used=token_usage_payload["context_percentage_used"],
                 search_used=search_used,
                 file_context_used=file_context_used,
                 sources=sources,
@@ -1847,6 +1897,11 @@ async def post_chat(
             reply=reply,
             model=request["model"],
             response_ms=response_ms,
+            input_tokens=token_usage_payload["input_tokens"],
+            output_tokens=token_usage_payload["output_tokens"],
+            total_tokens=token_usage_payload["total_tokens"],
+            context_window_tokens=token_usage_payload["context_window_tokens"],
+            context_percentage_used=token_usage_payload["context_percentage_used"],
             search_used=search_used,
             file_context_used=file_context_used,
             sources=sources,
@@ -1934,6 +1989,7 @@ async def post_chat(
             response_ms = int((time.perf_counter() - start) * 1000)
             stream_status = "completed"
             resolved_first_token_ms = first_token_ms if first_token_ms is not None else response_ms
+            token_usage_payload = _build_token_usage_payload(request["model"], chat_usage)
 
             yield (
                 json.dumps(
@@ -1945,6 +2001,11 @@ async def post_chat(
                         "first_token_ms": resolved_first_token_ms,
                         "tokens_emitted": tokens_emitted,
                         "status": stream_status,
+                        "input_tokens": token_usage_payload["input_tokens"],
+                        "output_tokens": token_usage_payload["output_tokens"],
+                        "total_tokens": token_usage_payload["total_tokens"],
+                        "context_window_tokens": token_usage_payload["context_window_tokens"],
+                        "context_percentage_used": token_usage_payload["context_percentage_used"],
                         "search_used": search_used,
                         "file_context_used": file_context_used,
                         "sources": sources,
@@ -1974,6 +2035,7 @@ async def post_chat(
             final_reply = "".join(assembled).strip()
             response_ms_final = int((time.perf_counter() - start) * 1000)
             resolved_first_token_ms = first_token_ms if first_token_ms is not None else response_ms_final
+            token_usage_payload = _build_token_usage_payload(request["model"], chat_usage)
 
             if final_reply:
                 if request["project_id"] and project_data:
@@ -2032,6 +2094,11 @@ async def post_chat(
                             "response_ms": response_ms_final,
                             "first_token_ms": resolved_first_token_ms,
                             "tokens_emitted": tokens_emitted,
+                            "input_tokens": token_usage_payload["input_tokens"],
+                            "output_tokens": token_usage_payload["output_tokens"],
+                            "total_tokens": token_usage_payload["total_tokens"],
+                            "context_window_tokens": token_usage_payload["context_window_tokens"],
+                            "context_percentage_used": token_usage_payload["context_percentage_used"],
                             "search_used": search_used,
                             "file_context_used": file_context_used,
                             "sources": sources,
@@ -2053,6 +2120,11 @@ async def post_chat(
                         response_ms=response_ms_final,
                         first_token_ms=resolved_first_token_ms,
                         tokens_emitted=tokens_emitted,
+                        input_tokens=token_usage_payload["input_tokens"],
+                        output_tokens=token_usage_payload["output_tokens"],
+                        total_tokens=token_usage_payload["total_tokens"],
+                        context_window_tokens=token_usage_payload["context_window_tokens"],
+                        context_percentage_used=token_usage_payload["context_percentage_used"],
                         search_used=search_used,
                         file_context_used=file_context_used,
                         sources=sources,
