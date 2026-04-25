@@ -63,14 +63,12 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     themeMode: "system",
     isWebSearchMode: false,
     isWebSearchAvailable: true,
-    isAgentMode: false,
     onNewChat: vi.fn(),
     onSelectConversation: vi.fn(),
     onToggleArchiveConversation: vi.fn(),
     onDeleteConversation: vi.fn(),
     onShareConversation: vi.fn(),
     onToggleWebSearchMode: vi.fn(),
-    onToggleAgentMode: vi.fn(),
     onThemeModeChange: vi.fn(),
     onOpenSettings: vi.fn(),
     onOpenUserSettings: vi.fn(),
@@ -162,30 +160,21 @@ describe("Sidebar", () => {
     expect(onToggleWebSearchMode).toHaveBeenCalledTimes(1);
   });
 
-  it("toggles agent mode from the sidebar subitem", async () => {
-    const onToggleAgentMode = vi.fn();
-    renderSidebar({ onToggleAgentMode });
-
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
-
-    expect(onToggleAgentMode).toHaveBeenCalledTimes(1);
-  });
-
   it("shows the recents heading", () => {
     renderSidebar();
 
     expect(screen.getByRole("heading", { name: "Recents" })).toBeInTheDocument();
   });
 
-  it("triggers the codex shortcut and marks it active", async () => {
-    const onOpenCodex = vi.fn();
-    renderSidebar({ onOpenCodex, activeShortcutId: "codex" });
+  it("triggers the agent mode shortcut and marks it active", async () => {
+    const onOpenAgentMode = vi.fn();
+    renderSidebar({ onOpenAgentMode, activeShortcutId: "agent" });
 
-    const codexButton = screen.getByRole("button", { name: "Codex" });
-    await userEvent.click(codexButton);
+    const agentButton = screen.getByRole("button", { name: "Agent mode" });
+    await userEvent.click(agentButton);
 
-    expect(onOpenCodex).toHaveBeenCalledTimes(1);
-    expect(codexButton).toHaveAttribute("aria-current", "page");
+    expect(onOpenAgentMode).toHaveBeenCalledTimes(1);
+    expect(agentButton).toHaveAttribute("aria-current", "page");
   });
 
   it("toggles the sidebar pane button", async () => {

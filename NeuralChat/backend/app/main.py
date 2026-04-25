@@ -33,7 +33,10 @@ from app.access import (
 )
 from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
-from app.routers import members_router
+from app.platform.chat import resolve_chat_route_context
+from app.platform.config import platform_is_configured
+from app.platform.db import create_platform_schema, get_platform_session_factory
+from app.routers import members_router, platform_router
 from app.schemas import (
     build_chat_json_response,
     build_health_response,
@@ -138,6 +141,7 @@ STORE = init_store()
 
 app = FastAPI(title="NeuralChat Backend", version=APP_VERSION)
 app.include_router(members_router)
+app.include_router(platform_router)
 
 raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,neuralchat-adgueyh0gucffsbp.eastus-01.azurewebsites.net")
 allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
@@ -149,6 +153,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _startup_platform_schema() -> None:
+    try:
+        create_platform_schema()
+    except Exception as error:
+        LOGGER.warning("Platform schema startup skipped: %s", error)
 
 
 def get_request_naming(
@@ -1670,11 +1682,34 @@ async def post_chat(
     start = time.perf_counter()
     project_data: dict[str, Any] | None = None
     history_override: list[dict[str, Any]] | None = None
+    route_kind = "general"
+    route_confidence: float | None = None
+    resolved_agent_id: str | None = None
+    resolved_provider: str | None = None
+    resolved_model: str = str(request["model"])
+    route_sources: list[dict[str, Any]] = []
+    route_memory_prompt = ""
+    route_file_prompt = ""
 
     if request["project_id"]:
         project_data = await asyncio.to_thread(get_project, user_id, request["project_id"], naming["display_name"])
         if not project_data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    elif platform_is_configured():
+        try:
+            session_factory = get_platform_session_factory()
+            with session_factory() as platform_session:
+                route_context = await resolve_chat_route_context(platform_session, request)
+            route_decision = route_context["decision"]
+            route_kind = str(route_decision.target_kind)
+            route_confidence = float(route_decision.confidence)
+            resolved_agent_id = route_context.get("resolved_agent_id")
+            resolved_model = str(route_context.get("resolved_model") or resolved_model)
+            route_memory_prompt = str(route_context.get("memory_prompt") or "")
+            route_file_prompt = str(route_context.get("file_prompt") or "")
+            route_sources = list(route_context.get("sources") or [])
+        except Exception as route_error:
+            LOGGER.warning("Platform route resolution failed; continuing with general chat: %s", route_error)
 
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "chat", naming["display_name"])
     _invalidate_cache_prefixes(_cache_key("usage", user_id, naming["display_name"] or ""))
@@ -1730,12 +1765,14 @@ async def post_chat(
             session_title=naming["session_title"],
         )
         memory_prompt = build_memory_prompt(user_id=user_id, display_name=naming["display_name"])
+        if route_memory_prompt:
+            memory_prompt = f"{route_memory_prompt}\n\n{memory_prompt}".strip()
 
     search_used = False
-    sources: list[dict[str, str]] = []
+    sources: list[dict[str, Any]] = list(route_sources)
     search_prompt = ""
     file_context_used = False
-    file_prompt = ""
+    file_prompt = route_file_prompt
     search_error_message: str | None = None
 
     search_needed = request["force_search"]
@@ -1799,7 +1836,8 @@ async def post_chat(
             relevant_chunks = await asyncio.to_thread(get_relevant_chunks, all_session_chunks, request["message"], 3)
         if relevant_chunks:
             file_context_used = True
-            file_prompt = "Relevant content from uploaded files:\n" + "\n\n".join(relevant_chunks)
+            session_file_prompt = "Relevant content from uploaded files:\n" + "\n\n".join(relevant_chunks)
+            file_prompt = f"{file_prompt}\n\n{session_file_prompt}".strip() if file_prompt else session_file_prompt
     except Exception as file_context_error:
         LOGGER.warning("File context retrieval failed; continuing without file context: %s", file_context_error)
 
@@ -1822,7 +1860,7 @@ async def post_chat(
             reply = direct_reply
         else:
             reply, usage = await generate_reply_with_usage(
-                request=request,
+                request={**request, "model": resolved_model},
                 store=STORE,
                 user_id=user_id,
                 display_name=naming["display_name"],
@@ -1834,7 +1872,11 @@ async def post_chat(
             )
         response_ms = int((time.perf_counter() - start) * 1000)
         tokens_emitted = len(tokenize_text(reply))
-        token_usage_payload = _build_token_usage_payload(request["model"], usage)
+        token_usage_payload = _build_token_usage_payload(resolved_model, usage)
+        if ":" in resolved_model:
+            resolved_provider = resolved_model.split(":", 1)[0]
+        elif resolved_model == "gpt-5":
+            resolved_provider = "azure_openai"
         if request["project_id"]:
             await asyncio.to_thread(
                 append_project_chat_message,
@@ -1844,7 +1886,7 @@ async def post_chat(
                 {
                     "role": "assistant",
                     "content": reply,
-                    "model": request["model"],
+                    "model": resolved_model,
                     "request_id": request_id,
                     "status": "completed",
                     "user_id": user_id,
@@ -1865,6 +1907,11 @@ async def post_chat(
                     "search_used": search_used,
                     "file_context_used": file_context_used,
                     "sources": sources,
+                    "resolved_provider": resolved_provider,
+                    "resolved_model": resolved_model,
+                    "resolved_agent_id": resolved_agent_id,
+                    "route_kind": route_kind,
+                    "route_confidence": route_confidence,
                 },
                 naming["display_name"],
                 naming["session_title"],
@@ -1872,7 +1919,7 @@ async def post_chat(
         else:
             save_assistant_message(
                 session_id=request["session_id"],
-                model=request["model"],
+                model=resolved_model,
                 request_id=request_id,
                 reply=reply,
                 store=STORE,
@@ -1895,7 +1942,7 @@ async def post_chat(
         response_payload = build_chat_json_response(
             request_id=request_id,
             reply=reply,
-            model=request["model"],
+            model=resolved_model,
             response_ms=response_ms,
             input_tokens=token_usage_payload["input_tokens"],
             output_tokens=token_usage_payload["output_tokens"],
@@ -1905,6 +1952,11 @@ async def post_chat(
             search_used=search_used,
             file_context_used=file_context_used,
             sources=sources,
+            resolved_provider=resolved_provider,
+            resolved_model=resolved_model,
+            resolved_agent_id=resolved_agent_id,
+            route_kind=route_kind,
+            route_confidence=route_confidence,
         )
         if request["project_id"] and project_data:
             asyncio.create_task(
@@ -1948,6 +2000,20 @@ async def post_chat(
         chat_usage = {"input_tokens": 0, "output_tokens": 0}
 
         try:
+            yield (
+                json.dumps(
+                    {
+                        "type": "route",
+                        "content": "",
+                        "route_kind": route_kind,
+                        "route_confidence": route_confidence,
+                        "resolved_agent_id": resolved_agent_id,
+                        "resolved_model": resolved_model,
+                    },
+                    ensure_ascii=True,
+                )
+                + "\n"
+            )
             if direct_reply is not None:
                 async for token in stream_tokens(direct_reply):
                     if first_token_ms is None:
@@ -1957,7 +2023,7 @@ async def post_chat(
                     yield json.dumps({"type": "token", "content": token}, ensure_ascii=True) + "\n"
             else:
                 token_stream = generate_reply_stream_with_usage(
-                    request=request,
+                    request={**request, "model": resolved_model},
                     store=STORE,
                     user_id=user_id,
                     display_name=naming["display_name"],
@@ -1989,7 +2055,11 @@ async def post_chat(
             response_ms = int((time.perf_counter() - start) * 1000)
             stream_status = "completed"
             resolved_first_token_ms = first_token_ms if first_token_ms is not None else response_ms
-            token_usage_payload = _build_token_usage_payload(request["model"], chat_usage)
+            token_usage_payload = _build_token_usage_payload(resolved_model, chat_usage)
+            if ":" in resolved_model:
+                resolved_provider = resolved_model.split(":", 1)[0]
+            elif resolved_model == "gpt-5":
+                resolved_provider = "azure_openai"
 
             yield (
                 json.dumps(
@@ -2009,6 +2079,11 @@ async def post_chat(
                         "search_used": search_used,
                         "file_context_used": file_context_used,
                         "sources": sources,
+                        "resolved_provider": resolved_provider,
+                        "resolved_model": resolved_model,
+                        "resolved_agent_id": resolved_agent_id,
+                        "route_kind": route_kind,
+                        "route_confidence": route_confidence,
                     },
                     ensure_ascii=True,
                 )
@@ -2035,7 +2110,7 @@ async def post_chat(
             final_reply = "".join(assembled).strip()
             response_ms_final = int((time.perf_counter() - start) * 1000)
             resolved_first_token_ms = first_token_ms if first_token_ms is not None else response_ms_final
-            token_usage_payload = _build_token_usage_payload(request["model"], chat_usage)
+            token_usage_payload = _build_token_usage_payload(resolved_model, chat_usage)
 
             if final_reply:
                 if request["project_id"] and project_data:
@@ -2081,7 +2156,7 @@ async def post_chat(
                         {
                             "role": "assistant",
                             "content": final_reply,
-                            "model": request["model"],
+                            "model": resolved_model,
                             "request_id": request_id,
                             "status": stream_status,
                             "user_id": user_id,
@@ -2102,6 +2177,11 @@ async def post_chat(
                             "search_used": search_used,
                             "file_context_used": file_context_used,
                             "sources": sources,
+                            "resolved_provider": resolved_provider,
+                            "resolved_model": resolved_model,
+                            "resolved_agent_id": resolved_agent_id,
+                            "route_kind": route_kind,
+                            "route_confidence": route_confidence,
                         },
                         naming["display_name"],
                         naming["session_title"],
@@ -2109,7 +2189,7 @@ async def post_chat(
                 else:
                     save_assistant_message(
                         session_id=request["session_id"],
-                        model=request["model"],
+                        model=resolved_model,
                         request_id=request_id,
                         reply=final_reply,
                         store=STORE,
