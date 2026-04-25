@@ -28,6 +28,7 @@ from app.services.titles import fallback_conversation_title
 _STORE_LOCK = Lock()
 _MEMORY_STORE: dict[str, list[dict[str, Any]]] = {}
 _MEMORY_PROFILES: dict[str, dict[str, Any]] = {}
+_VALID_WORKSPACE_KINDS = {"standard", "agent", "research"}
 
 
 def _extract_stable_id_from_segment(segment_value: str) -> str:
@@ -61,6 +62,18 @@ def _build_conversation_summary(session_id: str, messages: list[dict[str, Any]])
     preview = preview_source[:200]
     updated_at = str(latest_message.get("created_at", "") or "").strip() or ""
     title = title_candidate or fallback_conversation_title(prompt_for_title, preview_source)
+    workspace_kind = next(
+        (
+            normalized_kind
+            for normalized_kind in (
+                _normalize_workspace_kind(message.get("workspace_kind") if isinstance(message, dict) else None)
+                or _normalize_workspace_kind(message.get("workspaceKind") if isinstance(message, dict) else None)
+                for message in reversed(normalized_messages)
+            )
+            if normalized_kind is not None
+        ),
+        "standard",
+    )
 
     return {
         "id": session_id,
@@ -68,7 +81,15 @@ def _build_conversation_summary(session_id: str, messages: list[dict[str, Any]])
         "preview": preview,
         "updatedAt": updated_at,
         "archived": False,
+        "workspaceKind": workspace_kind,
     }
+
+
+def _normalize_workspace_kind(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in _VALID_WORKSPACE_KINDS:
+        return normalized
+    return None
 
 
 def list_conversation_summaries(
@@ -238,6 +259,53 @@ def append_message(
     with _STORE_LOCK:
         messages = load_messages(store, user_id, session_id, display_name, session_title)
         messages.append(message)
+        canonical_blob_name = conversation_blob_name(user_id, session_id, display_name, session_title)
+
+        if store["mode"] == "memory":
+            _MEMORY_STORE[canonical_blob_name] = messages
+            legacy_blob_name = _legacy_conversation_blob_name(user_id, session_id)
+            if legacy_blob_name in _MEMORY_STORE and legacy_blob_name != canonical_blob_name:
+                del _MEMORY_STORE[legacy_blob_name]
+            return
+
+        container: ContainerClient = store["memory_container"]
+        existing_blob_name = _find_existing_conversation_blob(container, user_id, session_id)
+        write_json_with_migration(
+            container,
+            canonical_blob_name,
+            messages,
+            old_blob_name=existing_blob_name,
+        )
+
+
+def upsert_message(
+    store: dict[str, Any],
+    user_id: str,
+    session_id: str,
+    message: dict[str, Any],
+    display_name: str | None = None,
+    session_title: str | None = None,
+) -> None:
+    with _STORE_LOCK:
+        messages = load_messages(store, user_id, session_id, display_name, session_title)
+        request_id = str(message.get("request_id", "") or "").strip()
+
+        if request_id:
+            replacement_index = next(
+                (
+                    index
+                    for index, existing in enumerate(messages)
+                    if isinstance(existing, dict) and str(existing.get("request_id", "") or "").strip() == request_id
+                ),
+                -1,
+            )
+            if replacement_index >= 0:
+                messages[replacement_index] = message
+            else:
+                messages.append(message)
+        else:
+            messages.append(message)
+
         canonical_blob_name = conversation_blob_name(user_id, session_id, display_name, session_title)
 
         if store["mode"] == "memory":

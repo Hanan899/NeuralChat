@@ -70,8 +70,8 @@ const SIDEBAR_SHORTCUT_LABELS: Record<ShortcutId, string> = {
   new: "New chat",
   images: "Images",
   apps: "Agent Studio",
-  research: "Deep research",
-  agent: "Agent mode",
+  research: "Deep Research",
+  agent: "Agent Mode",
   projects: "Projects",
 };
 type ToastTone = "success" | "info" | "error";
@@ -414,6 +414,43 @@ function isConversationDraft(
   );
 }
 
+function normalizeAgentTaskSnapshot(rawTask: unknown): AgentTaskState | undefined {
+  if (!rawTask || typeof rawTask !== "object") {
+    return undefined;
+  }
+
+  const task = rawTask as Record<string, unknown>;
+  const rawPlan = task.plan;
+  if (!rawPlan || typeof rawPlan !== "object") {
+    return undefined;
+  }
+
+  const rawStatus = typeof task.status === "string" ? task.status : "preview";
+  const normalizedStatus: AgentTaskState["status"] =
+    rawStatus === "running" || rawStatus === "awaiting_confirmation" || rawStatus === "completed" || rawStatus === "failed"
+      ? rawStatus
+      : "preview";
+
+  const rawStepResults = task.stepResults;
+  const stepResults = Array.isArray(rawStepResults) ? (rawStepResults as AgentStepResult[]) : [];
+  const pendingConfirmation =
+    task.pendingConfirmation && typeof task.pendingConfirmation === "object"
+      ? (task.pendingConfirmation as AgentPendingConfirmation)
+      : null;
+
+  return {
+    plan: rawPlan as AgentPlan,
+    stepResults,
+    runningStepNumber: typeof task.runningStepNumber === "number" ? task.runningStepNumber : null,
+    summary: typeof task.summary === "string" ? task.summary : "",
+    warning: typeof task.warning === "string" ? task.warning : "",
+    status: normalizedStatus,
+    error: typeof task.error === "string" ? task.error : "",
+    stepsCompleted: typeof task.stepsCompleted === "number" ? task.stepsCompleted : 0,
+    pendingConfirmation,
+  };
+}
+
 function normalizeConversationMessages(
   messages: ChatMessage[] | Record<string, unknown>[] | undefined
 ): ChatMessage[] {
@@ -442,6 +479,7 @@ function normalizeConversationMessages(
       searchUsed: message.search_used === true,
       fileContextUsed: message.file_context_used === true,
       sources: Array.isArray(message.sources) ? (message.sources as SearchSource[]) : undefined,
+      agentTask: normalizeAgentTaskSnapshot(message.agent_task ?? message.agentTask),
     }));
 }
 

@@ -1237,6 +1237,27 @@ async def post_agent_plan(
             request["session_id"],
             naming["session_title"],
         )
+        save_user_message(
+            request={
+                "session_id": request["session_id"],
+                "message": request["goal"],
+                "model": "agent",
+            },
+            request_id=f"{plan['plan_id']}:user",
+            store=STORE,
+            user_id=user_id,
+            display_name=naming["display_name"],
+            session_title=naming["session_title"],
+            workspace_kind="agent",
+        )
+        _persist_agent_session_snapshot(
+            user_id=user_id,
+            session_id=request["session_id"],
+            plan=plan,
+            naming=naming,
+            content=f"Agent plan ready: {len(plan.get('steps', []))} steps",
+            status="preview",
+        )
         if usage["input_tokens"] or usage["output_tokens"]:
             asyncio.create_task(
                 asyncio.to_thread(
@@ -1256,6 +1277,8 @@ async def post_agent_plan(
         ) from plan_error
     _invalidate_cache_prefixes(
         _cache_key("agent", user_id, "history"),
+        _cache_key("conversations", user_id, naming["display_name"] or "", "index"),
+        _cache_key("conversations", user_id, naming["display_name"] or "", request["session_id"], "messages"),
         _cache_key("usage", user_id, naming["display_name"] or ""),
     )
     return {"plan": plan}
@@ -1278,6 +1301,87 @@ def _persisted_agent_plan(
         "updated_at": datetime.now(UTC).isoformat(),
     }
     return next_plan
+
+
+def _agent_task_status_value(status: str | None) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"preview", "running", "awaiting_confirmation", "completed", "failed"}:
+        return normalized
+    return "preview"
+
+
+def _agent_steps_completed(execution_log: list[dict[str, Any]] | None) -> int:
+    if not execution_log:
+        return 0
+    return sum(
+        1
+        for entry in execution_log
+        if str(entry.get("status", "")).strip().lower() in {"done", "approved"}
+    )
+
+
+def _build_agent_task_snapshot(
+    plan: dict[str, Any],
+    *,
+    execution_log: list[dict[str, Any]] | None = None,
+    summary: str = "",
+    warning: str = "",
+    status: str = "preview",
+    error: str = "",
+    pending_confirmation: dict[str, Any] | None = None,
+    running_step_number: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "plan": plan,
+        "stepResults": list(execution_log or []),
+        "runningStepNumber": running_step_number,
+        "summary": summary,
+        "warning": warning,
+        "status": _agent_task_status_value(status),
+        "error": error,
+        "stepsCompleted": _agent_steps_completed(execution_log),
+        "pendingConfirmation": pending_confirmation,
+    }
+
+
+def _persist_agent_session_snapshot(
+    *,
+    user_id: str,
+    session_id: str,
+    plan: dict[str, Any],
+    naming: dict[str, str | None],
+    content: str,
+    execution_log: list[dict[str, Any]] | None = None,
+    summary: str = "",
+    warning: str = "",
+    status: str = "preview",
+    error: str = "",
+    pending_confirmation: dict[str, Any] | None = None,
+    running_step_number: int | None = None,
+) -> None:
+    save_assistant_message(
+        session_id=session_id,
+        model="agent",
+        request_id=str(plan.get("plan_id", "")),
+        reply=content,
+        store=STORE,
+        user_id=user_id,
+        display_name=naming["display_name"],
+        session_title=naming["session_title"],
+        status="completed",
+        workspace_kind="agent",
+        agent_task=_build_agent_task_snapshot(
+            plan,
+            execution_log=execution_log,
+            summary=summary,
+            warning=warning,
+            status=status,
+            error=error,
+            pending_confirmation=pending_confirmation,
+            running_step_number=running_step_number,
+        ),
+        replace_existing=True,
+    )
 
 
 def _agent_step_log_entry(plan: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
@@ -1364,6 +1468,18 @@ async def _stream_agent_run_response(
                             session_id,
                             naming["session_title"],
                         )
+                        await asyncio.to_thread(
+                            _persist_agent_session_snapshot,
+                            user_id=user_id,
+                            session_id=session_id,
+                            plan=persisted_plan,
+                            naming=naming,
+                            content="Agent action waiting for approval",
+                            execution_log=execution_log,
+                            status="awaiting_confirmation",
+                            warning=warning_message or "",
+                            pending_confirmation=pending_confirmation,
+                        )
                         yield json.dumps({"type": "confirmation_required", **pending_confirmation}, ensure_ascii=True) + "\n"
                         return
 
@@ -1388,6 +1504,18 @@ async def _stream_agent_run_response(
                             naming["session_title"],
                         )
                         summary_text = str(event.get("summary", "")).strip()
+                        await asyncio.to_thread(
+                            _persist_agent_session_snapshot,
+                            user_id=user_id,
+                            session_id=session_id,
+                            plan=_persisted_agent_plan(plan, "completed", len(plan.get("steps", []))),
+                            naming=naming,
+                            content=summary_text or "Agent task completed",
+                            execution_log=execution_log,
+                            summary=summary_text,
+                            warning=warning_message or "",
+                            status="completed",
+                        )
                         summary_usage = event.get("summary_usage", {"input_tokens": 0, "output_tokens": 0})
                         if isinstance(summary_usage, dict):
                             summary_input_tokens = int(summary_usage.get("input_tokens", 0) or 0)
@@ -1460,6 +1588,19 @@ async def _stream_agent_run_response(
                 session_id,
                 naming["session_title"],
             )
+            await asyncio.to_thread(
+                _persist_agent_session_snapshot,
+                user_id=user_id,
+                session_id=session_id,
+                plan=_persisted_agent_plan(plan, "failed", start_step_index),
+                naming=naming,
+                content=warning_message,
+                execution_log=execution_log,
+                summary=warning_message,
+                warning=warning_message,
+                status="failed",
+                error=warning_message,
+            )
             yield json.dumps({"type": "warning", "message": warning_message}, ensure_ascii=True) + "\n"
             yield json.dumps({"type": "summary", "content": warning_message}, ensure_ascii=True) + "\n"
             yield json.dumps({"type": "done", "plan_id": plan_id, "steps_completed": len(execution_log), "warning": warning_message}, ensure_ascii=True) + "\n"
@@ -1481,6 +1622,18 @@ async def _stream_agent_run_response(
                 session_id,
                 naming["session_title"],
             )
+            await asyncio.to_thread(
+                _persist_agent_session_snapshot,
+                user_id=user_id,
+                session_id=session_id,
+                plan=_persisted_agent_plan(plan, "failed", start_step_index),
+                naming=naming,
+                content=f"Agent run failed: {agent_error}",
+                execution_log=execution_log,
+                status="failed",
+                error=str(agent_error),
+                warning=warning_message or "",
+            )
             LOGGER.exception("Agent run failed for user=%s plan=%s", user_id, plan_id)
             yield json.dumps({"type": "error", "message": f"Agent run failed: {agent_error}"}, ensure_ascii=True) + "\n"
 
@@ -1496,11 +1649,13 @@ async def post_agent_run(
 ):
     user_id = access_context.user_id
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "agent_step", naming["display_name"])
+    request = validate_agent_run_request(payload)
     _invalidate_cache_prefixes(
         _cache_key("agent", user_id, "history"),
+        _cache_key("conversations", user_id, naming["display_name"] or "", "index"),
+        _cache_key("conversations", user_id, naming["display_name"] or "", request["session_id"], "messages"),
         _cache_key("usage", user_id, naming["display_name"] or ""),
     )
-    request = validate_agent_run_request(payload)
     plan = await asyncio.to_thread(
         load_task_plan,
         user_id,
@@ -1520,6 +1675,15 @@ async def post_agent_run(
         request["session_id"],
         naming["session_title"],
     )
+    await asyncio.to_thread(
+        _persist_agent_session_snapshot,
+        user_id=user_id,
+        session_id=request["session_id"],
+        plan=active_plan,
+        naming=naming,
+        content="Agent task running",
+        status="running",
+    )
     return await _stream_agent_run_response(
         active_plan,
         plan_id,
@@ -1538,6 +1702,11 @@ async def post_agent_confirm(
 ):
     user_id = access_context.user_id
     request = validate_agent_confirm_request(payload)
+    _invalidate_cache_prefixes(
+        _cache_key("agent", user_id, "history"),
+        _cache_key("conversations", user_id, naming["display_name"] or "", "index"),
+        _cache_key("conversations", user_id, naming["display_name"] or "", request["session_id"], "messages"),
+    )
     plan = await asyncio.to_thread(
         load_task_plan,
         user_id,
@@ -1616,6 +1785,17 @@ async def post_agent_confirm(
         naming["display_name"],
         request["session_id"],
         naming["session_title"],
+    )
+    await asyncio.to_thread(
+        _persist_agent_session_snapshot,
+        user_id=user_id,
+        session_id=request["session_id"],
+        plan=resumed_plan,
+        naming=naming,
+        content="Agent task running",
+        execution_log=updated_log,
+        warning="Action rejected by user. Continuing with remaining steps." if not request["approved"] else "",
+        status="running",
     )
 
     return await _stream_agent_run_response(

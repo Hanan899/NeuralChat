@@ -17,7 +17,7 @@ from app.services.providers import generate_reply as generate_model_reply
 from app.services.providers import generate_reply_stream as generate_model_reply_stream
 from app.services.providers import generate_reply_stream_with_usage as generate_model_reply_stream_with_usage
 from app.services.providers import generate_reply_with_usage as generate_model_reply_with_usage
-from app.services.storage import append_message, load_messages
+from app.services.storage import append_message, load_messages, upsert_message
 
 
 # This function returns assistant text only for older call sites that do not need usage details.
@@ -131,22 +131,26 @@ def save_user_message(
     user_id: str,
     display_name: str | None = None,
     session_title: str | None = None,
+    workspace_kind: str | None = None,
 ) -> None:
+    payload: dict[str, Any] = {
+        "role": "user",
+        "content": request["message"],
+        "model": request["model"],
+        "request_id": request_id,
+        "user_id": user_id,
+        "display_name": display_name or user_id,
+        "session_id": request["session_id"],
+        "session_title": session_title or request["session_id"],
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    if workspace_kind:
+        payload["workspace_kind"] = workspace_kind
     append_message(
         store,
         user_id,
         request["session_id"],
-        {
-            "role": "user",
-            "content": request["message"],
-            "model": request["model"],
-            "request_id": request_id,
-            "user_id": user_id,
-            "display_name": display_name or user_id,
-            "session_id": request["session_id"],
-            "session_title": session_title or request["session_id"],
-            "created_at": datetime.now(UTC).isoformat(),
-        },
+        payload,
         display_name=display_name,
         session_title=session_title,
     )
@@ -174,6 +178,9 @@ def save_assistant_message(
     search_used: bool | None = None,
     file_context_used: bool | None = None,
     sources: list[dict[str, str]] | None = None,
+    workspace_kind: str | None = None,
+    agent_task: dict[str, Any] | None = None,
+    replace_existing: bool = False,
 ) -> None:
     payload: dict[str, Any] = {
         "role": "assistant",
@@ -209,8 +216,13 @@ def save_assistant_message(
         payload["file_context_used"] = file_context_used
     if sources is not None:
         payload["sources"] = sources
+    if workspace_kind:
+        payload["workspace_kind"] = workspace_kind
+    if agent_task is not None:
+        payload["agent_task"] = agent_task
 
-    append_message(
+    writer = upsert_message if replace_existing else append_message
+    writer(
         store,
         user_id,
         session_id,

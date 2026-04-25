@@ -170,7 +170,7 @@ describe("Sidebar", () => {
     const onOpenAgentMode = vi.fn();
     renderSidebar({ onOpenAgentMode, activeShortcutId: "agent" });
 
-    const agentButton = screen.getByRole("button", { name: "Agent mode" });
+    const agentButton = screen.getByRole("button", { name: "Agent Mode" });
     await userEvent.click(agentButton);
 
     expect(onOpenAgentMode).toHaveBeenCalledTimes(1);
