@@ -19,7 +19,7 @@ The current product direction is:
 - one signed-in workspace shell
 - clear separation between normal chat, project chat, and agent execution
 - scoped memory that stays in the right place
-- retrieval that combines uploaded files and optional search without polluting unrelated work
+- retrieval that combines uploaded files and optional 2qq2qsearch without polluting unrelated work
 - visible, enforced cost controls
 - owner-level workspace access and per-user governance
 

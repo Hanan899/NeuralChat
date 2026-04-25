@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import HTTPException
 
-ChatModel = Literal["gpt-5"]
+ChatModel = str
 
 
 def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -20,8 +20,11 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="message must be a non-empty string (max 12000).")
 
     model = payload.get("model", "gpt-5")
-    if model != "gpt-5":
-        raise HTTPException(status_code=422, detail="model must be 'gpt-5'.")
+    if model is None:
+        model = "gpt-5"
+    if not isinstance(model, str) or not model.strip() or len(model.strip()) > 255:
+        raise HTTPException(status_code=422, detail="model must be a non-empty string (max 255).")
+    model = model.strip()
 
     stream = payload.get("stream", True)
     if not isinstance(stream, bool):
@@ -37,6 +40,18 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
             raise HTTPException(status_code=422, detail="project_id must be a non-empty string (max 128).")
         project_id = project_id.strip()
 
+    collection_id = payload.get("collection_id")
+    if collection_id is not None:
+        if not isinstance(collection_id, str) or not (1 <= len(collection_id.strip()) <= 128):
+            raise HTTPException(status_code=422, detail="collection_id must be a non-empty string (max 128).")
+        collection_id = collection_id.strip()
+
+    dynamic_agent_id = payload.get("dynamic_agent_id")
+    if dynamic_agent_id is not None:
+        if not isinstance(dynamic_agent_id, str) or not (1 <= len(dynamic_agent_id.strip()) <= 128):
+            raise HTTPException(status_code=422, detail="dynamic_agent_id must be a non-empty string (max 128).")
+        dynamic_agent_id = dynamic_agent_id.strip()
+
     return {
         "session_id": session_id,
         "message": message,
@@ -44,6 +59,8 @@ def validate_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
         "stream": stream,
         "force_search": force_search,
         "project_id": project_id,
+        "collection_id": collection_id,
+        "dynamic_agent_id": dynamic_agent_id,
     }
 
 
@@ -217,6 +234,11 @@ def build_chat_json_response(
     search_used: bool = False,
     file_context_used: bool = False,
     sources: list[dict[str, str]] | None = None,
+    resolved_provider: str | None = None,
+    resolved_model: str | None = None,
+    resolved_agent_id: str | None = None,
+    route_kind: str | None = None,
+    route_confidence: float | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "request_id": request_id,
@@ -237,4 +259,14 @@ def build_chat_json_response(
         payload["context_window_tokens"] = context_window_tokens
     if context_percentage_used is not None:
         payload["context_percentage_used"] = context_percentage_used
+    if resolved_provider is not None:
+        payload["resolved_provider"] = resolved_provider
+    if resolved_model is not None:
+        payload["resolved_model"] = resolved_model
+    if resolved_agent_id is not None:
+        payload["resolved_agent_id"] = resolved_agent_id
+    if route_kind is not None:
+        payload["route_kind"] = route_kind
+    if route_confidence is not None:
+        payload["route_confidence"] = route_confidence
     return payload

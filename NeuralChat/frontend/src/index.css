@@ -7011,7 +7011,7 @@ select {
 
   .nc-topbar-btn,
   .nc-topbar h1,
-  .nc-model-pill select,
+.nc-model-pill select,
   .nc-token-meter__text {
     font-size: 13px;
   }
@@ -7546,6 +7546,506 @@ select {
   background: var(--color-background-secondary, rgba(124, 92, 255, 0.06));
   color: var(--color-text-secondary, #667085);
   font-size: 0.95rem;
+}
+
+.nc-agent-studio {
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px 24px 40px;
+  display: grid;
+  gap: 16px;
+}
+
+.nc-agent-studio__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: 24px;
+  padding: 20px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-primary) 12%, transparent) 0%, transparent 48%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 95%, white), var(--bg-secondary));
+  box-shadow: var(--shadow-card);
+}
+
+.nc-agent-studio__header-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.nc-agent-studio__title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.nc-agent-studio__icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-primary) 20%, white) 0%, transparent 56%),
+    color-mix(in srgb, var(--accent-primary) 8%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, var(--border-subtle));
+}
+
+.nc-agent-studio__icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.nc-agent-studio__eyebrow,
+.nc-agent-studio__section-kicker,
+.nc-agent-studio__spotlight-eyebrow,
+.nc-agent-studio__stat-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nc-agent-studio__eyebrow,
+.nc-agent-studio__spotlight-eyebrow {
+  color: var(--accent-primary);
+}
+
+.nc-agent-studio__header h2 {
+  margin: 4px 0 0;
+  font-size: clamp(32px, 4vw, 44px);
+  line-height: 1.05;
+  color: var(--text-heading);
+}
+
+.nc-agent-studio__summary {
+  margin: 0;
+  max-width: 780px;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.nc-agent-studio__meta-row,
+.nc-agent-studio__workspace-note,
+.nc-agent-studio__item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.nc-agent-studio__badge,
+.nc-agent-studio__workspace-note span,
+.nc-agent-studio__item-meta span {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 16%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-elevated));
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nc-agent-studio__badge--quiet,
+.nc-agent-studio__workspace-note span,
+.nc-agent-studio__item-meta span {
+  border-color: var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.nc-agent-studio__badge--status {
+  border-color: color-mix(in srgb, var(--accent-primary) 24%, var(--border-subtle));
+  color: var(--accent-primary);
+}
+
+.nc-agent-studio__header-actions {
+  width: min(290px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.nc-agent-studio__spotlight,
+.nc-agent-studio__stat-card,
+.nc-agent-studio__focus-card,
+.nc-agent-studio__fact-card,
+.nc-agent-studio__fact-note,
+.nc-agent-studio__item-card,
+.nc-agent-studio__empty,
+.nc-agent-studio__result {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  border-radius: 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.nc-agent-studio__spotlight {
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.nc-agent-studio__spotlight strong,
+.nc-agent-studio__focus-card strong,
+.nc-agent-studio__fact-card strong {
+  font-size: 22px;
+  line-height: 1.15;
+  color: var(--text-heading);
+}
+
+.nc-agent-studio__spotlight p,
+.nc-agent-studio__focus-card p,
+.nc-agent-studio__fact-note p,
+.nc-agent-studio__empty p,
+.nc-agent-studio__section-copy p,
+.nc-agent-studio__item-copy p,
+.nc-agent-studio__fact-card span {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.nc-agent-studio__alert {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, #d03d3d 18%, var(--border-subtle));
+  background: color-mix(in srgb, #d03d3d 7%, var(--bg-elevated));
+  color: #b43d3d;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.nc-agent-studio__stats,
+.nc-agent-studio__fact-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.nc-agent-studio__stat-card,
+.nc-agent-studio__fact-card {
+  padding: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.nc-agent-studio__stat-card strong {
+  font-size: 32px;
+  line-height: 1;
+  color: var(--text-heading);
+}
+
+.nc-agent-studio__stat-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.nc-agent-studio__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.nc-agent-studio__tab {
+  min-width: 156px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.nc-agent-studio__tab:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent-primary) 22%, var(--border-subtle));
+}
+
+.nc-agent-studio__tab strong {
+  font-size: 15px;
+  color: var(--text-heading);
+}
+
+.nc-agent-studio__tab span {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.nc-agent-studio__tab--active {
+  border-color: color-mix(in srgb, var(--accent-primary) 22%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--bg-elevated));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 8%, transparent);
+}
+
+.nc-agent-studio__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.nc-agent-studio__surface {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.nc-agent-studio__section-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.nc-agent-studio__section-copy h3,
+.nc-agent-studio__result-head strong,
+.nc-agent-studio__item-heading strong,
+.nc-agent-studio__empty strong,
+.nc-agent-studio__fact-note strong {
+  margin: 0;
+  color: var(--text-heading);
+}
+
+.nc-agent-studio__section-copy h3 {
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.nc-agent-studio__form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.nc-agent-studio__form-grid--single {
+  grid-template-columns: 1fr;
+}
+
+.nc-agent-studio__field-span-full {
+  grid-column: 1 / -1;
+}
+
+.nc-agent-studio .nc-project-field select {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font: inherit;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.nc-agent-studio .nc-project-field select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--border-subtle));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.nc-agent-studio__prompt-editor {
+  min-height: 280px;
+  line-height: 1.7;
+}
+
+.nc-agent-studio__support-note {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--accent-primary) 4%, var(--bg-elevated));
+}
+
+.nc-agent-studio__support-note strong {
+  color: var(--text-heading);
+  font-size: 14px;
+}
+
+.nc-agent-studio__support-note p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.nc-agent-studio__panel-actions,
+.nc-agent-studio__item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nc-agent-studio__item-card {
+  padding: 16px 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.nc-agent-studio__item-copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.nc-agent-studio__item-heading,
+.nc-agent-studio__focus-header,
+.nc-agent-studio__result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.nc-agent-studio__stack,
+.nc-agent-studio__facts {
+  display: grid;
+  gap: 12px;
+}
+
+.nc-agent-studio__empty {
+  padding: 20px;
+  border-style: dashed;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, white);
+}
+
+.nc-agent-studio__inline-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.nc-agent-studio__upload-control {
+  display: grid;
+  gap: 8px;
+}
+
+.nc-agent-studio__file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.nc-agent-studio__upload-control .nc-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.nc-agent-studio__focus-card {
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 96%, white), var(--bg-elevated));
+}
+
+.nc-agent-studio__result {
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nc-agent-studio__result-head span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nc-agent-studio__code {
+  margin: 0;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-input) 96%, white);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.nc-agent-studio__fact-note {
+  padding: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+@media (max-width: 1024px) {
+  .nc-agent-studio__header,
+  .nc-agent-studio__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nc-agent-studio__header {
+    flex-direction: column;
+  }
+
+  .nc-agent-studio__header-actions {
+    width: 100%;
+  }
+
+  .nc-agent-studio__stats,
+  .nc-agent-studio__fact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .nc-agent-studio {
+    padding: 20px 16px 32px;
+  }
+
+  .nc-agent-studio__header h2 {
+    font-size: 30px;
+  }
+
+  .nc-agent-studio__form-grid,
+  .nc-agent-studio__inline-controls,
+  .nc-agent-studio__stats,
+  .nc-agent-studio__fact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nc-agent-studio__item-card {
+    flex-direction: column;
+  }
+
+  .nc-agent-studio__item-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .nc-agent-studio__tab {
+    min-width: calc(50% - 6px);
+  }
 }
 
 .nc-access-panel {
@@ -8435,5 +8935,194 @@ select {
   .nc-access-feature-row__state {
     grid-column: 1 / 2;
     text-align: left;
+  }
+}
+
+.nc-agent-chats-page {
+  display: grid;
+  gap: 1.25rem;
+  width: min(100%, 1100px);
+  margin: 0 auto;
+  padding: clamp(1.4rem, 3vw, 2.2rem);
+}
+
+.nc-agent-chats-page__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.nc-agent-chats-page__header-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.nc-agent-chats-page__header-copy h2 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  letter-spacing: -0.04em;
+}
+
+.nc-agent-chats-page__eyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-primary);
+}
+
+.nc-agent-chats-page__search {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 4.4rem;
+  padding: 0 1.2rem;
+  border-radius: 1.5rem;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, var(--color-border-primary, rgba(148, 163, 184, 0.18)));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-surface-primary, #fff) 94%, transparent), color-mix(in srgb, var(--color-surface-secondary, #f8fafc) 96%, transparent));
+  box-shadow:
+    0 16px 34px color-mix(in srgb, var(--accent-primary) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+}
+
+.nc-agent-chats-page__search:focus-within {
+  border-color: color-mix(in srgb, var(--accent-primary) 52%, var(--color-border-primary, rgba(148, 163, 184, 0.28)));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent),
+    0 18px 40px color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.nc-agent-chats-page__search-icon {
+  display: inline-flex;
+  width: 1.45rem;
+  height: 1.45rem;
+  color: var(--color-text-secondary, #64748b);
+}
+
+.nc-agent-chats-page__search-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.nc-agent-chats-page__search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary, #0f172a);
+  font: inherit;
+  font-size: 1.1rem;
+}
+
+.nc-agent-chats-page__search input::placeholder {
+  color: var(--color-text-secondary, #64748b);
+}
+
+.nc-agent-chats-page__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 0.98rem;
+}
+
+.nc-agent-chats-page__meta strong {
+  font-weight: 700;
+  color: var(--color-text-primary, #0f172a);
+}
+
+.nc-agent-chats-page__empty,
+.nc-agent-chats-page__list {
+  border-radius: 1.6rem;
+  border: 1px solid var(--color-border-primary, rgba(148, 163, 184, 0.16));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-surface-primary, #fff) 92%, transparent), color-mix(in srgb, var(--color-surface-secondary, #f8fafc) 96%, transparent));
+  box-shadow: 0 22px 50px color-mix(in srgb, black 7%, transparent);
+}
+
+.nc-agent-chats-page__empty {
+  display: grid;
+  gap: 0.55rem;
+  padding: 1.8rem;
+}
+
+.nc-agent-chats-page__empty strong,
+.nc-agent-chats-page__row-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text-primary, #0f172a);
+}
+
+.nc-agent-chats-page__empty p,
+.nc-agent-chats-page__row-meta,
+.nc-agent-chats-page__row-preview {
+  margin: 0;
+  color: var(--color-text-secondary, #64748b);
+}
+
+.nc-agent-chats-page__row {
+  display: grid;
+  gap: 0.32rem;
+  width: 100%;
+  padding: 1.35rem 1.5rem;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-primary, rgba(148, 163, 184, 0.12));
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease, transform 140ms ease;
+}
+
+.nc-agent-chats-page__row:last-child {
+  border-bottom: 0;
+}
+
+.nc-agent-chats-page__row:hover {
+  background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
+}
+
+.nc-agent-chats-page__row:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 32%, transparent);
+}
+
+.nc-agent-chats-page__row--active {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-primary) 12%, transparent), transparent 42%);
+}
+
+.nc-agent-chats-page__row-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-width: 720px) {
+  .nc-agent-chats-page {
+    padding: 1rem;
+  }
+
+  .nc-agent-chats-page__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .nc-agent-chats-page__header .nc-button {
+    width: 100%;
+  }
+
+  .nc-agent-chats-page__search {
+    min-height: 3.9rem;
+    padding: 0 1rem;
+  }
+
+  .nc-agent-chats-page__row {
+    padding: 1.15rem 1rem;
   }
 }

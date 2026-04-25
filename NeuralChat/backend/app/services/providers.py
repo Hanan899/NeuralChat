@@ -63,7 +63,16 @@ async def generate_reply_with_usage(
     file_prompt: str = "",
     timeout_seconds: float = 25.0,
 ) -> ChatCompletionResult:
-    del model
+    if str(model).strip() != "gpt-5":
+        return await _generate_reply_with_platform_registry(
+            model=str(model),
+            message=message,
+            history=history,
+            memory_prompt=memory_prompt,
+            search_prompt=search_prompt,
+            file_prompt=file_prompt,
+            timeout_seconds=timeout_seconds,
+        )
     if not has_azure_openai_config():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -115,7 +124,18 @@ async def generate_reply_stream_with_usage(
     file_prompt: str = "",
     timeout_seconds: float = 60.0,
 ) -> AsyncIterator[StreamEvent]:
-    del model
+    if str(model).strip() != "gpt-5":
+        async for event in _generate_reply_stream_with_platform_registry(
+            model=str(model),
+            message=message,
+            history=history,
+            memory_prompt=memory_prompt,
+            search_prompt=search_prompt,
+            file_prompt=file_prompt,
+            timeout_seconds=timeout_seconds,
+        ):
+            yield event
+        return
     if not has_azure_openai_config():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -133,6 +153,76 @@ async def generate_reply_stream_with_usage(
         timeout_seconds=timeout_seconds,
     ):
         yield event
+
+
+async def _generate_reply_with_platform_registry(
+    model: str,
+    message: str,
+    history: list[dict[str, Any]],
+    memory_prompt: str = "",
+    search_prompt: str = "",
+    file_prompt: str = "",
+    timeout_seconds: float = 25.0,
+) -> ChatCompletionResult:
+    try:
+        from app.platform.db import get_platform_session_factory
+        from app.platform.providers import build_messages as build_platform_messages, chat_with_model
+    except Exception as error:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Platform provider registry is unavailable: {error}",
+        ) from error
+
+    session_factory = get_platform_session_factory()
+    with session_factory() as session:
+        text, usage, _runtime = await chat_with_model(
+            session,
+            model,
+            build_platform_messages(
+                history=history,
+                newest_message=message,
+                memory_prompt=memory_prompt,
+                search_prompt=search_prompt,
+                file_prompt=file_prompt,
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+    return {"text": text, "usage": usage}
+
+
+async def _generate_reply_stream_with_platform_registry(
+    model: str,
+    message: str,
+    history: list[dict[str, Any]],
+    memory_prompt: str = "",
+    search_prompt: str = "",
+    file_prompt: str = "",
+    timeout_seconds: float = 60.0,
+) -> AsyncIterator[StreamEvent]:
+    try:
+        from app.platform.db import get_platform_session_factory
+        from app.platform.providers import build_messages as build_platform_messages, stream_chat_with_model
+    except Exception as error:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Platform provider registry is unavailable: {error}",
+        ) from error
+
+    session_factory = get_platform_session_factory()
+    with session_factory() as session:
+        async for event, _runtime in stream_chat_with_model(
+            session,
+            model,
+            build_platform_messages(
+                history=history,
+                newest_message=message,
+                memory_prompt=memory_prompt,
+                search_prompt=search_prompt,
+                file_prompt=file_prompt,
+            ),
+            timeout_seconds=timeout_seconds,
+        ):
+            yield event
 
 
 # This helper builds the provider message list from memory, search, file context, history, and newest input.

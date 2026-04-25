@@ -43,6 +43,8 @@ import { useAccess } from "./hooks/useAccess";
 import { useApiQuery } from "./hooks/useApi";
 import { usePrefetch } from "./hooks/usePrefetch";
 import { NewChatPage } from "./pages/NewChatPage";
+import { AgentSessionsPage } from "./pages/AgentSessionsPage";
+import { AgentStudioPage } from "./pages/AgentStudioPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import type {
@@ -67,9 +69,9 @@ const COST_WARNING_STORAGE_KEY = "neuralchat:cost-warning:dismissed";
 const SIDEBAR_SHORTCUT_LABELS: Record<ShortcutId, string> = {
   new: "New chat",
   images: "Images",
-  apps: "Apps",
+  apps: "Agent Studio",
   research: "Deep research",
-  codex: "Codex",
+  agent: "Agent mode",
   projects: "Projects",
 };
 type ToastTone = "success" | "info" | "error";
@@ -381,12 +383,16 @@ function getUsageWarningScope(status: UsageStatusResponse | null): string | null
   return null;
 }
 
-function buildConversationSummary(title = "New chat"): ConversationSummary {
+function buildConversationSummary(
+  title = "New chat",
+  workspaceKind: ConversationSummary["workspaceKind"] = "standard"
+): ConversationSummary {
   return {
     id: `c-${crypto.randomUUID()}`,
     title,
     preview: "",
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    workspaceKind: workspaceKind ?? "standard",
   };
 }
 
@@ -452,6 +458,7 @@ function mergeSyncedConversations(
     return {
       ...conversation,
       archived: localMatch?.archived === true,
+      workspaceKind: localMatch?.workspaceKind ?? conversation.workspaceKind ?? "standard",
     };
   });
 
@@ -473,13 +480,13 @@ function buildWorkspaceDescription(shortcutId: Exclude<ShortcutId, "new">): stri
     return "Image tools are not wired into NeuralChat yet, but this workspace is reserved for visual creation and image-first prompts.";
   }
   if (shortcutId === "apps") {
-    return "Apps will become your launcher for connected tools and purpose-built workflows inside NeuralChat.";
+    return "Agent Studio is now the launcher for providers, tools, MCP endpoints, collections, dynamic agents, and routing previews.";
   }
   if (shortcutId === "research") {
-    return "Deep research prepares the chat for longer, web-assisted and agent-assisted investigation work.";
+    return "Deep research is now a dedicated workspace for longer, web-assisted investigation without turning every chat into an agent workflow.";
   }
-  if (shortcutId === "codex") {
-    return "Codex switches the workspace into a coding-focused flow so you can plan, debug, and iterate with Agent mode.";
+  if (shortcutId === "agent") {
+    return "Agent mode is now a dedicated reasoning page for deeper multi-step planning, structured execution, and neural-style responses when you explicitly need it.";
   }
   return "Projects will become the home for longer-running workstreams and grouped conversations.";
 }
@@ -593,7 +600,7 @@ function ChatShell() {
   const { getToken, userId } = useAuth();
   const clerk = useClerk();
   const { user } = useUser();
-  const { can } = useAccess();
+  const { can, isOwner } = useAccess();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -613,6 +620,7 @@ function ChatShell() {
   const [searchEnabled, setSearchEnabled] = useState<boolean | null>(null);
   const [forceWebSearch, setForceWebSearch] = useState(false);
   const [isAgentMode, setIsAgentMode] = useState(false);
+  const [isAgentSessionBrowserOpen, setIsAgentSessionBrowserOpen] = useState(false);
   const [activeShortcutId, setActiveShortcutId] = useState<ShortcutId>("new");
   const [activeWorkspaceShortcut, setActiveWorkspaceShortcut] = useState<Exclude<ShortcutId, "new"> | null>(null);
   const [activeStreamingAssistantId, setActiveStreamingAssistantId] = useState<string | null>(null);
@@ -685,13 +693,27 @@ function ChatShell() {
       sortedConversations.filter(
         (conversation) =>
           conversation.archived !== true &&
+          conversation.workspaceKind !== "agent" &&
           !isConversationDraft(conversation, messagesByConversation, fileCountsByConversation)
       ),
     [fileCountsByConversation, messagesByConversation, sortedConversations]
   );
   const archivedHistoryItems = useMemo(
-    () => sortedConversations.filter((conversation) => conversation.archived === true),
+    () =>
+      sortedConversations.filter(
+        (conversation) => conversation.archived === true && conversation.workspaceKind !== "agent"
+      ),
     [sortedConversations]
+  );
+  const agentHistoryItems = useMemo(
+    () =>
+      sortedConversations.filter(
+        (conversation) =>
+          conversation.archived !== true &&
+          conversation.workspaceKind === "agent" &&
+          !isConversationDraft(conversation, messagesByConversation, fileCountsByConversation)
+      ),
+    [fileCountsByConversation, messagesByConversation, sortedConversations]
   );
 
   const currentMessages = activeSessionId ? messagesByConversation[activeSessionId] ?? [] : [];
@@ -1176,7 +1198,8 @@ function ChatShell() {
       const loadedMessages = parsed.messagesByConversation ?? {};
       const normalizedConversations = loadedConversations.map((conversation) => ({
         ...conversation,
-        archived: conversation.archived === true
+        archived: conversation.archived === true,
+        workspaceKind: conversation.workspaceKind ?? "standard",
       }));
 
       if (normalizedConversations.length === 0) {
@@ -1812,9 +1835,37 @@ function ChatShell() {
     setIsSidebarOpen(false);
   }
 
+  function activateWorkspaceDraftConversation(
+    workspaceKind: NonNullable<ConversationSummary["workspaceKind"]> = "standard"
+  ) {
+    const reusableDraftConversation = conversations.find((conversation) =>
+      (conversation.workspaceKind ?? "standard") === workspaceKind &&
+      isConversationDraft(conversation, messagesByConversation, fileCountsByConversation)
+    );
+
+    if (reusableDraftConversation) {
+      setHydratedConversationIds((previous) => ({
+        ...previous,
+        [reusableDraftConversation.id]: true,
+      }));
+      setActiveConversationId(reusableDraftConversation.id);
+      return reusableDraftConversation.id;
+    }
+
+    const next = buildConversationSummary("New chat", workspaceKind);
+    setConversations((previous) => [next, ...previous]);
+    setMessagesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+    setHydratedConversationIds((previous) => ({ ...previous, [next.id]: true }));
+    setFilesByConversation((previous) => ({ ...previous, [next.id]: [] }));
+    setFileCountsByConversation((previous) => ({ ...previous, [next.id]: 0 }));
+    setActiveConversationId(next.id);
+    return next.id;
+  }
+
   function resetChatModes() {
     setForceWebSearch(false);
     setIsAgentMode(false);
+    setIsAgentSessionBrowserOpen(false);
   }
 
   function handleSelectConversation(conversationId: string) {
@@ -1824,10 +1875,30 @@ function ChatShell() {
     if (location.pathname !== "/") {
       navigate("/");
     }
-    resetChatModes();
+    const selectedConversation = conversations.find((conversation) => conversation.id === conversationId);
+    const workspaceKind = selectedConversation?.workspaceKind ?? "standard";
     setActiveConversationId(conversationId);
-    setActiveShortcutId("new");
-    setActiveWorkspaceShortcut(null);
+    if (workspaceKind === "agent") {
+      setForceWebSearch(false);
+      setIsAgentMode(true);
+      setIsAgentSessionBrowserOpen(false);
+      setActiveShortcutId("agent");
+      setActiveWorkspaceShortcut("agent");
+    } else if (workspaceKind === "research") {
+      setIsAgentMode(false);
+      setIsAgentSessionBrowserOpen(false);
+      setActiveShortcutId("research");
+      setActiveWorkspaceShortcut("research");
+      if (searchReady) {
+        setForceWebSearch(true);
+      } else {
+        setForceWebSearch(false);
+      }
+    } else {
+      resetChatModes();
+      setActiveShortcutId("new");
+      setActiveWorkspaceShortcut(null);
+    }
     setIsSettingsOpen(false);
     setErrorText("");
   }
@@ -1852,30 +1923,57 @@ function ChatShell() {
 
   function handleOpenResearch() {
     navigate("/");
+    activateWorkspaceDraftConversation("research");
     setActiveShortcutId("research");
     setActiveWorkspaceShortcut("research");
     setIsSettingsOpen(false);
     setErrorText("");
+    setIsAgentMode(false);
     if (searchReady) {
       setForceWebSearch(true);
     } else {
       setForceWebSearch(false);
     }
-    setIsAgentMode(true);
   }
 
-  function handleOpenCodex() {
+  function handleOpenAgentMode() {
     if (!can("agent:run")) {
       showToast("Agent mode is not available for your current access.", "info");
       return;
     }
     navigate("/");
     setForceWebSearch(false);
-    setActiveShortcutId("codex");
-    setActiveWorkspaceShortcut("codex");
+    setActiveShortcutId("agent");
+    setActiveWorkspaceShortcut("agent");
     setIsSettingsOpen(false);
     setErrorText("");
     setIsAgentMode(true);
+    setIsAgentSessionBrowserOpen(true);
+  }
+
+  function handleCreateAgentConversation() {
+    navigate("/");
+    activateWorkspaceDraftConversation("agent");
+    setForceWebSearch(false);
+    setActiveShortcutId("agent");
+    setActiveWorkspaceShortcut("agent");
+    setIsSettingsOpen(false);
+    setErrorText("");
+    setIsAgentMode(true);
+    setIsAgentSessionBrowserOpen(false);
+    setInput("");
+  }
+
+  function handleOpenAgentConversation(conversationId: string) {
+    navigate("/");
+    setActiveConversationId(conversationId);
+    setForceWebSearch(false);
+    setActiveShortcutId("agent");
+    setActiveWorkspaceShortcut("agent");
+    setIsSettingsOpen(false);
+    setErrorText("");
+    setIsAgentMode(true);
+    setIsAgentSessionBrowserOpen(false);
   }
 
   function handleOpenProjects() {
@@ -2498,6 +2596,24 @@ function ChatShell() {
         },
         authToken,
         (chunk: StreamChunk) => {
+          if (chunk.type === "route") {
+            setMessagesByConversation((previous) => ({
+              ...previous,
+              [conversationId]: (previous[conversationId] ?? []).map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      resolvedModel: typeof chunk.resolved_model === "string" ? chunk.resolved_model : message.resolvedModel,
+                      resolvedAgentId: typeof chunk.resolved_agent_id === "string" ? chunk.resolved_agent_id : message.resolvedAgentId,
+                      routeKind: chunk.route_kind ?? message.routeKind,
+                      routeConfidence: typeof chunk.route_confidence === "number" ? chunk.route_confidence : message.routeConfidence,
+                    }
+                  : message
+              ),
+            }));
+            return;
+          }
+
           if (chunk.type === "token") {
             streamedText += chunk.content;
             setTokensEmitted((value) => value + 1);
@@ -2513,6 +2629,18 @@ function ChatShell() {
           if (chunk.type === "error") {
             setStreamStatus("interrupted");
             setErrorText(chunk.content || "Streaming error received.");
+            return;
+          }
+
+          if (chunk.type === "sources") {
+            setMessagesByConversation((previous) => ({
+              ...previous,
+              [conversationId]: (previous[conversationId] ?? []).map((message) =>
+                message.id === assistantId
+                  ? { ...message, sources: Array.isArray(chunk.sources) ? chunk.sources : message.sources }
+                  : message
+              ),
+            }));
             return;
           }
 
@@ -2541,7 +2669,16 @@ function ChatShell() {
                         : message.contextPercentageUsed,
                     searchUsed: chunk.search_used === true,
                     fileContextUsed: chunk.file_context_used === true,
-                    sources: Array.isArray(chunk.sources) ? chunk.sources : []
+                    sources: Array.isArray(chunk.sources) ? chunk.sources : [],
+                    resolvedProvider:
+                      typeof chunk.resolved_provider === "string" ? chunk.resolved_provider : message.resolvedProvider,
+                    resolvedModel:
+                      typeof chunk.resolved_model === "string" ? chunk.resolved_model : message.resolvedModel,
+                    resolvedAgentId:
+                      typeof chunk.resolved_agent_id === "string" ? chunk.resolved_agent_id : message.resolvedAgentId,
+                    routeKind: chunk.route_kind ?? message.routeKind,
+                    routeConfidence:
+                      typeof chunk.route_confidence === "number" ? chunk.route_confidence : message.routeConfidence,
                   }
                 : message
             )
@@ -2571,6 +2708,11 @@ function ChatShell() {
                 searchUsed: result.searchUsed,
                 fileContextUsed: result.fileContextUsed,
                 sources: result.sources,
+                resolvedProvider: result.resolvedProvider ?? message.resolvedProvider,
+                resolvedModel: result.resolvedModel ?? message.resolvedModel,
+                resolvedAgentId: result.resolvedAgentId ?? message.resolvedAgentId,
+                routeKind: result.routeKind ?? message.routeKind,
+                routeConfidence: result.routeConfidence ?? message.routeConfidence,
               }
             : message
         ),
@@ -2932,7 +3074,7 @@ function ChatShell() {
       return;
     }
     if (!isSending) {
-      void submitChatPrompt(prompt);
+      void submitPrompt(prompt);
     }
   }
 
@@ -3095,7 +3237,6 @@ function ChatShell() {
         userSubtitle={userSubtitle}
         isWebSearchMode={forceWebSearch}
         isWebSearchAvailable={searchReady}
-        isAgentMode={isAgentMode}
         activeShortcutId={activeShortcutId}
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
@@ -3108,13 +3249,6 @@ function ChatShell() {
             setForceWebSearch((value) => !value);
           }
         }}
-        onToggleAgentMode={() =>
-          setIsAgentMode((value) => {
-            const nextValue = !value;
-            setActiveShortcutId(nextValue ? "codex" : "new");
-            return nextValue;
-          })
-        }
         themeMode={themeMode}
         onThemeModeChange={handleThemeModeChange}
         onOpenSettings={handleOpenSettings}
@@ -3125,7 +3259,7 @@ function ChatShell() {
         onOpenImages={handleOpenImages}
         onOpenApps={handleOpenApps}
         onOpenResearch={handleOpenResearch}
-        onOpenCodex={handleOpenCodex}
+        onOpenAgentMode={handleOpenAgentMode}
             onOpenProjects={handleOpenProjects}
             onCreateProject={handleRequestCreateProject}
             onOpenProject={handleOpenProject}
@@ -3438,14 +3572,164 @@ function ChatShell() {
                 />
               </section>
             )
+          ) : activeWorkspaceShortcut === "apps" ? (
+            <AgentStudioPage
+              authToken={sessionAuthToken}
+              naming={{ userDisplayName, sessionTitle: "Agent Studio" }}
+              isOwner={isOwner}
+              onShowToast={showToast}
+            />
+          ) : activeWorkspaceShortcut === "agent" ? (
+            isAgentSessionBrowserOpen ? (
+              <AgentSessionsPage
+                conversations={agentHistoryItems}
+                activeConversationId={activeConversation?.workspaceKind === "agent" ? activeConversationId : ""}
+                onOpenConversation={handleOpenAgentConversation}
+                onCreateConversation={handleCreateAgentConversation}
+              />
+            ) : currentMessages.length === 0 ? (
+              <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
+                <div className="nc-workspace-view__card">
+                  <div className="nc-workspace-view__mark" aria-hidden="true">
+                    <UiIcon kind="agent" className="nc-workspace-view__icon" />
+                  </div>
+                  <p className="nc-workspace-view__eyebrow">Agent Mode</p>
+                  <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
+                  <p className="nc-workspace-view__description">
+                    Ask here only when you want deeper reasoning, multi-step planning, or a more deliberate neural-style response.
+                  </p>
+
+                  <div className="nc-workspace-view__actions">
+                    <button
+                      type="button"
+                      className="nc-empty-chip"
+                      onClick={() => setIsAgentSessionBrowserOpen(true)}
+                    >
+                      View agent chats
+                    </button>
+                    <button
+                      type="button"
+                      className="nc-empty-chip"
+                      onClick={handleCreateAgentConversation}
+                    >
+                      Start new agent chat
+                    </button>
+                  </div>
+
+                  <p className="nc-workspace-view__hint">
+                    Agent mode runs only from this dedicated page and no longer acts like a toggle inside every chat.
+                  </p>
+                </div>
+              </section>
+            ) : (
+              <section className="nc-project-chat-shell">
+                <div className="nc-project-chat-shell__header">
+                  <button
+                    type="button"
+                    className="nc-button nc-button--ghost"
+                    onClick={() => setIsAgentSessionBrowserOpen(true)}
+                  >
+                    ← Agent chats
+                  </button>
+                  <div className="nc-project-chat-shell__title-wrap">
+                    <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
+                    <p>Dedicated deep reasoning and agent workflow chat</p>
+                  </div>
+                  <div className="nc-project-chat-shell__actions">
+                    <button
+                      type="button"
+                      className="nc-button nc-button--ghost"
+                      onClick={handleCreateAgentConversation}
+                    >
+                      New chat
+                    </button>
+                  </div>
+                </div>
+                <ChatWindow
+                  messages={currentMessages}
+                  streamingMessageId={activeStreamingAssistantId}
+                  onRetryPrompt={handleRetryPrompt}
+                  onRunAgentPlan={handleRunAgentPlan}
+                  onConfirmAgentAction={handleAgentConfirmation}
+                />
+              </section>
+            )
+          ) : activeWorkspaceShortcut === "research" ? (
+            currentMessages.length === 0 ? (
+              <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
+                <div className="nc-workspace-view__card">
+                  <div className="nc-workspace-view__mark" aria-hidden="true">
+                    <UiIcon kind="search" className="nc-workspace-view__icon" />
+                  </div>
+                  <p className="nc-workspace-view__eyebrow">Deep Research</p>
+                  <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
+                  <p className="nc-workspace-view__description">
+                    Ask longer investigation questions here when you want web-assisted research in a dedicated space.
+                  </p>
+
+                  <div className="nc-workspace-view__actions">
+                    <button
+                      type="button"
+                      className="nc-empty-chip"
+                      onClick={handleNewChat}
+                    >
+                      Start fresh chat
+                    </button>
+                    <button
+                      type="button"
+                      className="nc-empty-chip"
+                      onClick={() => textareaRef.current?.focus()}
+                    >
+                      Focus input
+                    </button>
+                  </div>
+
+                  <p className="nc-workspace-view__hint">
+                    {searchReady
+                      ? "Web search is ready for this research page."
+                      : "Web search is currently unavailable, but you can still ask focused long-form questions here."}
+                  </p>
+                </div>
+              </section>
+            ) : (
+              <section className="nc-project-chat-shell">
+                <div className="nc-project-chat-shell__header">
+                  <button
+                    type="button"
+                    className="nc-button nc-button--ghost"
+                    onClick={handleNewChat}
+                  >
+                    ← Back to regular chat
+                  </button>
+                  <div className="nc-project-chat-shell__title-wrap">
+                    <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
+                    <p>Dedicated web-assisted research chat</p>
+                  </div>
+                  <div className="nc-project-chat-shell__actions">
+                    <button
+                      type="button"
+                      className="nc-button nc-button--ghost"
+                      onClick={handleNewChat}
+                    >
+                      New chat
+                    </button>
+                  </div>
+                </div>
+                <ChatWindow
+                  messages={currentMessages}
+                  streamingMessageId={activeStreamingAssistantId}
+                  onRetryPrompt={handleRetryPrompt}
+                  onRunAgentPlan={handleRunAgentPlan}
+                  onConfirmAgentAction={handleAgentConfirmation}
+                />
+              </section>
+            )
           ) : activeWorkspaceShortcut ? (
             <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
               <div className="nc-workspace-view__card">
                 <div className="nc-workspace-view__mark" aria-hidden="true">
                   {activeWorkspaceShortcut === "research" ? (
                     <UiIcon kind="search" className="nc-workspace-view__icon" />
-                  ) : activeWorkspaceShortcut === "codex" ? (
-                    <UiIcon kind="agent" className="nc-workspace-view__icon" />
                   ) : (
                     <UiIcon kind="brand" className="nc-workspace-view__icon" />
                   )}
@@ -3476,17 +3760,7 @@ function ChatShell() {
                   </button>
                 </div>
 
-                {(activeWorkspaceShortcut === "research" || activeWorkspaceShortcut === "codex") ? (
-                  <p className="nc-workspace-view__hint">
-                    {activeWorkspaceShortcut === "research"
-                      ? searchReady
-                        ? "Deep research has turned on Web search and Agent mode for this chat."
-                        : "Deep research has turned on Agent mode. Web search is currently unavailable."
-                      : "Codex has turned on Agent mode for this chat."}
-                  </p>
-                ) : (
-                  <p className="nc-workspace-view__hint">This section is ready for its dedicated experience next.</p>
-                )}
+                <p className="nc-workspace-view__hint">This section is ready for its dedicated experience next.</p>
               </div>
             </section>
           ) : currentMessages.length === 0 ? (
@@ -3507,7 +3781,10 @@ function ChatShell() {
           )}
         </div>
 
-        {!isSettingsOpen && !isProjectsIndexRoute && !isProjectOverviewRoute ? (
+        {!isSettingsOpen &&
+        !isProjectsIndexRoute &&
+        !isProjectOverviewRoute &&
+        !(activeWorkspaceShortcut === "agent" && isAgentSessionBrowserOpen) ? (
           <footer className="nc-input-wrap">
             <form onSubmit={handleSubmit} className="nc-input-shell">
               <textarea
@@ -3515,7 +3792,13 @@ function ChatShell() {
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleTextareaKeyDown}
-                placeholder={isAgentMode ? "Describe a goal for the agent..." : "Message NeuralChat..."}
+                placeholder={
+                  activeWorkspaceShortcut === "agent"
+                    ? "Describe a goal for the agent..."
+                    : activeWorkspaceShortcut === "research"
+                      ? "Ask a deep research question..."
+                      : "Message NeuralChat..."
+                }
                 rows={1}
               />
 

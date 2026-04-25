@@ -3,7 +3,7 @@ import type { ChatMessage, ChatRequest, ConversationSummary, SearchSource, Strea
 
 // Default to Azure Functions local runtime (`func start`).
 // Override with VITE_API_BASE_URL for hosted backends like Azure App Service.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:7071";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:7071").replace(/\/+$/, "");
 
 export interface MeResponse {
   user_id: string;
@@ -113,6 +113,11 @@ export async function streamChat(
   searchUsed: boolean;
   fileContextUsed: boolean;
   sources: SearchSource[];
+  resolvedProvider: string | null;
+  resolvedModel: string | null;
+  resolvedAgentId: string | null;
+  routeKind: StreamChunk["route_kind"] | null;
+  routeConfidence: number | null;
 }> {
   const startedAt = performance.now();
 
@@ -214,6 +219,11 @@ export async function streamChat(
   const searchUsed = doneChunk?.search_used === true;
   const fileContextUsed = doneChunk?.file_context_used === true;
   const sources = Array.isArray(doneChunk?.sources) ? doneChunk.sources : [];
+  const resolvedProvider = typeof doneChunk?.resolved_provider === "string" ? doneChunk.resolved_provider : null;
+  const resolvedModel = typeof doneChunk?.resolved_model === "string" ? doneChunk.resolved_model : null;
+  const resolvedAgentId = typeof doneChunk?.resolved_agent_id === "string" ? doneChunk.resolved_agent_id : null;
+  const routeKind = doneChunk?.route_kind ?? null;
+  const routeConfidence = typeof doneChunk?.route_confidence === "number" ? doneChunk.route_confidence : null;
 
   return {
     requestId,
@@ -227,7 +237,12 @@ export async function streamChat(
     contextPercentageUsed,
     searchUsed,
     fileContextUsed,
-    sources
+    sources,
+    resolvedProvider,
+    resolvedModel,
+    resolvedAgentId,
+    routeKind,
+    routeConfidence
   };
 }
 

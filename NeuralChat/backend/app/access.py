@@ -478,6 +478,13 @@ def get_access_context(
     claims = verify_clerk_token(token)
     request.state.clerk_claims = claims
     access_context = resolve_access_context_from_claims(claims)
+    try:
+        from app.platform.members import sync_workspace_member
+
+        sync_workspace_member(access_context)
+    except Exception:
+        # Keep the existing app usable even when the optional platform control plane is unavailable.
+        pass
     request.state.access_context = access_context
     return access_context
 

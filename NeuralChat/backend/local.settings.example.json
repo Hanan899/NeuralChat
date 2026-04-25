@@ -25,6 +25,13 @@
     "AZURE_OPENAI_API_VERSION": "2025-01-01-preview",
     "GPT5_CONTEXT_WINDOW_TOKENS": "262144",
     "TAVILY_API_KEY": "....",
-    "MOCK_STREAM_DELAY_MS": "20"
+    "MOCK_STREAM_DELAY_MS": "20",
+
+    "PLATFORM_DATABASE_URL": "postgresql+psycopg://postgres:postgres@localhost:5432/neuralchat",
+    "PLATFORM_MASTER_KEY": "replace-with-url-safe-base64-32-byte-key",
+    "PLATFORM_WORKSPACE_KEY": "default",
+    "PLATFORM_ROUTE_CONFIDENCE_THRESHOLD": "0.65",
+    "PLATFORM_INDEX_QUEUE_NAME": "platform-document-index",
+    "PLATFORM_EMBEDDING_DIMENSIONS": "1536"
   }
 }
