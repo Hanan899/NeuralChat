@@ -31,11 +31,15 @@ from app.services.file_handler import (
     _get_parsed_container,
     _get_uploads_container,
     _safe_filename,
+    build_parsed_chunk_payload,
     chunk_text,
     get_relevant_chunks,
+    get_relevant_chunk_records,
     parse_file,
+    records_from_parsed_payload,
     validate_file,
 )
+from app.services.memory_blob import get_memory_blob_container
 from app.services.titles import sanitize_conversation_title
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
@@ -140,6 +144,10 @@ PROJECT_TEMPLATES: dict[str, dict[str, Any]] = {
 
 # This helper opens the shared memory container used for project metadata, memory, and chats.
 def _get_memory_container() -> ContainerClient:
+    container_name = os.getenv("AZURE_BLOB_MEMORY_CONTAINER", "neurarchat-memory").strip() or "neurarchat-memory"
+    if os.getenv("NEURALCHAT_STORAGE_MODE", "").strip().lower() == "memory":
+        return get_memory_blob_container(container_name)  # type: ignore[return-value]
+
     connection_string = (
         os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
         or os.getenv("AzureWebJobsStorage", "").strip()
@@ -147,7 +155,6 @@ def _get_memory_container() -> ContainerClient:
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage is required.")
 
-    container_name = os.getenv("AZURE_BLOB_MEMORY_CONTAINER", "neurarchat-memory").strip() or "neurarchat-memory"
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_client = blob_service_client.get_container_client(container_name)
     try:
@@ -1240,16 +1247,17 @@ def save_project_parsed_chunks(
     display_name: str | None = None,
 ) -> None:
     parsed_container = _get_parsed_container()
-    payload = {
-        "filename": _safe_filename(filename),
-        "chunk_count": len(chunks),
-        "chunks": chunks,
-        "user_id": user_id,
-        "project_id": project_id,
-        "project_name": project_name,
-        "display_name": display_name or user_id,
-        "parsed_at": _timestamp_text(),
-    }
+    payload = build_parsed_chunk_payload(
+        filename,
+        chunks,
+        {
+            "user_id": user_id,
+            "project_id": project_id,
+            "project_name": project_name,
+            "display_name": display_name or user_id,
+            "parsed_at": _timestamp_text(),
+        },
+    )
     write_json_with_migration(
         parsed_container,
         _project_parsed_blob_name(user_id, project_id, project_name, filename, display_name),
@@ -1290,6 +1298,37 @@ def load_project_parsed_chunks(
     if not isinstance(chunks, list):
         return None
     return [str(chunk).strip() for chunk in chunks if str(chunk).strip()]
+
+
+def load_project_parsed_chunk_records(
+    user_id: str,
+    project_id: str,
+    filename: str,
+    display_name: str | None = None,
+) -> list[dict[str, Any]] | None:
+    project_data = get_project(user_id, project_id, display_name)
+    if project_data is None:
+        return None
+
+    parsed_container = _get_parsed_container()
+    existing_user_segment = _find_existing_user_segment(parsed_container, user_id)
+    existing_project_segment = _find_existing_project_segment(parsed_container, user_id, project_id)
+    if not existing_user_segment or not existing_project_segment:
+        return None
+
+    existing_blob_name = f"projects/{existing_user_segment}/{existing_project_segment}/files_parsed/{_safe_filename(filename)}.json"
+    raw_payload = read_blob_text(parsed_container, existing_blob_name)
+    if raw_payload is None:
+        return None
+
+    try:
+        parsed_payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed_payload, dict):
+        return None
+
+    return records_from_parsed_payload(parsed_payload, filename)
 
 
 # This function lists every project-scoped uploaded file for the workspace.
@@ -1382,6 +1421,18 @@ def get_project_file_context_chunks(user_id: str, project_id: str, question: str
         if parsed_chunks:
             all_chunks.extend(parsed_chunks)
     return get_relevant_chunks(all_chunks, question, 3)
+
+
+def get_project_file_context_records(user_id: str, project_id: str, question: str, display_name: str | None = None) -> list[dict[str, Any]]:
+    all_records: list[dict[str, Any]] = []
+    for project_file in list_project_files(user_id, project_id, display_name):
+        file_name = str(project_file.get("filename", "")).strip()
+        if not file_name:
+            continue
+        parsed_records = load_project_parsed_chunk_records(user_id, project_id, file_name, display_name)
+        if parsed_records:
+            all_records.extend(parsed_records)
+    return get_relevant_chunk_records(all_records, question, 3)
 
 
 # This function handles project-scoped upload + parse work and returns file metadata.

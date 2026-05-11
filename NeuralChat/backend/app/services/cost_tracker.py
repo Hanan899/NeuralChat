@@ -15,6 +15,7 @@ from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient, ContainerClient
 
 from app.services.blob_paths import blob_parts, read_blob_text, segment_matches_id, user_segment, write_json_with_migration
+from app.services.memory_blob import get_memory_blob_container
 
 INPUT_COST_PER_MILLION = 3.00
 OUTPUT_COST_PER_MILLION = 15.00
@@ -50,6 +51,10 @@ class TokenUsage(TypedDict):
 
 def _get_memory_container() -> ContainerClient:
     """Build the shared memory container used for usage logs and search cache."""
+    container_name = os.getenv("AZURE_BLOB_MEMORY_CONTAINER", "neurarchat-memory").strip() or "neurarchat-memory"
+    if os.getenv("NEURALCHAT_STORAGE_MODE", "").strip().lower() == "memory":
+        return get_memory_blob_container(container_name)  # type: ignore[return-value]
+
     connection_string = (
         os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
         or os.getenv("AzureWebJobsStorage", "").strip()
@@ -57,7 +62,6 @@ def _get_memory_container() -> ContainerClient:
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage is required.")
 
-    container_name = os.getenv("AZURE_BLOB_MEMORY_CONTAINER", "neurarchat-memory").strip() or "neurarchat-memory"
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_client = blob_service_client.get_container_client(container_name)
     try:

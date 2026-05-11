@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -162,6 +162,12 @@ function renderApp() {
   );
 }
 
+async function openAgentComposer() {
+  await userEvent.click(screen.getByRole("button", { name: "Agent Mode" }));
+  const sessionsPage = await screen.findByTestId("agent-sessions-page");
+  await userEvent.click(within(sessionsPage).getByRole("button", { name: /\+ new chat/i }));
+}
+
 describe("Agent mode UI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -178,21 +184,20 @@ describe("Agent mode UI", () => {
 
   it("test_agent_toggle_switches_to_agent_mode", async () => {
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     expect(screen.getByPlaceholderText("Describe a goal for the agent...")).toBeInTheDocument();
   });
 
   it("test_agent_toggle_switches_back_to_normal_chat", async () => {
     renderApp();
-    const toggle = screen.getByRole("button", { name: "Toggle Agent Mode" });
-    await userEvent.click(toggle);
-    await userEvent.click(toggle);
+    await openAgentComposer();
+    await userEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(screen.getByPlaceholderText("Message NeuralChat...")).toBeInTheDocument();
   });
 
   it("test_agent_progress_shows_plan_steps_on_load", async () => {
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research top Python AI libraries");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -213,7 +218,7 @@ describe("Agent mode UI", () => {
     });
 
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Debug App.tsx errors");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -223,7 +228,7 @@ describe("Agent mode UI", () => {
 
   it("test_agent_progress_step_status_updates_correctly", async () => {
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await userEvent.click(await screen.findByRole("button", { name: "Run plan" }));
@@ -239,7 +244,7 @@ describe("Agent mode UI", () => {
     });
 
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await userEvent.click(await screen.findByRole("button", { name: "Run plan" }));
@@ -249,7 +254,7 @@ describe("Agent mode UI", () => {
 
   it("test_agent_progress_streams_final_summary", async () => {
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await userEvent.click(await screen.findByRole("button", { name: "Run plan" }));
@@ -296,7 +301,7 @@ describe("Agent mode UI", () => {
     });
 
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Create a launch workspace");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await userEvent.click(await screen.findByRole("button", { name: "Run plan" }));
@@ -329,7 +334,7 @@ describe("Agent mode UI", () => {
     });
 
     renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Agent Mode" }));
+    await openAgentComposer();
     await userEvent.type(screen.getByPlaceholderText("Describe a goal for the agent..."), "Research");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await userEvent.click(await screen.findByRole("button", { name: "Run plan" }));

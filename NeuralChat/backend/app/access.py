@@ -149,6 +149,10 @@ def _get_clerk_secret_key(required: bool = False) -> str | None:
     return secret
 
 
+def _clerk_backend_api_disabled() -> bool:
+    return os.getenv("NEURALCHAT_DISABLE_CLERK_API", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _extract_claims_email(claims: dict[str, Any]) -> str | None:
     email_candidates = [
         claims.get("email"),
@@ -269,6 +273,9 @@ def _normalize_usage_limits(raw_limits: Any) -> dict[str, float | None]:
 
 
 def _fetch_clerk_user_sync(user_id: str) -> dict[str, Any] | None:
+    if _clerk_backend_api_disabled():
+        return None
+
     cache_key = _access_cache_key(user_id)
     cached_payload = api_cache.get(cache_key)
     if isinstance(cached_payload, dict):
@@ -300,7 +307,6 @@ def _fetch_clerk_user_sync(user_id: str) -> dict[str, Any] | None:
 
 
 def _patch_clerk_public_metadata_sync(user_id: str, public_metadata_updates: dict[str, Any]) -> dict[str, Any]:
-    secret = _get_clerk_secret_key(required=True)
     current_user = _fetch_clerk_user_sync(user_id)
     current_metadata = current_user.get("public_metadata") if isinstance(current_user, dict) else {}
     if not isinstance(current_metadata, dict):
@@ -313,6 +319,16 @@ def _patch_clerk_public_metadata_sync(user_id: str, public_metadata_updates: dic
         else:
             next_metadata[key] = value
 
+    if _clerk_backend_api_disabled():
+        api_cache.invalidate(_access_cache_key(user_id))
+        api_cache.invalidate_prefix("usage::users")
+        return {
+            **(current_user or {"id": user_id}),
+            "id": user_id,
+            "public_metadata": next_metadata,
+        }
+
+    secret = _get_clerk_secret_key(required=True)
     with httpx.Client(timeout=10.0) as client:
         response = client.patch(
             f"{CLERK_API_BASE_URL}/users/{user_id}/metadata",
@@ -510,8 +526,13 @@ def require_feature(feature: AppFeature):
     return _dependency
 
 
-def resolve_limits_for_user(user_id: str, display_name: str | None = None) -> dict[str, float]:
-    profile = load_profile(user_id, display_name)
+def resolve_limits_for_user(
+    user_id: str,
+    display_name: str | None = None,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    if profile is None:
+        profile = load_profile(user_id, display_name)
     access_context = resolve_access_context_from_claims({"sub": user_id}, initialize_defaults=False)
     return access_context.get_effective_limits(profile)
 

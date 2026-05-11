@@ -130,7 +130,7 @@ describe("CreateProjectModal", () => {
 
     await userEvent.type(screen.getByRole("textbox", { name: /name your project/i }), "My Startup");
 
-    expect(screen.getByText("My Startup")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /name your project/i })).toHaveValue("My Startup");
     expect(createButton).not.toBeDisabled();
   });
 

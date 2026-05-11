@@ -41,6 +41,7 @@ from app.services.cost_tracker import (
 )
 from app.services.file_handler import get_relevant_chunks, list_user_files, load_parsed_chunks
 from app.services.memory import load_profile, upsert_profile_key
+from app.services.memory_blob import get_memory_blob_container
 from app.services.projects import (
     clear_project_memory,
     create_project,
@@ -424,6 +425,10 @@ def _allowed_tools_for_mode(mode: AgentMode) -> list[str]:
 
 # This helper builds the Azure Blob container used for storing agent plans and execution logs.
 def _get_agents_container() -> ContainerClient:
+    container_name = os.getenv("AZURE_BLOB_AGENTS_CONTAINER", DEFAULT_AGENTS_CONTAINER).strip() or DEFAULT_AGENTS_CONTAINER
+    if os.getenv("NEURALCHAT_STORAGE_MODE", "").strip().lower() == "memory":
+        return get_memory_blob_container(container_name)  # type: ignore[return-value]
+
     connection_string = (
         os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
         or os.getenv("AzureWebJobsStorage", "").strip()
@@ -431,7 +436,6 @@ def _get_agents_container() -> ContainerClient:
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage is required.")
 
-    container_name = os.getenv("AZURE_BLOB_AGENTS_CONTAINER", DEFAULT_AGENTS_CONTAINER).strip() or DEFAULT_AGENTS_CONTAINER
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_client = blob_service_client.get_container_client(container_name)
     try:
@@ -1883,8 +1887,10 @@ async def build_final_summary_with_usage(
     execution_log: list[dict[str, Any]],
     user_id: str,
     display_name: str | None = None,
+    enforce_budget: bool = True,
 ) -> tuple[str, TokenUsage]:
-    await _enforce_agent_budget(user_id, "agent_summary", display_name)
+    if enforce_budget:
+        await _enforce_agent_budget(user_id, "agent_summary", display_name)
     model = _get_agent_model(temperature=0.1, max_tokens=1000)
     prompt_text = (
         f"Goal: {goal}\n"
@@ -1909,7 +1915,8 @@ async def build_final_summary(
     user_id: str = "agent-summary",
     display_name: str | None = None,
 ) -> str:
-    summary_text, _usage = await build_final_summary_with_usage(goal, execution_log, user_id, display_name)
+    enforce_budget = user_id != "agent-summary" or display_name is not None
+    summary_text, _usage = await build_final_summary_with_usage(goal, execution_log, user_id, display_name, enforce_budget)
     return summary_text
 
 

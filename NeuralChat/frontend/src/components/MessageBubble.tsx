@@ -359,7 +359,9 @@ export function MessageBubble({
               {isStreaming ? <span className="typing-cursor" aria-hidden="true" /> : null}
             </div>
 
-            {message.searchUsed ? <SearchSources sources={message.sources ?? []} /> : null}
+            {(message.searchUsed || message.fileContextUsed) && message.sources?.length ? (
+              <SearchSources sources={message.sources} />
+            ) : null}
           </>
         )}
 

@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -105,10 +106,19 @@ vi.mock("@clerk/clerk-react", () => ({
 import App from "../App";
 
 function renderApp() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
   return render(
-    <MemoryRouter>
-      <App />
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
@@ -335,7 +345,7 @@ describe("SearchSources and MessageBubble", () => {
 
     const webSearchToggle = await screen.findByRole("button", { name: "Toggle Web Search Mode" });
     expect(webSearchToggle).toBeInTheDocument();
-    expect(screen.getByText("Web search")).toBeInTheDocument();
+    expect(screen.getByText("Web Search")).toBeInTheDocument();
     expect(within(webSearchToggle).getByText("Off")).toBeInTheDocument();
   });
 

@@ -28,6 +28,10 @@ async def build_collection_context_prompt(
                 continue
             citations.append(
                 {
+                    "source_type": "document",
+                    "title": f"{document.filename} chunk {item['chunk_index'] + 1}",
+                    "url": "",
+                    "snippet": item["content"][:280],
                     "document_id": document.id,
                     "filename": document.filename,
                     "chunk_id": item["chunk_id"],

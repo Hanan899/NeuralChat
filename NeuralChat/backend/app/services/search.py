@@ -14,6 +14,7 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContainerClient
 
 from app.services.cost_tracker import TokenUsage, normalize_usage
+from app.services.memory_blob import get_memory_blob_container
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 CACHE_MAX_AGE_HOURS = 24
@@ -45,6 +46,10 @@ def _cache_blob_name(query: str) -> str:
 
 # This helper opens the memory container where search cache blobs are stored.
 def _get_memory_container() -> ContainerClient:
+    container_name = os.getenv("AZURE_BLOB_MEMORY_CONTAINER", "neurarchat-memory").strip() or "neurarchat-memory"
+    if os.getenv("NEURALCHAT_STORAGE_MODE", "").strip().lower() == "memory":
+        return get_memory_blob_container(container_name)  # type: ignore[return-value]
+
     connection_string = (
         os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
         or os.getenv("AzureWebJobsStorage", "").strip()
@@ -52,7 +57,6 @@ def _get_memory_container() -> ContainerClient:
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage is required.")
 
-    container_name = os.getenv("AZURE_BLOB_MEMORY_CONTAINER", "neurarchat-memory").strip() or "neurarchat-memory"
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     return blob_service_client.get_container_client(container_name)
 
@@ -165,7 +169,7 @@ def search_web(query: str) -> list[dict[str, str]]:
         snippet = str(result_item.get("content", "") or result_item.get("snippet", "")).strip()
         if not title and not url and not snippet:
             continue
-        normalized_results.append({"title": title, "url": url, "snippet": snippet})
+        normalized_results.append({"source_type": "web", "title": title, "url": url, "snippet": snippet})
 
     return normalized_results
 
@@ -234,7 +238,7 @@ def load_cached_results(query: str) -> list[dict[str, str]] | None:
         title = str(result_item.get("title", "")).strip()
         url = str(result_item.get("url", "")).strip()
         snippet = str(result_item.get("snippet", "")).strip()
-        normalized_results.append({"title": title, "url": url, "snippet": snippet})
+        normalized_results.append({"source_type": "web", "title": title, "url": url, "snippet": snippet})
 
     return normalized_results
 

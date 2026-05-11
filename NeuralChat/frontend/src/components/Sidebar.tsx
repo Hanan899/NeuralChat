@@ -54,8 +54,8 @@ const SHORTCUTS: ShortcutItem[] = [
   { id: "new", label: "New chat" },
   { id: "images", label: "Images" },
   { id: "apps", label: "Agent Studio" },
-  { id: "research", label: "Deep research" },
-  { id: "agent", label: "Agent mode" },
+  { id: "research", label: "Deep Research" },
+  { id: "agent", label: "Agent Mode" },
   { id: "projects", label: "Projects" }
 ];
 
@@ -571,7 +571,7 @@ export function Sidebar({
                   <span className="nc-shortcut-subitem__icon">
                     <SidebarModeIcon id="web-search" />
                   </span>
-                  <span className="nc-shortcut-subitem__label">Web search</span>
+                  <span className="nc-shortcut-subitem__label">Web Search</span>
                   <span className={`nc-shortcut-subitem__state ${isWebSearchMode ? "nc-shortcut-subitem__state--active" : ""}`}>
                     {!isWebSearchAvailable ? "Unavailable" : isWebSearchMode ? "On" : "Off"}
                   </span>
