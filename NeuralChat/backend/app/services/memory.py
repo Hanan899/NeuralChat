@@ -26,6 +26,7 @@ from app.services.cost_tracker import (
     resolve_daily_limit,
     resolve_monthly_limit,
 )
+from app.services.memory_blob import get_memory_blob_container
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2025-01-01-preview"
 PROFILE_FIELDS = {"name", "job", "city", "preferences", "goals"}
@@ -38,13 +39,16 @@ MEMORY_PROMPT_SYSTEM = (
 
 # This helper opens the profile container using current runtime environment values.
 def _get_profiles_container() -> ContainerClient:
+    container_name = os.getenv("AZURE_BLOB_PROFILES_CONTAINER", "neurarchat-profiles").strip() or "neurarchat-profiles"
+    if os.getenv("NEURALCHAT_STORAGE_MODE", "").strip().lower() == "memory":
+        return get_memory_blob_container(container_name)  # type: ignore[return-value]
+
     connection_string = (
         os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
         or os.getenv("AzureWebJobsStorage", "").strip()
     )
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage is required.")
-    container_name = os.getenv("AZURE_BLOB_PROFILES_CONTAINER", "neurarchat-profiles").strip() or "neurarchat-profiles"
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     return blob_service_client.get_container_client(container_name)
 

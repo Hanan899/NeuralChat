@@ -27,6 +27,7 @@ from app.platform.models import (
     AgentRunStep,
     AgentToolBinding,
     AgentVersion,
+    AuditEvent,
     Document,
     DocumentCollection,
     McpEndpoint,
@@ -165,6 +166,24 @@ def _serialize_agent(agent: AgentDefinition, version: AgentVersion | None) -> di
         "created_at": agent.created_at.isoformat(),
         "updated_at": agent.updated_at.isoformat(),
     }
+
+
+def _serialize_audit_event(event: AuditEvent) -> dict[str, Any]:
+    return {
+        "id": event.id,
+        "actor_user_id": event.actor_user_id,
+        "event_type": event.event_type,
+        "target_type": event.target_type,
+        "target_id": event.target_id,
+        "payload": event.payload_json,
+        "created_at": event.created_at.isoformat(),
+    }
+
+
+def _require_agent_owner_or_workspace_owner(agent: AgentDefinition, ctx: AccessContext) -> None:
+    if ctx.is_owner() or agent.owner_user_id == ctx.user_id:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only modify agents you own.")
 
 
 def _coerce_scalar(value: Any, target_type: str) -> Any:
@@ -442,7 +461,7 @@ def get_tools(
 @router.post("/tools")
 def post_tool(
     body: ToolRequest,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     tool = ToolDefinition(
@@ -470,7 +489,7 @@ def post_tool(
 def patch_tool(
     tool_id: str,
     body: ToolRequest,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     tool = session.get(ToolDefinition, tool_id)
@@ -514,7 +533,7 @@ def approve_tool(
 async def post_tool_execute(
     tool_id: str,
     body: ToolExecuteRequest,
-    _ctx: AccessContext = Depends(get_access_context),
+    _ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     tool = session.get(ToolDefinition, tool_id)
@@ -539,7 +558,7 @@ def get_mcp_endpoints(
 @router.post("/mcp/endpoints")
 def post_mcp_endpoint(
     body: McpEndpointRequest,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     endpoint = McpEndpoint(
@@ -559,7 +578,7 @@ def post_mcp_endpoint(
 def patch_mcp_endpoint(
     endpoint_id: str,
     body: McpEndpointRequest,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     endpoint = session.get(McpEndpoint, endpoint_id)
@@ -578,7 +597,7 @@ def patch_mcp_endpoint(
 @router.post("/mcp/endpoints/{endpoint_id}/sync")
 async def post_mcp_sync(
     endpoint_id: str,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     endpoint = session.get(McpEndpoint, endpoint_id)
@@ -621,7 +640,7 @@ def get_collections(
 @router.post("/collections")
 def post_collection(
     body: CollectionRequest,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     collection = DocumentCollection(
@@ -641,7 +660,7 @@ def post_collection(
 def patch_collection(
     collection_id: str,
     body: CollectionRequest,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     collection = session.get(DocumentCollection, collection_id)
@@ -674,7 +693,7 @@ def get_documents(
 async def post_document(
     collection_id: str = Form(...),
     file: UploadFile = File(...),
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     collection = session.get(DocumentCollection, collection_id)
@@ -703,7 +722,7 @@ async def post_document(
 @router.post("/documents/{document_id}/reindex")
 async def post_document_reindex(
     document_id: str,
-    ctx: AccessContext = Depends(get_access_context),
+    ctx: AccessContext = Depends(require_owner),
     session: Session = Depends(get_platform_session),
 ) -> dict[str, Any]:
     document = session.get(Document, document_id)
@@ -788,6 +807,7 @@ def patch_agent(
     agent = session.get(AgentDefinition, agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    _require_agent_owner_or_workspace_owner(agent, ctx)
     current_version = session.get(AgentVersion, agent.latest_version_id) if agent.latest_version_id else None
     next_version_number = (current_version.version_number + 1) if current_version else 1
     agent.name = body.name.strip()
@@ -827,6 +847,7 @@ def submit_agent(
     agent = session.get(AgentDefinition, agent_id)
     if agent is None or not agent.latest_version_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    _require_agent_owner_or_workspace_owner(agent, ctx)
     version = session.get(AgentVersion, agent.latest_version_id)
     if version is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent version not found.")
@@ -1030,3 +1051,16 @@ def get_workspace_members(
             for member in members
         ]
     }
+
+
+@router.get("/platform/audit-events")
+def get_audit_events(
+    limit: int = 100,
+    _ctx: AccessContext = Depends(require_owner),
+    session: Session = Depends(get_platform_session),
+) -> dict[str, Any]:
+    safe_limit = min(max(int(limit or 100), 1), 200)
+    events = session.execute(
+        select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(safe_limit)
+    ).scalars().all()
+    return {"events": [_serialize_audit_event(event) for event in events]}

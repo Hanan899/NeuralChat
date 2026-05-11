@@ -9,6 +9,7 @@ from azure.core.exceptions import ResourceNotFoundError
 
 os.environ.setdefault("NEURALCHAT_STORAGE_MODE", "memory")
 
+from app.access import AccessContext, AppRole
 from app.auth import require_user_id
 from app.main import app, post_agent_plan, post_agent_run, post_chat, post_conversation_title
 from app.services import cost_tracker, memory
@@ -76,6 +77,15 @@ def schedule_and_capture(task_list: list[asyncio.Task]):
         return task
 
     return _schedule
+
+
+def owner_access_context(user_id: str = "user_123") -> AccessContext:
+    return AccessContext(
+        user_id=user_id,
+        role=AppRole.OWNER,
+        display_name="Abdul Hanan",
+        email="abdul@example.com",
+    )
 
 
 def test_calculate_cost_returns_correct_value():
@@ -362,7 +372,7 @@ def test_get_usage_status_endpoint_returns_combined_status(get_usage_status_mock
     assert payload["blocked"] is False
 
 
-@patch("app.main.save_profile")
+@patch("app.access.save_profile")
 def test_patch_limit_updates_user_profile(save_profile_mock):
     app.dependency_overrides[require_user_id] = lambda: "user_123"
 
@@ -375,7 +385,7 @@ def test_patch_limit_updates_user_profile(save_profile_mock):
 
 
 @patch("app.main.load_profile")
-@patch("app.main.save_profile")
+@patch("app.access.save_profile")
 def test_patch_limit_updates_monthly_only(save_profile_mock, load_profile_mock):
     app.dependency_overrides[require_user_id] = lambda: "user_123"
     load_profile_mock.return_value = {"daily_limit_usd": 1.5, "monthly_limit_usd": 40.0}
@@ -391,7 +401,7 @@ def test_patch_limit_updates_monthly_only(save_profile_mock, load_profile_mock):
 
 
 @patch("app.main.load_profile")
-@patch("app.main.save_profile")
+@patch("app.access.save_profile")
 def test_patch_limit_updates_both_limits(save_profile_mock, load_profile_mock):
     app.dependency_overrides[require_user_id] = lambda: "user_123"
     load_profile_mock.return_value = {"daily_limit_usd": 2.0, "monthly_limit_usd": 45.0}
@@ -451,7 +461,7 @@ async def test_log_usage_called_after_chat_completes():
     ):
         response = await post_chat(
             payload={"session_id": "session-1", "message": "hello", "model": "gpt-5", "stream": False, "force_search": False},
-            user_id="user_123",
+            access_context=owner_access_context(),
             naming={"display_name": "Abdul Hanan", "session_title": "Hello"},
         )
         if created_tasks:
@@ -476,7 +486,7 @@ async def test_chat_returns_429_when_daily_limit_blocked():
         with pytest.raises(Exception) as error_info:
             await post_chat(
                 payload={"session_id": "session-1", "message": "hello", "model": "gpt-5", "stream": False, "force_search": False},
-                user_id="user_123",
+                access_context=owner_access_context(),
                 naming={"display_name": "Abdul Hanan", "session_title": "Hello"},
             )
 
@@ -612,7 +622,7 @@ async def test_log_usage_called_for_agent_plan():
     ):
         result = await post_agent_plan(
             payload={"goal": "Goal", "session_id": "session-1"},
-            user_id="user_123",
+            access_context=owner_access_context(),
             naming={"display_name": "Abdul Hanan", "session_title": "Goal"},
         )
         if created_tasks:
@@ -670,7 +680,7 @@ async def test_log_usage_called_for_agent_step_and_summary():
         response = await post_agent_run(
             plan_id="plan-1",
             payload={"session_id": "session-1"},
-            user_id="user_123",
+            access_context=owner_access_context(),
             naming={"display_name": "Abdul Hanan", "session_title": "Goal"},
         )
         chunks = []

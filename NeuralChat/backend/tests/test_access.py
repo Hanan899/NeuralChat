@@ -79,6 +79,7 @@ def test_access_context_feature_overrides_take_priority():
 
 
 def test_patch_clerk_public_metadata_merges_nested_usage_limits(monkeypatch):
+    monkeypatch.delenv("NEURALCHAT_DISABLE_CLERK_API", raising=False)
     api_cache.invalidate_prefix("access::user::")
     monkeypatch.setattr(access, "_get_clerk_secret_key", lambda required=False: "secret")
     monkeypatch.setattr(

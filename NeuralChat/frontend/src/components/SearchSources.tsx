@@ -24,10 +24,17 @@ export function SearchSources({ sources }: SearchSourcesProps) {
       {expanded ? (
         <ul className="nc-sources__list">
           {visibleSources.map((source, index) => (
-            <li key={`${source.url}-${index}`}>
-              <a href={source.url} target="_blank" rel="noopener noreferrer">
-                {source.title || source.url}
-              </a>
+            <li key={`${source.url || source.filename || source.title}-${index}`}>
+              {source.url ? (
+                <a href={source.url} target="_blank" rel="noopener noreferrer">
+                  {source.title || source.url}
+                </a>
+              ) : (
+                <strong>{source.title || source.filename || "Uploaded file"}</strong>
+              )}
+              {source.source_type === "file" && source.chunk_index ? (
+                <span className="nc-sources__meta">Chunk {source.chunk_index}</span>
+              ) : null}
               {source.snippet ? <p>{source.snippet}</p> : null}
             </li>
           ))}

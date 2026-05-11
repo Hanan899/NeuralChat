@@ -86,11 +86,14 @@ from app.services.cost_tracker import (
     resolve_monthly_limit,
 )
 from app.services.file_handler import (
+    build_file_context_prompt,
+    build_file_sources,
     chunk_text,
     delete_session_files,
     delete_user_file,
-    get_relevant_chunks,
+    get_relevant_chunk_records,
     list_user_files,
+    load_parsed_chunk_records,
     load_parsed_chunks,
     parse_file,
     save_parsed_chunks,
@@ -113,7 +116,7 @@ from app.services.projects import (
     get_memory_completeness,
     get_project,
     get_project_chats,
-    get_project_file_context_chunks,
+    get_project_file_context_records,
     get_template_memory_keys,
     get_project_templates,
     list_project_files,
@@ -255,7 +258,7 @@ def _build_usage_limits_payload(
 ) -> dict[str, float]:
     if profile is None:
         profile = load_profile(user_id, display_name)
-    return resolve_limits_for_user(user_id, display_name)
+    return resolve_limits_for_user(user_id, display_name, profile)
 
 
 def _get_usage_status_for_feature(
@@ -1983,15 +1986,15 @@ async def post_chat(
 
     try:
         if request["project_id"]:
-            relevant_chunks = await asyncio.to_thread(
-                get_project_file_context_chunks,
+            relevant_records = await asyncio.to_thread(
+                get_project_file_context_records,
                 user_id,
                 request["project_id"],
                 request["message"],
                 naming["display_name"],
             )
         else:
-            all_session_chunks: list[str] = []
+            all_session_records: list[dict[str, Any]] = []
             session_files = await asyncio.to_thread(
                 list_user_files,
                 user_id,
@@ -2003,20 +2006,22 @@ async def post_chat(
                 file_name = str(session_file.get("filename", "")).strip()
                 if not file_name:
                     continue
-                parsed_chunks = await asyncio.to_thread(
-                    load_parsed_chunks,
+                parsed_records = await asyncio.to_thread(
+                    load_parsed_chunk_records,
                     user_id,
                     request["session_id"],
                     file_name,
                     naming["display_name"],
                     naming["session_title"],
                 )
-                if parsed_chunks:
-                    all_session_chunks.extend(parsed_chunks)
-            relevant_chunks = await asyncio.to_thread(get_relevant_chunks, all_session_chunks, request["message"], 3)
-        if relevant_chunks:
+                if parsed_records:
+                    all_session_records.extend(parsed_records)
+            relevant_records = await asyncio.to_thread(get_relevant_chunk_records, all_session_records, request["message"], 3)
+        if relevant_records:
             file_context_used = True
-            session_file_prompt = "Relevant content from uploaded files:\n" + "\n\n".join(relevant_chunks)
+            file_sources = build_file_sources(relevant_records)
+            sources.extend(file_sources)
+            session_file_prompt = build_file_context_prompt(relevant_records)
             file_prompt = f"{file_prompt}\n\n{session_file_prompt}".strip() if file_prompt else session_file_prompt
     except Exception as file_context_error:
         LOGGER.warning("File context retrieval failed; continuing without file context: %s", file_context_error)

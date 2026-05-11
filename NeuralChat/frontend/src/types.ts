@@ -7,6 +7,10 @@ export interface SearchSource {
   title: string;
   url: string;
   snippet: string;
+  source_type?: "web" | "file" | "document";
+  filename?: string;
+  chunk_index?: number;
+  citation_label?: string;
   document_id?: string;
   chunk_id?: string;
   collection_id?: string;
