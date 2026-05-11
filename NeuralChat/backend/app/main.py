@@ -915,10 +915,7 @@ def patch_memory(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="value must be a string.")
 
     clean_key = key.strip()
-    if value.strip():
-        save_profile(user_id=user_id, facts={clean_key: value}, display_name=naming["display_name"])
-    else:
-        upsert_profile_key(user_id=user_id, key=clean_key, value=value, display_name=naming["display_name"])
+    upsert_profile_key(user_id=user_id, key=clean_key, value=value, display_name=naming["display_name"])
     updated_profile = load_profile(user_id=user_id, display_name=naming["display_name"])
     _invalidate_cache_prefixes(
         _cache_key("profile", user_id, naming["display_name"] or ""),
