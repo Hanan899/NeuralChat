@@ -53,6 +53,10 @@ function formatTokenCount(value: number): string {
   return `${value} tok`;
 }
 
+function formatCurrencyTooltipValue(value: unknown): string {
+  return formatCurrency(Number(value ?? 0));
+}
+
 function buildFeatureRows(summary: UsageSummary) {
   const featureLabelMap: Record<string, string> = {
     chat: "Chat",
@@ -316,7 +320,7 @@ export function CostDashboardContent({
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" opacity={0.25} />
                       <XAxis dataKey="feature" stroke="var(--text-secondary)" tickLine={false} axisLine={false} />
                       <YAxis stroke="var(--text-secondary)" tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
-                      <Tooltip formatter={(value: number) => formatCurrency(Number(value))} />
+                      <Tooltip formatter={(value) => formatCurrencyTooltipValue(value)} />
                       <Bar dataKey="cost_usd" fill="var(--accent-primary)" radius={[6, 6, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -346,7 +350,7 @@ export function CostDashboardContent({
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" opacity={0.25} />
                     <XAxis dataKey="date" stroke="var(--text-secondary)" tickLine={false} axisLine={false} tickFormatter={(value) => value.slice(5)} />
                     <YAxis stroke="var(--text-secondary)" tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
-                    <Tooltip formatter={(value: number) => formatCurrency(Number(value))} />
+                    <Tooltip formatter={(value) => formatCurrencyTooltipValue(value)} />
                     <Line type="monotone" dataKey="cost_usd" stroke="var(--accent-primary)" strokeWidth={2.5} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>

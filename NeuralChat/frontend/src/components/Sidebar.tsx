@@ -39,8 +39,7 @@ interface SidebarProps {
   onOpenProject?: (projectId: string) => void;
 }
 
-export type ShortcutId = "new" | "images" | "research" | "agent" | "projects";
-type SidebarModeId = "web-search";
+export type ShortcutId = "new" | "agent" | "projects";
 
 interface ShortcutItem {
   id: ShortcutId;
@@ -118,25 +117,6 @@ function ShortcutIcon({ id }: { id: ShortcutId }) {
     );
   }
 
-  if (id === "images") {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="3.5" y="5" width="14" height="14" rx="3" stroke="currentColor" strokeWidth="1.7" />
-        <circle cx="9" cy="10" r="1.6" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M6 16L10 12L14 16L17 13" stroke="currentColor" strokeWidth="1.6" />
-      </svg>
-    );
-  }
-
-  if (id === "research") {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M4 20L9 15M20 20L15 15M12 6V13M8 10L12 6L16 10" stroke="currentColor" strokeWidth="1.7" />
-        <circle cx="12" cy="6" r="2.8" stroke="currentColor" strokeWidth="1.5" />
-      </svg>
-    );
-  }
-
   if (id === "agent") {
     return (
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -156,7 +136,7 @@ function ShortcutIcon({ id }: { id: ShortcutId }) {
   );
 }
 
-function SidebarModeIcon({ id }: { id: SidebarModeId }) {
+function SidebarModeIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.7" />
@@ -540,7 +520,7 @@ export function Sidebar({
                   }}
                 >
                   <span className="nc-shortcut-subitem__icon">
-                    <SidebarModeIcon id="web-search" />
+                    <SidebarModeIcon />
                   </span>
                   <span className="nc-shortcut-subitem__label">Web Search</span>
                   <span className={`nc-shortcut-subitem__state ${isWebSearchMode ? "nc-shortcut-subitem__state--active" : ""}`}>

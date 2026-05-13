@@ -3,7 +3,6 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useS
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import {
-  checkHealth,
   checkSearchStatus,
   deleteConversationSession,
   generateConversationTitle,
@@ -67,8 +66,6 @@ const THEME_STORAGE_KEY = "neuralchat:theme-mode:v1";
 const COST_WARNING_STORAGE_KEY = "neuralchat:cost-warning:dismissed";
 const SIDEBAR_SHORTCUT_LABELS: Record<ShortcutId, string> = {
   new: "New chat",
-  images: "Images",
-  research: "Deep Research",
   agent: "Agent Mode",
   projects: "Projects",
 };
@@ -511,19 +508,6 @@ function mergeSyncedConversations(
   return [...mergedRemote, ...localDrafts];
 }
 
-function buildWorkspaceDescription(shortcutId: Exclude<ShortcutId, "new">): string {
-  if (shortcutId === "images") {
-    return "Image tools are not wired into NeuralChat yet, but this workspace is reserved for visual creation and image-first prompts.";
-  }
-  if (shortcutId === "research") {
-    return "Deep research is now a dedicated workspace for longer, web-assisted investigation without turning every chat into an agent workflow.";
-  }
-  if (shortcutId === "agent") {
-    return "Agent mode is now a dedicated reasoning page for deeper multi-step planning, structured execution, and neural-style responses when you explicitly need it.";
-  }
-  return "Projects will become the home for longer-running workstreams and grouped conversations.";
-}
-
 function buildAgentTaskState(plan: AgentPlan): AgentTaskState {
   return {
     plan,
@@ -640,12 +624,6 @@ function ChatShell() {
   const [input, setInput] = useState("");
   const [model, setModel] = useState<ChatModel>("gpt-5");
   const [isSending, setIsSending] = useState(false);
-  const [backendHealthy, setBackendHealthy] = useState(false);
-  const [requestId, setRequestId] = useState("");
-  const [responseMs, setResponseMs] = useState<number | null>(null);
-  const [firstTokenMs, setFirstTokenMs] = useState<number | null>(null);
-  const [tokensEmitted, setTokensEmitted] = useState(0);
-  const [streamStatus, setStreamStatus] = useState("idle");
   const [errorText, setErrorText] = useState("");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readInitialThemeMode());
@@ -655,7 +633,7 @@ function ChatShell() {
   const [isAgentMode, setIsAgentMode] = useState(false);
   const [isAgentSessionBrowserOpen, setIsAgentSessionBrowserOpen] = useState(false);
   const [activeShortcutId, setActiveShortcutId] = useState<ShortcutId>("new");
-  const [activeWorkspaceShortcut, setActiveWorkspaceShortcut] = useState<Exclude<ShortcutId, "new"> | null>(null);
+  const [activeWorkspaceShortcut, setActiveWorkspaceShortcut] = useState<"agent" | null>(null);
   const [activeStreamingAssistantId, setActiveStreamingAssistantId] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -665,7 +643,6 @@ function ChatShell() {
   const [filesByConversation, setFilesByConversation] = useState<Record<string, UploadedFileItem[]>>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isFileModalOpen, setIsFileModalOpen] = useState(false);
   const [fileModalAuthToken, setFileModalAuthToken] = useState("");
   const [sessionAuthToken, setSessionAuthToken] = useState("");
@@ -815,7 +792,6 @@ function ChatShell() {
     !isProjectOverviewRoute &&
     activeWorkspaceShortcut === null &&
     Boolean(activeSessionId);
-  const healthQuery = useApiQuery<boolean>(["health"], "/api/health", { queryFn: checkHealth });
   const searchStatusQuery = useApiQuery<boolean>(["search-status"], "/api/search/status", { queryFn: checkSearchStatus });
   const projectTemplatesQuery = useApiQuery<Record<string, ProjectTemplate>>(
     ["project-templates"],
@@ -827,14 +803,6 @@ function ChatShell() {
     naming: { userDisplayName },
     enabled: true,
   });
-
-  useEffect(() => {
-    if (typeof healthQuery.data === "boolean") {
-      setBackendHealthy(healthQuery.data);
-    } else if (healthQuery.error) {
-      setBackendHealthy(false);
-    }
-  }, [healthQuery.data, healthQuery.error]);
 
   useEffect(() => {
     if (typeof searchStatusQuery.data === "boolean") {
@@ -1917,16 +1885,6 @@ function ChatShell() {
       setIsAgentSessionBrowserOpen(false);
       setActiveShortcutId("agent");
       setActiveWorkspaceShortcut("agent");
-    } else if (workspaceKind === "research") {
-      setIsAgentMode(false);
-      setIsAgentSessionBrowserOpen(false);
-      setActiveShortcutId("research");
-      setActiveWorkspaceShortcut("research");
-      if (searchReady) {
-        setForceWebSearch(true);
-      } else {
-        setForceWebSearch(false);
-      }
     } else {
       resetChatModes();
       setActiveShortcutId("new");
@@ -2507,9 +2465,6 @@ function ChatShell() {
     submitLockRef.current = true;
     setErrorText("");
     setIsSending(true);
-    setStreamStatus("streaming");
-    setTokensEmitted(0);
-    setFirstTokenMs(null);
 
     const conversationId = resolvedSessionId;
     const resolvedConversation =
@@ -2598,7 +2553,6 @@ function ChatShell() {
         (chunk: StreamChunk) => {
           if (chunk.type === "token") {
             streamedText += chunk.content;
-            setTokensEmitted((value) => value + 1);
             setMessagesByConversation((previous) => ({
               ...previous,
               [conversationId]: (previous[conversationId] ?? []).map((message) =>
@@ -2609,7 +2563,6 @@ function ChatShell() {
           }
 
           if (chunk.type === "error") {
-            setStreamStatus("interrupted");
             setErrorText(chunk.content || "Streaming error received.");
             return;
           }
@@ -2625,12 +2578,6 @@ function ChatShell() {
             }));
             return;
           }
-
-          setStreamStatus(chunk.status ?? "completed");
-          if (chunk.request_id) setRequestId(chunk.request_id);
-          if (typeof chunk.response_ms === "number") setResponseMs(chunk.response_ms);
-          if (typeof chunk.first_token_ms === "number") setFirstTokenMs(chunk.first_token_ms);
-          if (typeof chunk.tokens_emitted === "number") setTokensEmitted(chunk.tokens_emitted);
 
           setMessagesByConversation((previous) => ({
             ...previous,
@@ -2666,11 +2613,6 @@ function ChatShell() {
         { userDisplayName, sessionTitle: requestSessionTitle }
       );
 
-      setRequestId(result.requestId);
-      setResponseMs(result.responseMs);
-      setFirstTokenMs(result.firstTokenMs);
-      setTokensEmitted(result.tokensEmitted);
-      setStreamStatus("completed");
       setMessagesByConversation((previous) => ({
         ...previous,
         [conversationId]: (previous[conversationId] ?? []).map((message) =>
@@ -2715,7 +2657,6 @@ function ChatShell() {
       }
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown error";
-      setStreamStatus("interrupted");
       if (text !== "Generation stopped by user.") {
         setErrorText(text);
       }
@@ -2770,7 +2711,6 @@ function ChatShell() {
     submitLockRef.current = true;
     setErrorText("");
     setIsSending(true);
-    setStreamStatus("planning");
 
     const conversationId = resolvedSessionId;
     const resolvedConversation =
@@ -2850,7 +2790,6 @@ function ChatShell() {
         void refineProjectChatTitle(conversationId, trimmed, plan.steps.map((step) => step.description).join("; "));
         void refreshActiveProjectWorkspace();
       }
-      setStreamStatus("ready");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create agent plan.";
       setErrorText(message);
@@ -2858,7 +2797,6 @@ function ChatShell() {
         ...previous,
         [conversationId]: (previous[conversationId] ?? []).filter((entry) => entry.id !== assistantId),
       }));
-      setStreamStatus("failed");
     } finally {
       submitLockRef.current = false;
       setIsSending(false);
@@ -2891,7 +2829,6 @@ function ChatShell() {
     submitLockRef.current = true;
     setIsSending(true);
     setErrorText("");
-    setStreamStatus("running");
     setActiveStreamingAssistantId(messageId);
 
     const controller = new AbortController();
@@ -2926,10 +2863,8 @@ function ChatShell() {
       );
 
       if (streamState.awaitingConfirmation) {
-        setStreamStatus("ready");
         updateConversationSummary(conversationId, agentTask.plan.goal, "Agent action waiting for approval");
       } else if (streamState.completed) {
-        setStreamStatus("completed");
         updateConversationSummary(conversationId, agentTask.plan.goal, "Agent task completed");
       }
     } catch (error) {
@@ -2941,7 +2876,6 @@ function ChatShell() {
         error: message,
         runningStepNumber: null,
       }));
-      setStreamStatus("failed");
     } finally {
       abortControllerRef.current = null;
       submitLockRef.current = false;
@@ -2969,7 +2903,6 @@ function ChatShell() {
     submitLockRef.current = true;
     setIsSending(true);
     setErrorText("");
-    setStreamStatus("running");
     setActiveStreamingAssistantId(messageId);
 
     updateAgentMessageState(conversationId, messageId, (currentTask) => ({
@@ -3000,12 +2933,8 @@ function ChatShell() {
       );
 
       if (streamState.awaitingConfirmation) {
-        setStreamStatus("ready");
       } else if (streamState.completed) {
-        setStreamStatus("completed");
         updateConversationSummary(conversationId, agentTask.plan.goal, "Agent task completed");
-      } else {
-        setStreamStatus("ready");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Agent confirmation failed.";
@@ -3016,7 +2945,6 @@ function ChatShell() {
         error: message,
         runningStepNumber: null,
       }));
-      setStreamStatus("failed");
     } finally {
       abortControllerRef.current = null;
       submitLockRef.current = false;
@@ -3195,7 +3123,7 @@ function ChatShell() {
 
   return (
     <main
-      className={`nc-shell ${isDiagnosticsOpen ? "nc-shell--with-panel" : ""} ${isSidebarCollapsed ? "nc-shell--sidebar-collapsed" : ""}`}
+      className={`nc-shell ${isSidebarCollapsed ? "nc-shell--sidebar-collapsed" : ""}`}
     >
 
 
@@ -3618,115 +3546,6 @@ function ChatShell() {
                 />
               </section>
             )
-          ) : activeWorkspaceShortcut === "research" ? (
-            currentMessages.length === 0 ? (
-              <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
-                <div className="nc-workspace-view__card">
-                  <div className="nc-workspace-view__mark" aria-hidden="true">
-                    <UiIcon kind="search" className="nc-workspace-view__icon" />
-                  </div>
-                  <p className="nc-workspace-view__eyebrow">Deep Research</p>
-                  <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
-                  <p className="nc-workspace-view__description">
-                    Ask longer investigation questions here when you want web-assisted research in a dedicated space.
-                  </p>
-
-                  <div className="nc-workspace-view__actions">
-                    <button
-                      type="button"
-                      className="nc-empty-chip"
-                      onClick={handleNewChat}
-                    >
-                      Start fresh chat
-                    </button>
-                    <button
-                      type="button"
-                      className="nc-empty-chip"
-                      onClick={() => textareaRef.current?.focus()}
-                    >
-                      Focus input
-                    </button>
-                  </div>
-
-                  <p className="nc-workspace-view__hint">
-                    {searchReady
-                      ? "Web search is ready for this research page."
-                      : "Web search is currently unavailable, but you can still ask focused long-form questions here."}
-                  </p>
-                </div>
-              </section>
-            ) : (
-              <section className="nc-project-chat-shell">
-                <div className="nc-project-chat-shell__header">
-                  <button
-                    type="button"
-                    className="nc-button nc-button--ghost"
-                    onClick={handleNewChat}
-                  >
-                    ← Back to regular chat
-                  </button>
-                  <div className="nc-project-chat-shell__title-wrap">
-                    <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
-                    <p>Dedicated web-assisted research chat</p>
-                  </div>
-                  <div className="nc-project-chat-shell__actions">
-                    <button
-                      type="button"
-                      className="nc-button nc-button--ghost"
-                      onClick={handleNewChat}
-                    >
-                      New chat
-                    </button>
-                  </div>
-                </div>
-                <ChatWindow
-                  messages={currentMessages}
-                  streamingMessageId={activeStreamingAssistantId}
-                  onRetryPrompt={handleRetryPrompt}
-                  onRunAgentPlan={handleRunAgentPlan}
-                  onConfirmAgentAction={handleAgentConfirmation}
-                />
-              </section>
-            )
-          ) : activeWorkspaceShortcut ? (
-            <section className="nc-workspace-view" data-testid={`workspace-${activeWorkspaceShortcut}`}>
-              <div className="nc-workspace-view__card">
-                <div className="nc-workspace-view__mark" aria-hidden="true">
-                  {activeWorkspaceShortcut === "research" ? (
-                    <UiIcon kind="search" className="nc-workspace-view__icon" />
-                  ) : (
-                    <UiIcon kind="brand" className="nc-workspace-view__icon" />
-                  )}
-                </div>
-                <p className="nc-workspace-view__eyebrow">Workspace</p>
-                <h2>{SIDEBAR_SHORTCUT_LABELS[activeWorkspaceShortcut]}</h2>
-                <p className="nc-workspace-view__description">
-                  {buildWorkspaceDescription(activeWorkspaceShortcut)}
-                </p>
-
-                <div className="nc-workspace-view__actions">
-                  <button
-                    type="button"
-                    className="nc-empty-chip"
-                    onClick={() => {
-                      setActiveWorkspaceShortcut(null);
-                      textareaRef.current?.focus();
-                    }}
-                  >
-                    Open current chat
-                  </button>
-                  <button
-                    type="button"
-                    className="nc-empty-chip"
-                    onClick={handleNewChat}
-                  >
-                    Start new chat
-                  </button>
-                </div>
-
-                <p className="nc-workspace-view__hint">This section is ready for its dedicated experience next.</p>
-              </div>
-            </section>
           ) : currentMessages.length === 0 ? (
             <NewChatPage
               onSuggestionSelect={(suggestion) => {
@@ -3759,9 +3578,7 @@ function ChatShell() {
                 placeholder={
                   activeWorkspaceShortcut === "agent"
                     ? "Describe a goal for the agent..."
-                    : activeWorkspaceShortcut === "research"
-                      ? "Ask a deep research question..."
-                      : "Message NeuralChat..."
+                    : "Message NeuralChat..."
                 }
                 rows={1}
               />

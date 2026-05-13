@@ -72,10 +72,10 @@ export function ProjectsPage({
   return (
     <section className="nc-projects-page" data-testid="projects-page">
       <header className="nc-projects-page__header">
-        <div>
+        <div className="nc-projects-page__header-copy">
           <p className="nc-projects-page__eyebrow">Workspace</p>
           <h2>Projects</h2>
-          <p>Give your AI a dedicated workspace for each area of your life and work.</p>
+          <p className="nc-projects-page__lede">Give your AI a dedicated workspace for each area of your life and work.</p>
         </div>
         {projects.length > 0 && can("project:create") ? (
           <button type="button" className="nc-button nc-button--primary" onClick={() => handleOpenCreateModal("startup")}>

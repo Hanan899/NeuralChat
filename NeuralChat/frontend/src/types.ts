@@ -239,7 +239,7 @@ export interface ConversationSummary {
   preview: string;
   updatedAt: string;
   archived?: boolean;
-  workspaceKind?: "standard" | "agent" | "research";
+  workspaceKind?: "standard" | "agent";
 }
 
 export type ConversationGroup = "Today" | "Yesterday" | "Previous 7 Days" | "Older";
