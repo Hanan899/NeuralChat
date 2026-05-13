@@ -44,7 +44,6 @@ import { useApiQuery } from "./hooks/useApi";
 import { usePrefetch } from "./hooks/usePrefetch";
 import { NewChatPage } from "./pages/NewChatPage";
 import { AgentSessionsPage } from "./pages/AgentSessionsPage";
-import { AgentStudioPage } from "./pages/AgentStudioPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import type {
@@ -69,7 +68,6 @@ const COST_WARNING_STORAGE_KEY = "neuralchat:cost-warning:dismissed";
 const SIDEBAR_SHORTCUT_LABELS: Record<ShortcutId, string> = {
   new: "New chat",
   images: "Images",
-  apps: "Agent Studio",
   research: "Deep Research",
   agent: "Agent Mode",
   projects: "Projects",
@@ -517,9 +515,6 @@ function buildWorkspaceDescription(shortcutId: Exclude<ShortcutId, "new">): stri
   if (shortcutId === "images") {
     return "Image tools are not wired into NeuralChat yet, but this workspace is reserved for visual creation and image-first prompts.";
   }
-  if (shortcutId === "apps") {
-    return "Agent Studio is now the launcher for providers, tools, MCP endpoints, collections, dynamic agents, and routing previews.";
-  }
   if (shortcutId === "research") {
     return "Deep research is now a dedicated workspace for longer, web-assisted investigation without turning every chat into an agent workflow.";
   }
@@ -638,7 +633,7 @@ function ChatShell() {
   const { getToken, userId } = useAuth();
   const clerk = useClerk();
   const { user } = useUser();
-  const { can, isOwner } = useAccess();
+  const { can } = useAccess();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1941,39 +1936,6 @@ function ChatShell() {
     setErrorText("");
   }
 
-  function handleOpenImages() {
-    navigate("/");
-    resetChatModes();
-    setActiveShortcutId("images");
-    setActiveWorkspaceShortcut("images");
-    setIsSettingsOpen(false);
-    setErrorText("");
-  }
-
-  function handleOpenApps() {
-    navigate("/");
-    resetChatModes();
-    setActiveShortcutId("apps");
-    setActiveWorkspaceShortcut("apps");
-    setIsSettingsOpen(false);
-    setErrorText("");
-  }
-
-  function handleOpenResearch() {
-    navigate("/");
-    activateWorkspaceDraftConversation("research");
-    setActiveShortcutId("research");
-    setActiveWorkspaceShortcut("research");
-    setIsSettingsOpen(false);
-    setErrorText("");
-    setIsAgentMode(false);
-    if (searchReady) {
-      setForceWebSearch(true);
-    } else {
-      setForceWebSearch(false);
-    }
-  }
-
   function handleOpenAgentMode() {
     if (!can("agent:run")) {
       showToast("Agent mode is not available for your current access.", "info");
@@ -2634,24 +2596,6 @@ function ChatShell() {
         },
         authToken,
         (chunk: StreamChunk) => {
-          if (chunk.type === "route") {
-            setMessagesByConversation((previous) => ({
-              ...previous,
-              [conversationId]: (previous[conversationId] ?? []).map((message) =>
-                message.id === assistantId
-                  ? {
-                      ...message,
-                      resolvedModel: typeof chunk.resolved_model === "string" ? chunk.resolved_model : message.resolvedModel,
-                      resolvedAgentId: typeof chunk.resolved_agent_id === "string" ? chunk.resolved_agent_id : message.resolvedAgentId,
-                      routeKind: chunk.route_kind ?? message.routeKind,
-                      routeConfidence: typeof chunk.route_confidence === "number" ? chunk.route_confidence : message.routeConfidence,
-                    }
-                  : message
-              ),
-            }));
-            return;
-          }
-
           if (chunk.type === "token") {
             streamedText += chunk.content;
             setTokensEmitted((value) => value + 1);
@@ -2712,11 +2656,6 @@ function ChatShell() {
                       typeof chunk.resolved_provider === "string" ? chunk.resolved_provider : message.resolvedProvider,
                     resolvedModel:
                       typeof chunk.resolved_model === "string" ? chunk.resolved_model : message.resolvedModel,
-                    resolvedAgentId:
-                      typeof chunk.resolved_agent_id === "string" ? chunk.resolved_agent_id : message.resolvedAgentId,
-                    routeKind: chunk.route_kind ?? message.routeKind,
-                    routeConfidence:
-                      typeof chunk.route_confidence === "number" ? chunk.route_confidence : message.routeConfidence,
                   }
                 : message
             )
@@ -2748,9 +2687,6 @@ function ChatShell() {
                 sources: result.sources,
                 resolvedProvider: result.resolvedProvider ?? message.resolvedProvider,
                 resolvedModel: result.resolvedModel ?? message.resolvedModel,
-                resolvedAgentId: result.resolvedAgentId ?? message.resolvedAgentId,
-                routeKind: result.routeKind ?? message.routeKind,
-                routeConfidence: result.routeConfidence ?? message.routeConfidence,
               }
             : message
         ),
@@ -3294,13 +3230,10 @@ function ChatShell() {
         onSignOut={handleSignOut}
         onCloseMobile={() => setIsSidebarOpen(false)}
         onToggleCollapse={handleToggleSidebarPane}
-        onOpenImages={handleOpenImages}
-        onOpenApps={handleOpenApps}
-        onOpenResearch={handleOpenResearch}
         onOpenAgentMode={handleOpenAgentMode}
-            onOpenProjects={handleOpenProjects}
-            onCreateProject={handleRequestCreateProject}
-            onOpenProject={handleOpenProject}
+        onOpenProjects={handleOpenProjects}
+        onCreateProject={handleRequestCreateProject}
+        onOpenProject={handleOpenProject}
           />
 
       {isSidebarOpen ? <button className="nc-sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} /> : null}
@@ -3610,13 +3543,6 @@ function ChatShell() {
                 />
               </section>
             )
-          ) : activeWorkspaceShortcut === "apps" ? (
-            <AgentStudioPage
-              authToken={sessionAuthToken}
-              naming={{ userDisplayName, sessionTitle: "Agent Studio" }}
-              isOwner={isOwner}
-              onShowToast={showToast}
-            />
           ) : activeWorkspaceShortcut === "agent" ? (
             isAgentSessionBrowserOpen ? (
               <AgentSessionsPage

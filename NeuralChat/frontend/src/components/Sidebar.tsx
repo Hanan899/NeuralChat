@@ -33,16 +33,13 @@ interface SidebarProps {
   onCloseMobile: () => void;
   onToggleCollapse: () => void;
   // Optional shortcut handlers
-  onOpenImages?: () => void;
-  onOpenApps?: () => void;
-  onOpenResearch?: () => void;
   onOpenAgentMode?: () => void;
   onOpenProjects?: () => void;
   onCreateProject?: () => void;
   onOpenProject?: (projectId: string) => void;
 }
 
-export type ShortcutId = "new" | "images" | "apps" | "research" | "agent" | "projects";
+export type ShortcutId = "new" | "images" | "research" | "agent" | "projects";
 type SidebarModeId = "web-search";
 
 interface ShortcutItem {
@@ -52,9 +49,6 @@ interface ShortcutItem {
 
 const SHORTCUTS: ShortcutItem[] = [
   { id: "new", label: "New chat" },
-  { id: "images", label: "Images" },
-  { id: "apps", label: "Agent Studio" },
-  { id: "research", label: "Deep Research" },
   { id: "agent", label: "Agent Mode" },
   { id: "projects", label: "Projects" }
 ];
@@ -134,17 +128,6 @@ function ShortcutIcon({ id }: { id: ShortcutId }) {
     );
   }
 
-  if (id === "apps") {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="4" y="4" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-        <rect x="14" y="4" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-        <rect x="4" y="14" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-        <rect x="14" y="14" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-      </svg>
-    );
-  }
-
   if (id === "research") {
     return (
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -208,9 +191,6 @@ export function Sidebar({
   onSignOut,
   onCloseMobile,
   onToggleCollapse,
-  onOpenImages,
-  onOpenApps,
-  onOpenResearch,
   onOpenAgentMode,
   onOpenProjects,
   onCreateProject,
@@ -353,15 +333,6 @@ export function Sidebar({
           return;
         }
         onNewChat();
-        break;
-      case "images":
-        onOpenImages?.();
-        break;
-      case "apps":
-        onOpenApps?.();
-        break;
-      case "research":
-        onOpenResearch?.();
         break;
       case "agent":
         onOpenAgentMode?.();

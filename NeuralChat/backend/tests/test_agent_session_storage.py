@@ -77,3 +77,27 @@ def test_upsert_message_replaces_existing_agent_snapshot_by_request_id():
         assert messages[0]["agent_task"]["status"] == "completed"
     finally:
         storage._MEMORY_STORE.clear()
+
+
+def test_list_conversation_summaries_drops_removed_research_workspace_kind():
+    store = {"mode": "memory"}
+    storage._MEMORY_STORE.clear()
+    try:
+        storage.append_message(
+            store,
+            "user_123",
+            "session-research",
+            {
+                "role": "user",
+                "content": "Investigate the topic",
+                "workspace_kind": "research",
+            },
+        )
+
+        summaries = storage.list_conversation_summaries(store, "user_123")
+
+        assert len(summaries) == 1
+        assert summaries[0]["id"] == "session-research"
+        assert summaries[0]["workspaceKind"] == "standard"
+    finally:
+        storage._MEMORY_STORE.clear()
