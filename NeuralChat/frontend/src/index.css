@@ -1192,7 +1192,7 @@ select {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 44px 24px 32px;
+  padding: 36px 24px 28px;
   background:
     radial-gradient(circle at 50% 28%, color-mix(in srgb, var(--accent-primary) 12%, transparent) 0%, transparent 22%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 94%, black), var(--bg-primary));
@@ -1200,13 +1200,13 @@ select {
 
 .nc-neural-logo {
   position: relative;
-  width: 212px;
-  height: 212px;
+  width: 184px;
+  height: 184px;
   border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
   background:
     radial-gradient(circle at 32% 24%, color-mix(in srgb, var(--accent-primary) 26%, rgba(255, 255, 255, 0.12)) 0%, transparent 44%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 96%, white 4%), color-mix(in srgb, var(--bg-secondary) 94%, black));
@@ -1221,8 +1221,8 @@ select {
 .nc-neural-logo__svg {
   position: relative;
   z-index: 3;
-  width: 172px;
-  height: 138px;
+  width: 148px;
+  height: 120px;
   display: block;
 }
 
@@ -1259,35 +1259,35 @@ select {
 
 .nc-new-chat-page h2 {
   margin: 0;
-  max-width: 820px;
+  max-width: 720px;
   font-family: "Syne", "Söhne", "Inter", ui-sans-serif, system-ui, sans-serif;
-  font-size: clamp(34px, 5vw, 48px);
-  line-height: 1.03;
+  font-size: clamp(30px, 4.5vw, 42px);
+  line-height: 1.08;
   font-weight: 700;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
   color: var(--text-heading);
   text-shadow: 0 6px 24px color-mix(in srgb, var(--bg-primary) 88%, transparent);
 }
 
 .nc-new-chat-page__chips {
-  margin-top: 28px;
-  width: min(900px, 100%);
+  margin-top: 22px;
+  width: min(760px, 100%);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 
 .nc-new-chat-page__chip {
-  min-height: 58px;
+  min-height: 54px;
   text-align: left;
-  border-radius: 999px;
+  border-radius: 20px;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 12%, var(--border-subtle));
   background: color-mix(in srgb, var(--bg-elevated) 92%, white 4%);
   color: var(--text-primary);
-  padding: 16px 22px;
+  padding: 14px 18px;
   font: inherit;
-  font-size: 15px;
-  line-height: 1.35;
+  font-size: 14px;
+  line-height: 1.4;
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18);
   transition:
     transform 160ms ease,
@@ -5369,10 +5369,10 @@ select {
   min-height: 100%;
   max-width: none;
   width: min(1400px, 100%);
-  padding: 40px 24px 36px;
+  padding: 32px 24px 32px;
   display: grid;
   align-content: start;
-  gap: 24px;
+  gap: 20px;
   background:
     radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent-primary) 10%, transparent) 0%, transparent 28%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 95%, black), var(--bg-primary));
@@ -5393,8 +5393,8 @@ select {
 
 .nc-projects-page__header-copy {
   display: grid;
-  gap: 12px;
-  max-width: 760px;
+  gap: 10px;
+  max-width: 700px;
 }
 
 .nc-projects-page__eyebrow {
@@ -5407,9 +5407,9 @@ select {
 }
 
 .nc-projects-page .nc-projects-page__header h2 {
-  font-size: clamp(40px, 5vw, 64px);
-  line-height: 0.96;
-  letter-spacing: -0.05em;
+  font-size: clamp(36px, 4.4vw, 52px);
+  line-height: 1;
+  letter-spacing: -0.04em;
   font-family: "Syne", "Söhne", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -5423,9 +5423,9 @@ select {
 
 .nc-projects-page .nc-projects-page__lede {
   margin: 0;
-  max-width: 44ch;
-  font-size: clamp(17px, 2vw, 19px);
-  line-height: 1.7;
+  max-width: 40ch;
+  font-size: clamp(16px, 1.7vw, 18px);
+  line-height: 1.62;
   color: var(--text-secondary);
   text-wrap: balance;
 }
@@ -5442,8 +5442,8 @@ select {
 
 .nc-projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
 }
 
 .nc-projects-page .nc-project-card {
@@ -5453,14 +5453,14 @@ select {
   gap: 0;
   border: 1px solid color-mix(in srgb, var(--project-color, var(--accent-primary)) 16%, var(--border-subtle));
   border-left: 4px solid var(--project-color, var(--accent-primary));
-  border-radius: 30px;
+  border-radius: 26px;
   background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--project-color, var(--accent-primary)) 12%, transparent) 0%, transparent 44%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 97%, white 3%), color-mix(in srgb, var(--bg-secondary) 95%, black));
-  padding: 28px 28px 24px;
+  padding: 22px 22px 20px;
   text-align: left;
   color: var(--text-primary);
-  min-height: 380px;
+  min-height: 310px;
   box-shadow:
     0 24px 50px rgba(0, 0, 0, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -5488,7 +5488,7 @@ select {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 26px;
+  margin-bottom: 18px;
 }
 
 .nc-projects-page .nc-project-card--skeleton {
@@ -5507,39 +5507,39 @@ select {
 .nc-projects-page .nc-project-card__meta {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .nc-projects-page .nc-project-card__meta strong,
 .nc-projects-page .nc-project-card__title {
   display: block;
   margin: 0;
-  font-size: clamp(28px, 3vw, 34px);
-  line-height: 1.08;
+  font-size: clamp(22px, 2.2vw, 28px);
+  line-height: 1.12;
   letter-spacing: -0.03em;
   color: var(--text-heading);
 }
 
 .nc-projects-page .nc-project-card__description {
   margin: 0;
-  min-height: 84px;
-  font-size: 17px;
-  line-height: 1.7;
+  min-height: 68px;
+  font-size: 15px;
+  line-height: 1.58;
   color: var(--text-secondary);
 }
 
 .nc-projects-page .nc-project-card__stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 12px;
+  gap: 8px 10px;
   margin-top: auto;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .nc-projects-page .nc-project-card__stats span {
   display: inline-flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--project-color, var(--accent-primary)) 14%, var(--border-subtle));
   background: color-mix(in srgb, var(--project-color, var(--accent-primary)) 6%, var(--bg-elevated));
@@ -5548,9 +5548,9 @@ select {
 }
 
 .nc-projects-page .nc-project-card__icon {
-  width: 72px;
-  height: 72px;
-  border-radius: 24px;
+  width: 60px;
+  height: 60px;
+  border-radius: 20px;
 }
 
 .nc-projects-page .nc-project-card__badge,
@@ -5558,7 +5558,7 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
@@ -5594,7 +5594,7 @@ select {
 }
 
 .nc-projects-page .nc-project-card__footer {
-  margin-top: 22px;
+  margin-top: 18px;
   display: flex;
   align-items: center;
 }
@@ -5603,38 +5603,38 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--project-color, var(--accent-primary));
 }
 
 .nc-projects-page .nc-project-card__action::after {
   content: "→";
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
 }
 
 .nc-projects-page .nc-project-card__add-icon {
-  width: 74px;
-  height: 74px;
-  border-radius: 24px;
+  width: 62px;
+  height: 62px;
+  border-radius: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 22px;
+  margin-bottom: 18px;
   background: color-mix(in srgb, var(--accent-primary) 5%, var(--bg-elevated));
   border: 1px dashed color-mix(in srgb, var(--accent-primary) 22%, var(--border-subtle));
   color: var(--text-secondary);
-  font-size: 34px;
+  font-size: 28px;
 }
 
 .nc-projects-empty__hero {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 18px;
-  padding: 28px;
+  padding: 24px;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 14%, var(--border-subtle));
-  border-radius: 32px;
+  border-radius: 28px;
   background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--accent-primary) 14%, transparent) 0%, transparent 52%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 97%, white 3%), color-mix(in srgb, var(--bg-secondary) 95%, black));
@@ -5852,12 +5852,12 @@ select {
     gap: 10px;
   }
 
-  .nc-projects-page .nc-projects-page__header h2 {
-    font-size: clamp(34px, 11vw, 42px);
+.nc-projects-page .nc-projects-page__header h2 {
+    font-size: clamp(32px, 10vw, 38px);
   }
 
   .nc-projects-page .nc-projects-page__lede {
-    font-size: 16px;
+    font-size: 15px;
   }
 
   .nc-projects-grid {
@@ -5866,37 +5866,37 @@ select {
 
   .nc-projects-page .nc-project-card {
     min-height: 0;
-    padding: 20px;
-    border-radius: 24px;
+    padding: 18px;
+    border-radius: 22px;
   }
 
   .nc-projects-page .nc-project-card__icon {
-    width: 60px;
-    height: 60px;
-    border-radius: 20px;
+    width: 54px;
+    height: 54px;
+    border-radius: 18px;
   }
 
   .nc-projects-page .nc-project-card__title,
   .nc-projects-page .nc-project-card__meta strong {
-    font-size: 24px;
+    font-size: 22px;
   }
 
   .nc-projects-page .nc-project-card__description {
     min-height: 0;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .nc-projects-page .nc-project-card__add-icon {
-    width: 62px;
-    height: 62px;
-    border-radius: 20px;
-    margin-bottom: 18px;
-    font-size: 28px;
+    width: 56px;
+    height: 56px;
+    border-radius: 18px;
+    margin-bottom: 16px;
+    font-size: 24px;
   }
 
   .nc-projects-empty__hero {
-    padding: 22px;
-    border-radius: 26px;
+    padding: 20px;
+    border-radius: 24px;
   }
 }
 
@@ -6920,12 +6920,12 @@ select {
 
 .nc-agent-chats-page {
   min-height: 100%;
-  padding: 40px 24px 32px;
+  padding: 32px 24px 28px;
   width: min(1400px, 100%);
   margin: 0 auto;
   display: grid;
   align-content: start;
-  gap: 22px;
+  gap: 18px;
   background:
     radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent-primary) 10%, transparent) 0%, transparent 28%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 95%, black), var(--bg-primary));
@@ -6940,7 +6940,7 @@ select {
 
 .nc-agent-chats-page__header-copy {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .nc-agent-chats-page__eyebrow {
@@ -6955,9 +6955,9 @@ select {
 .nc-agent-chats-page__header-copy h2 {
   margin: 0;
   color: var(--text-heading);
-  font-size: clamp(40px, 5vw, 64px);
-  line-height: 0.96;
-  letter-spacing: -0.05em;
+  font-size: clamp(34px, 4.4vw, 52px);
+  line-height: 1;
+  letter-spacing: -0.04em;
   font-family: "Syne", "Söhne", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -6965,9 +6965,9 @@ select {
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 92px;
-  padding: 0 28px;
-  border-radius: 32px;
+  min-height: 76px;
+  padding: 0 22px;
+  border-radius: 26px;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 10%, var(--border-subtle));
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 96%, white 4%), color-mix(in srgb, var(--bg-secondary) 94%, black));
@@ -6985,8 +6985,8 @@ select {
 }
 
 .nc-agent-chats-page__search-icon {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   color: color-mix(in srgb, var(--text-secondary) 72%, var(--accent-primary));
 }
@@ -7003,7 +7003,7 @@ select {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: clamp(20px, 2vw, 26px);
+  font-size: clamp(18px, 1.7vw, 22px);
   line-height: 1.2;
 }
 
@@ -7020,17 +7020,17 @@ select {
   align-items: baseline;
   gap: 10px;
   color: color-mix(in srgb, var(--text-secondary) 84%, var(--accent-primary));
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .nc-agent-chats-page__meta strong {
   color: color-mix(in srgb, var(--accent-primary) 82%, var(--text-heading));
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .nc-agent-chats-page__empty {
-  padding: 24px 26px;
-  border-radius: 28px;
+  padding: 20px 22px;
+  border-radius: 24px;
   border: 1px dashed color-mix(in srgb, var(--accent-primary) 18%, var(--border-subtle));
   background: color-mix(in srgb, var(--accent-primary) 4%, var(--bg-elevated));
   display: grid;
@@ -7039,7 +7039,7 @@ select {
 
 .nc-agent-chats-page__empty strong {
   color: var(--text-heading);
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .nc-agent-chats-page__empty p {
@@ -7051,7 +7051,7 @@ select {
 .nc-agent-chats-page__list {
   display: grid;
   gap: 0;
-  border-radius: 34px;
+  border-radius: 28px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 10%, var(--border-subtle));
   background:
@@ -7063,10 +7063,10 @@ select {
   border: 0;
   border-top: 1px solid color-mix(in srgb, var(--border-subtle) 80%, transparent);
   background: transparent;
-  padding: 28px 32px;
+  padding: 22px 24px;
   text-align: left;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   cursor: pointer;
   transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
@@ -7091,20 +7091,20 @@ select {
 
 .nc-agent-chats-page__row-title {
   color: var(--text-heading);
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
 }
 
 .nc-agent-chats-page__row-meta {
   color: color-mix(in srgb, var(--text-secondary) 84%, var(--accent-primary));
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
 }
 
 .nc-agent-chats-page__row-preview {
   color: var(--text-secondary);
-  font-size: 16px;
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.55;
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
@@ -7187,8 +7187,8 @@ select {
 
 @media (max-width: 720px) {
   .nc-agent-chats-page {
-    padding: 28px 16px 24px;
-    gap: 18px;
+    padding: 24px 16px 22px;
+    gap: 16px;
   }
 
   .nc-agent-chats-page__header {
@@ -7201,13 +7201,13 @@ select {
   }
 
   .nc-agent-chats-page__search {
-    min-height: 76px;
-    padding: 0 20px;
-    border-radius: 24px;
+    min-height: 68px;
+    padding: 0 18px;
+    border-radius: 22px;
   }
 
   .nc-agent-chats-page__row {
-    padding: 22px 20px;
+    padding: 18px 18px;
   }
 }
 
@@ -7630,22 +7630,22 @@ select {
 
   .nc-new-chat-page {
     justify-content: flex-start;
-    padding-top: 48px;
+    padding-top: 40px;
   }
 
   .nc-neural-logo {
-    width: 184px;
-    height: 184px;
-    margin-bottom: 24px;
+    width: 156px;
+    height: 156px;
+    margin-bottom: 20px;
   }
 
   .nc-neural-logo__svg {
-    width: 144px;
-    height: 118px;
+    width: 122px;
+    height: 100px;
   }
 
   .nc-new-chat-page h2 {
-    font-size: clamp(30px, 10vw, 38px);
+    font-size: clamp(28px, 9vw, 34px);
   }
 
   .nc-new-chat-page__chips {
@@ -7654,8 +7654,8 @@ select {
   }
 
   .nc-new-chat-page__chip {
-    min-height: 54px;
-    padding: 14px 18px;
+    min-height: 50px;
+    padding: 13px 16px;
     font-size: 14px;
   }
 
