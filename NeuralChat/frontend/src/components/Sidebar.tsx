@@ -33,17 +33,13 @@ interface SidebarProps {
   onCloseMobile: () => void;
   onToggleCollapse: () => void;
   // Optional shortcut handlers
-  onOpenImages?: () => void;
-  onOpenApps?: () => void;
-  onOpenResearch?: () => void;
   onOpenAgentMode?: () => void;
   onOpenProjects?: () => void;
   onCreateProject?: () => void;
   onOpenProject?: (projectId: string) => void;
 }
 
-export type ShortcutId = "new" | "images" | "apps" | "research" | "agent" | "projects";
-type SidebarModeId = "web-search";
+export type ShortcutId = "new" | "agent" | "projects";
 
 interface ShortcutItem {
   id: ShortcutId;
@@ -52,9 +48,6 @@ interface ShortcutItem {
 
 const SHORTCUTS: ShortcutItem[] = [
   { id: "new", label: "New chat" },
-  { id: "images", label: "Images" },
-  { id: "apps", label: "Agent Studio" },
-  { id: "research", label: "Deep Research" },
   { id: "agent", label: "Agent Mode" },
   { id: "projects", label: "Projects" }
 ];
@@ -124,36 +117,6 @@ function ShortcutIcon({ id }: { id: ShortcutId }) {
     );
   }
 
-  if (id === "images") {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="3.5" y="5" width="14" height="14" rx="3" stroke="currentColor" strokeWidth="1.7" />
-        <circle cx="9" cy="10" r="1.6" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M6 16L10 12L14 16L17 13" stroke="currentColor" strokeWidth="1.6" />
-      </svg>
-    );
-  }
-
-  if (id === "apps") {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="4" y="4" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-        <rect x="14" y="4" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-        <rect x="4" y="14" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-        <rect x="14" y="14" width="6" height="6" rx="2" stroke="currentColor" strokeWidth="1.7" />
-      </svg>
-    );
-  }
-
-  if (id === "research") {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M4 20L9 15M20 20L15 15M12 6V13M8 10L12 6L16 10" stroke="currentColor" strokeWidth="1.7" />
-        <circle cx="12" cy="6" r="2.8" stroke="currentColor" strokeWidth="1.5" />
-      </svg>
-    );
-  }
-
   if (id === "agent") {
     return (
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -173,7 +136,7 @@ function ShortcutIcon({ id }: { id: ShortcutId }) {
   );
 }
 
-function SidebarModeIcon({ id }: { id: SidebarModeId }) {
+function SidebarModeIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.7" />
@@ -208,9 +171,6 @@ export function Sidebar({
   onSignOut,
   onCloseMobile,
   onToggleCollapse,
-  onOpenImages,
-  onOpenApps,
-  onOpenResearch,
   onOpenAgentMode,
   onOpenProjects,
   onCreateProject,
@@ -353,15 +313,6 @@ export function Sidebar({
           return;
         }
         onNewChat();
-        break;
-      case "images":
-        onOpenImages?.();
-        break;
-      case "apps":
-        onOpenApps?.();
-        break;
-      case "research":
-        onOpenResearch?.();
         break;
       case "agent":
         onOpenAgentMode?.();
@@ -569,7 +520,7 @@ export function Sidebar({
                   }}
                 >
                   <span className="nc-shortcut-subitem__icon">
-                    <SidebarModeIcon id="web-search" />
+                    <SidebarModeIcon />
                   </span>
                   <span className="nc-shortcut-subitem__label">Web Search</span>
                   <span className={`nc-shortcut-subitem__state ${isWebSearchMode ? "nc-shortcut-subitem__state--active" : ""}`}>

@@ -9,6 +9,7 @@ import {
   type AppFeaturePermission,
   type AppRole,
   type UserAccessProfile,
+  type UserUsageSummary,
 } from "../access";
 import type { RequestNamingContext } from "../api";
 import { deleteMember, getMemberUsage, getMembers, inviteMember, updateMemberFeatures, updateMemberRole, updateMemberUsageLimit } from "../api/members";
@@ -693,7 +694,7 @@ export function AccessManagementPanel({ getAuthToken, naming, onShowToast }: Acc
     if (!selectedMember) {
       return null;
     }
-    const cachedUsage = queryClient.getQueryData(["member-usage", selectedMember.user_id]);
+    const cachedUsage = queryClient.getQueryData<UserUsageSummary | null>(["member-usage", selectedMember.user_id]);
     const usage = selectedUsageQuery.data ?? cachedUsage ?? selectedMember.usage ?? null;
     return {
       ...selectedMember,

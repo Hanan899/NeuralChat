@@ -43,7 +43,7 @@ export function ProjectWorkspacePage({
   onOpenChat,
   onDeleteChat,
   onCreateChat,
-  onRefresh,
+  onRefresh: _onRefresh,
   onProjectUpdated,
   onDeleteProject,
   onTogglePin,

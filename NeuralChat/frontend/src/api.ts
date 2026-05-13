@@ -115,9 +115,6 @@ export async function streamChat(
   sources: SearchSource[];
   resolvedProvider: string | null;
   resolvedModel: string | null;
-  resolvedAgentId: string | null;
-  routeKind: StreamChunk["route_kind"] | null;
-  routeConfidence: number | null;
 }> {
   const startedAt = performance.now();
 
@@ -221,9 +218,6 @@ export async function streamChat(
   const sources = Array.isArray(doneChunk?.sources) ? doneChunk.sources : [];
   const resolvedProvider = typeof doneChunk?.resolved_provider === "string" ? doneChunk.resolved_provider : null;
   const resolvedModel = typeof doneChunk?.resolved_model === "string" ? doneChunk.resolved_model : null;
-  const resolvedAgentId = typeof doneChunk?.resolved_agent_id === "string" ? doneChunk.resolved_agent_id : null;
-  const routeKind = doneChunk?.route_kind ?? null;
-  const routeConfidence = typeof doneChunk?.route_confidence === "number" ? doneChunk.route_confidence : null;
 
   return {
     requestId,
@@ -239,10 +233,7 @@ export async function streamChat(
     fileContextUsed,
     sources,
     resolvedProvider,
-    resolvedModel,
-    resolvedAgentId,
-    routeKind,
-    routeConfidence
+    resolvedModel
   };
 }
 

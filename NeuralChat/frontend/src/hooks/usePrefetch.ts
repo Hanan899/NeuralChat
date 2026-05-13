@@ -42,11 +42,12 @@ export function usePrefetch(options?: UsePrefetchOptions): void {
     if (!enabled || !getAuthToken) {
       return;
     }
+    const loadAuthToken: () => Promise<string | null> = getAuthToken;
 
     let cancelled = false;
 
     async function prefetchAuthedQueries() {
-      const authToken = await getAuthToken();
+      const authToken = await loadAuthToken();
       if (!authToken || cancelled) {
         return;
       }

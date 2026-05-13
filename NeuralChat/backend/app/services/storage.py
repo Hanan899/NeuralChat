@@ -28,7 +28,7 @@ from app.services.titles import fallback_conversation_title
 _STORE_LOCK = Lock()
 _MEMORY_STORE: dict[str, list[dict[str, Any]]] = {}
 _MEMORY_PROFILES: dict[str, dict[str, Any]] = {}
-_VALID_WORKSPACE_KINDS = {"standard", "agent", "research"}
+_VALID_WORKSPACE_KINDS = {"standard", "agent"}
 
 
 def _extract_stable_id_from_segment(segment_value: str) -> str:

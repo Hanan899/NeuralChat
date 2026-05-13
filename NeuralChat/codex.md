@@ -25,9 +25,7 @@ For any new feature, read this file first, then read only the files in the relev
 - Backend default local URL from the frontend side is `http://localhost:7071`.
 - Backend is a FastAPI app wrapped by Azure Functions ASGI in `backend/function_app.py`.
 - Main backend route surface lives in `backend/app/main.py`.
-- The app has two major product layers:
-  - the main chat workspace
-  - the newer platform/admin surface in `backend/app/routers/platform.py`
+- The app centers on the main chat workspace, plus project and agent flows layered into the same backend.
 
 ## Start Here By Task
 
@@ -65,7 +63,6 @@ Notes:
 ### If the request is about Agent Mode
 
 Read:
-- `frontend/src/pages/AgentStudioPage.tsx`
 - `frontend/src/pages/AgentSessionsPage.tsx`
 - `frontend/src/api/agent.ts`
 - `frontend/src/components/AgentHistory.tsx`
@@ -93,16 +90,6 @@ Read:
 Notes:
 - Clerk provides auth.
 - Owners can manage roles, feature overrides, and spend limits.
-
-### If the request is about platform providers / tools / documents / collections
-
-Read:
-- `backend/app/routers/platform.py`
-- `backend/app/platform/`
-
-Notes:
-- This is a separate backend surface from the core chat app.
-- `backend/function_app.py` also wires a queue worker for platform document indexing when platform config is enabled.
 
 ## Frontend Map
 
@@ -138,7 +125,6 @@ Key files:
 - `backend/app/services/storage.py`: conversation persistence
 - `backend/app/services/cost_tracker.py`: token and spend tracking
 - `backend/app/routers/members.py`: access management endpoints
-- `backend/app/routers/platform.py`: platform/admin/provider/tool/document routes
 
 ## Core API Surface
 
@@ -155,7 +141,6 @@ Main routes in `backend/app/main.py`:
 
 Extra routers:
 - Members: `/api/members/*`
-- Platform/admin: routes defined in `backend/app/routers/platform.py`
 
 ## Storage / Data Model
 
@@ -215,4 +200,3 @@ Read next:
 - `README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/DEPLOYMENT.md`
-

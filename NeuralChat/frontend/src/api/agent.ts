@@ -100,7 +100,7 @@ export async function createAgentPlanWithNaming(
 async function streamAgentExecution(
   endpoint: string,
   authToken: string,
-  body: Record<string, unknown>,
+  body: object,
   callbacks: AgentRunCallbacks,
   signal?: AbortSignal,
   naming?: RequestNamingContext

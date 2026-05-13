@@ -33,10 +33,7 @@ from app.access import (
 )
 from app.auth import require_user_id
 from app.env_loader import load_local_settings_env
-from app.platform.chat import resolve_chat_route_context
-from app.platform.config import platform_is_configured
-from app.platform.db import create_platform_schema, get_platform_session_factory
-from app.routers import members_router, platform_router
+from app.routers import members_router
 from app.schemas import (
     build_chat_json_response,
     build_health_response,
@@ -144,7 +141,6 @@ STORE = init_store()
 
 app = FastAPI(title="NeuralChat Backend", version=APP_VERSION)
 app.include_router(members_router)
-app.include_router(platform_router)
 
 raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,neuralchat-adgueyh0gucffsbp.eastus-01.azurewebsites.net")
 allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
@@ -156,15 +152,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def _startup_platform_schema() -> None:
-    try:
-        create_platform_schema()
-    except Exception as error:
-        LOGGER.warning("Platform schema startup skipped: %s", error)
-
 
 def get_request_naming(
     user_display_name: str | None = Header(default=None, alias="X-User-Display-Name"),
@@ -1862,34 +1849,13 @@ async def post_chat(
     start = time.perf_counter()
     project_data: dict[str, Any] | None = None
     history_override: list[dict[str, Any]] | None = None
-    route_kind = "general"
-    route_confidence: float | None = None
-    resolved_agent_id: str | None = None
     resolved_provider: str | None = None
     resolved_model: str = str(request["model"])
-    route_sources: list[dict[str, Any]] = []
-    route_memory_prompt = ""
-    route_file_prompt = ""
 
     if request["project_id"]:
         project_data = await asyncio.to_thread(get_project, user_id, request["project_id"], naming["display_name"])
         if not project_data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
-    elif platform_is_configured():
-        try:
-            session_factory = get_platform_session_factory()
-            with session_factory() as platform_session:
-                route_context = await resolve_chat_route_context(platform_session, request)
-            route_decision = route_context["decision"]
-            route_kind = str(route_decision.target_kind)
-            route_confidence = float(route_decision.confidence)
-            resolved_agent_id = route_context.get("resolved_agent_id")
-            resolved_model = str(route_context.get("resolved_model") or resolved_model)
-            route_memory_prompt = str(route_context.get("memory_prompt") or "")
-            route_file_prompt = str(route_context.get("file_prompt") or "")
-            route_sources = list(route_context.get("sources") or [])
-        except Exception as route_error:
-            LOGGER.warning("Platform route resolution failed; continuing with general chat: %s", route_error)
 
     await asyncio.to_thread(_enforce_usage_limit_for_feature, user_id, "chat", naming["display_name"])
     _invalidate_cache_prefixes(_cache_key("usage", user_id, naming["display_name"] or ""))
@@ -1945,14 +1911,12 @@ async def post_chat(
             session_title=naming["session_title"],
         )
         memory_prompt = build_memory_prompt(user_id=user_id, display_name=naming["display_name"])
-        if route_memory_prompt:
-            memory_prompt = f"{route_memory_prompt}\n\n{memory_prompt}".strip()
 
     search_used = False
-    sources: list[dict[str, Any]] = list(route_sources)
+    sources: list[dict[str, Any]] = []
     search_prompt = ""
     file_context_used = False
-    file_prompt = route_file_prompt
+    file_prompt = ""
     search_error_message: str | None = None
 
     search_needed = request["force_search"]
@@ -2091,9 +2055,6 @@ async def post_chat(
                     "sources": sources,
                     "resolved_provider": resolved_provider,
                     "resolved_model": resolved_model,
-                    "resolved_agent_id": resolved_agent_id,
-                    "route_kind": route_kind,
-                    "route_confidence": route_confidence,
                 },
                 naming["display_name"],
                 naming["session_title"],
@@ -2136,9 +2097,6 @@ async def post_chat(
             sources=sources,
             resolved_provider=resolved_provider,
             resolved_model=resolved_model,
-            resolved_agent_id=resolved_agent_id,
-            route_kind=route_kind,
-            route_confidence=route_confidence,
         )
         if request["project_id"] and project_data:
             asyncio.create_task(
@@ -2182,20 +2140,6 @@ async def post_chat(
         chat_usage = {"input_tokens": 0, "output_tokens": 0}
 
         try:
-            yield (
-                json.dumps(
-                    {
-                        "type": "route",
-                        "content": "",
-                        "route_kind": route_kind,
-                        "route_confidence": route_confidence,
-                        "resolved_agent_id": resolved_agent_id,
-                        "resolved_model": resolved_model,
-                    },
-                    ensure_ascii=True,
-                )
-                + "\n"
-            )
             if direct_reply is not None:
                 async for token in stream_tokens(direct_reply):
                     if first_token_ms is None:
@@ -2263,9 +2207,6 @@ async def post_chat(
                         "sources": sources,
                         "resolved_provider": resolved_provider,
                         "resolved_model": resolved_model,
-                        "resolved_agent_id": resolved_agent_id,
-                        "route_kind": route_kind,
-                        "route_confidence": route_confidence,
                     },
                     ensure_ascii=True,
                 )
@@ -2361,9 +2302,6 @@ async def post_chat(
                             "sources": sources,
                             "resolved_provider": resolved_provider,
                             "resolved_model": resolved_model,
-                            "resolved_agent_id": resolved_agent_id,
-                            "route_kind": route_kind,
-                            "route_confidence": route_confidence,
                         },
                         naming["display_name"],
                         naming["session_title"],
