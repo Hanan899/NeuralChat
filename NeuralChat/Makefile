@@ -1,6 +1,17 @@
-.PHONY: backend-bootstrap backend-test frontend-test test
+.PHONY: dev frontend-start publish-backend backend-bootstrap backend-test frontend-test test
 
 PYTHON ?= python3
+
+dev:
+	@echo "Run these in separate terminals:"
+	@echo "make backend-start"
+	@echo "make frontend-start"
+
+frontend-start:
+	./start-frontend.sh
+
+publish-backend:
+	./publish-backend.sh
 
 backend/.venv/bin/python:
 	cd backend && $(PYTHON) -m venv .venv
